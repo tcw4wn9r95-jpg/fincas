@@ -6,10 +6,28 @@ import type { Flow, RecurringItem } from '../lib/types'
 import { IconPlus, IconTrash } from './icons'
 
 // A spreadsheet-style editor: rows are plan lines, columns are months. Every
-// cell is editable, so an imported plan can be adjusted to the cent, and each
-// line can vary month to month exactly like the original spreadsheet.
+// cell is editable, and lines are grouped into sections (Fixed / Provisions /
+// Variable …) with live subtotals — mirroring the original spreadsheet.
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
+
+const FIXED = new Set(['Loans', 'Utilities', 'Insurance', 'Subscriptions', 'Entertainment'])
+const PROVISION = new Set(['Taxes', 'Provisions', 'Travel'])
+const SECTION_ORDER = ['Fixed monthly', 'Provisions', 'Variable']
+
+function sectionOf(item: RecurringItem): string {
+  if (item.group) return item.group
+  if (FIXED.has(item.category)) return 'Fixed monthly'
+  if (PROVISION.has(item.category)) return 'Provisions'
+  return 'Variable'
+}
+
+type DisplayRow =
+  | { kind: 'section'; label: string }
+  | { kind: 'item'; item: RecurringItem }
+  | { kind: 'total'; label: string; values: number[]; tone: TotalTone; strong?: boolean }
+
+type TotalTone = 'income' | 'expense' | 'net' | 'balance' | 'sub'
 
 export function Planner() {
   const { data, update } = useData()
@@ -24,9 +42,7 @@ export function Planner() {
     if (Number.isNaN(value)) return
     update((d) => {
       const it = d.recurring.find((r) => r.id === id)
-      if (it) {
-        it.monthly = { ...(it.monthly ?? {}), [month]: value }
-      }
+      if (it) it.monthly = { ...(it.monthly ?? {}), [month]: value }
       return d
     })
   }
@@ -59,12 +75,56 @@ export function Planner() {
     })
   }
 
-  // Computed totals per month.
-  const incomeTotals = months.map((m) => income.reduce((s, it) => s + itemAmountForMonth(it, m), 0))
-  const expenseTotals = months.map((m) => expense.reduce((s, it) => s + itemAmountForMonth(it, m), 0))
+  const sum = (items: RecurringItem[], m: string) =>
+    items.reduce((s, it) => s + itemAmountForMonth(it, m), 0)
+
+  const incomeTotals = months.map((m) => sum(income, m))
+
+  // Group expense lines into sections.
+  const groups = new Map<string, RecurringItem[]>()
+  for (const it of expense) {
+    const sec = sectionOf(it)
+    if (!groups.has(sec)) groups.set(sec, [])
+    groups.get(sec)!.push(it)
+  }
+  const ordered = [
+    ...SECTION_ORDER.filter((s) => groups.has(s)),
+    ...[...groups.keys()].filter((s) => !SECTION_ORDER.includes(s) && s !== 'Variable'),
+  ]
+  if (groups.has('Variable') && !ordered.includes('Variable')) ordered.push('Variable')
+
+  const committed = ordered.filter((s) => s !== 'Variable')
+  const committedTotals = months.map((m) =>
+    committed.reduce((s, sec) => s + sum(groups.get(sec)!, m), 0),
+  )
+  const expenseTotals = months.map((m) => sum(expense, m))
   const nets = months.map((_, i) => incomeTotals[i] - expenseTotals[i])
   let running = totalBalance(data)
   const balances = nets.map((n) => (running += n))
+
+  // Build the ordered list of display rows.
+  const rows: DisplayRow[] = [{ kind: 'section', label: 'Income' }]
+  income.forEach((item) => rows.push({ kind: 'item', item }))
+  rows.push({ kind: 'total', label: 'Total income', values: incomeTotals, tone: 'income', strong: true })
+
+  for (const sec of ordered) {
+    if (sec === 'Variable' && committed.length) {
+      const afterFixed = months.map((_, i) => incomeTotals[i] - committedTotals[i])
+      rows.push({ kind: 'total', label: 'After fixed costs', values: afterFixed, tone: 'net' })
+    }
+    rows.push({ kind: 'section', label: sec })
+    groups.get(sec)!.forEach((item) => rows.push({ kind: 'item', item }))
+    rows.push({
+      kind: 'total',
+      label: `${sec} subtotal`,
+      values: months.map((m) => sum(groups.get(sec)!, m)),
+      tone: 'sub',
+    })
+  }
+
+  rows.push({ kind: 'total', label: 'Total expenses', values: expenseTotals, tone: 'expense', strong: true })
+  rows.push({ kind: 'total', label: 'Net', values: nets, tone: 'net', strong: true })
+  rows.push({ kind: 'total', label: 'Projected balance', values: balances, tone: 'balance', strong: true })
 
   const fx = (n: number) => formatMoney(n, currency, locale)
   const colW = 86
@@ -111,9 +171,7 @@ export function Planner() {
         <table className="text-sm border-separate border-spacing-0">
           <thead>
             <tr>
-              <th
-                className="sticky left-0 z-20 bg-paper text-left font-medium text-muted px-3 py-2 border-b border-line min-w-[220px]"
-              >
+              <th className="sticky left-0 z-20 bg-paper text-left font-medium text-muted px-3 py-2 border-b border-line min-w-[220px]">
                 Line
               </th>
               {months.map((m, i) => (
@@ -132,36 +190,32 @@ export function Planner() {
             </tr>
           </thead>
           <tbody>
-            <SectionRow label="Income" span={months.length + 1} />
-            {income.map((it) => (
-              <PlanRow
-                key={it.id}
-                item={it}
-                months={months}
-                colW={colW}
-                onCell={commitCell}
-                onField={commitField}
-                onRemove={removeRow}
-              />
-            ))}
-            <TotalRow label="Total income" values={incomeTotals} fx={fx} tone="income" />
-
-            <SectionRow label="Expenses" span={months.length + 1} />
-            {expense.map((it) => (
-              <PlanRow
-                key={it.id}
-                item={it}
-                months={months}
-                colW={colW}
-                onCell={commitCell}
-                onField={commitField}
-                onRemove={removeRow}
-              />
-            ))}
-            <TotalRow label="Total expenses" values={expenseTotals} fx={fx} tone="expense" />
-
-            <TotalRow label="Net" values={nets} fx={fx} tone="net" strong />
-            <TotalRow label="Projected balance" values={balances} fx={fx} tone="balance" strong />
+            {rows.map((row, i) => {
+              if (row.kind === 'section')
+                return <SectionRow key={`s${i}`} label={row.label} span={months.length + 1} />
+              if (row.kind === 'item')
+                return (
+                  <PlanRow
+                    key={row.item.id}
+                    item={row.item}
+                    months={months}
+                    colW={colW}
+                    onCell={commitCell}
+                    onField={commitField}
+                    onRemove={removeRow}
+                  />
+                )
+              return (
+                <TotalRow
+                  key={`t${i}`}
+                  label={row.label}
+                  values={row.values}
+                  fx={fx}
+                  tone={row.tone}
+                  strong={row.strong}
+                />
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -237,11 +291,7 @@ function PlanRow({
             step="0.01"
             defaultValue={round2(itemAmountForMonth(item, m))}
             onBlur={(e) => onCell(item.id, m, e.target.value)}
-            className={classNames(
-              'w-full bg-transparent text-right text-sm px-2 py-1.5 outline-none tabular-nums',
-              'focus:bg-forest-tint/40 focus:text-forest',
-              item.flow === 'income' ? 'text-ink' : 'text-ink',
-            )}
+            className="w-full bg-transparent text-right text-sm px-2 py-1.5 outline-none tabular-nums text-ink focus:bg-forest-tint/40 focus:text-forest"
           />
         </td>
       ))}
@@ -259,7 +309,7 @@ function TotalRow({
   label: string
   values: number[]
   fx: (n: number) => string
-  tone: 'income' | 'expense' | 'net' | 'balance'
+  tone: TotalTone
   strong?: boolean
 }) {
   return (
@@ -267,7 +317,7 @@ function TotalRow({
       <td
         className={classNames(
           'sticky left-0 bg-paper px-3 py-1.5 border-b border-line text-xs uppercase tracking-wide',
-          strong ? 'font-semibold text-ink' : 'font-medium text-muted',
+          strong ? 'font-semibold text-ink' : tone === 'sub' ? 'font-medium text-ink/70' : 'font-medium text-muted',
         )}
       >
         {label}
@@ -279,6 +329,7 @@ function TotalRow({
             'px-2 py-1.5 text-right border-b border-line tabular-nums whitespace-nowrap',
             tone === 'income' && 'text-forest',
             tone === 'expense' && 'text-clay',
+            tone === 'sub' && 'text-ink/70',
             tone === 'net' && (v >= 0 ? 'text-forest font-medium' : 'text-clay font-medium'),
             tone === 'balance' && (v >= 0 ? 'text-ink font-medium' : 'text-clay font-medium'),
           )}

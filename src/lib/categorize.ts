@@ -19,6 +19,7 @@ export const CATEGORIES = [
   'Education',
   'Taxes',
   'Provisions',
+  'Baby',
   'Kids',
   'Fees',
   'Transfer',

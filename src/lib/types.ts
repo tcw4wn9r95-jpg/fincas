@@ -36,6 +36,8 @@ export interface RecurringItem {
   endDate?: string
   /** For monthly+ cadences, the day of month it lands (1–31). */
   dayOfMonth?: number
+  /** Section the line belongs to in the planner (e.g. "Fixed monthly"). Drives subtotals. */
+  group?: string
   /**
    * Explicit per-month amounts (YYYY-MM → amount). When a month is present
    * here it overrides the cadence-derived value, letting a line vary month to
