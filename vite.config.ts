@@ -2,10 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// The app is deployed as a static site. When hosted on GitHub Pages under
-// a project path (https://<user>.github.io/fincas/), set base to '/fincas/'.
-// For a custom domain or root hosting, leave it as '/'.
-const base = process.env.FINCAS_BASE ?? '/'
+// Relative base ('./') makes the build portable: it works when served from a
+// sub-path (a CDN preview like raw.githack.com, or GitHub Pages project path
+// /fincas/) as well as from a domain root. Override with FINCAS_BASE if needed.
+const base = process.env.FINCAS_BASE ?? './'
 
 export default defineConfig({
   base,
