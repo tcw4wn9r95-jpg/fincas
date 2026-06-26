@@ -1,0 +1,47 @@
+# ── Dependencies / build ──────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+*.tsbuildinfo
+
+# ── Editor / OS ───────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ── Logs ──────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ══════════════════════════════════════════════════════════════════
+# PRIVACY: never commit personal financial data to this repo.
+# All of a user's financial data lives on-device (browser storage) or
+# in their own Google Drive — NOT in GitHub. These patterns are a
+# safety net in case any data file ever lands in the working tree.
+# ══════════════════════════════════════════════════════════════════
+*.csv
+*.pdf
+*.ofx
+*.qfx
+*.qif
+statements/
+data/
+*statement*
+*transactions*
+fincas-backup*.json
+fincas-data*.json
+.env
+.env.*
+!.env.example
+secrets.*
+api-key*
