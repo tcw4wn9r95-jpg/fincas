@@ -5,6 +5,7 @@
 export const CATEGORIES = [
   'Income',
   'Housing',
+  'Loans',
   'Food',
   'Dining',
   'Transport',
@@ -16,6 +17,9 @@ export const CATEGORIES = [
   'Entertainment',
   'Travel',
   'Education',
+  'Taxes',
+  'Provisions',
+  'Kids',
   'Fees',
   'Transfer',
   'Savings',

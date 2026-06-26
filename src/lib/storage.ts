@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   currency: 'USD',
   locale: 'en-US',
   name: '',
+  googleClientId: '',
 }
 
 export function emptyData(): AppData {

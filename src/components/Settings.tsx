@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useData } from '../store'
 import { exportData, importData, demoData, emptyData } from '../lib/storage'
+import { connectDrive, saveToDrive, loadFromDrive } from '../lib/drive'
 import { IconDownload, IconUpload, IconLock } from './icons'
 
 const MODELS = [
@@ -16,6 +17,12 @@ export function Settings() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [showKey, setShowKey] = useState(false)
   const [msg, setMsg] = useState('')
+  const [drive, setDrive] = useState<{ busy: string; msg: string; ok: boolean }>({
+    busy: '',
+    msg: '',
+    ok: false,
+  })
+  const [showDriveHelp, setShowDriveHelp] = useState(false)
 
   function set<K extends keyof typeof data.settings>(key: K, value: (typeof data.settings)[K]) {
     update((d) => {
@@ -38,6 +45,49 @@ export function Settings() {
     setMsg(text)
     setTimeout(() => setMsg(''), 2500)
   }
+
+  const clientId = data.settings.googleClientId?.trim() || ''
+
+  async function driveConnect() {
+    setDrive({ busy: 'connect', msg: '', ok: false })
+    try {
+      await connectDrive(clientId)
+      setDrive({ busy: '', msg: 'Connected to Google Drive.', ok: true })
+    } catch (err) {
+      setDrive({ busy: '', msg: err instanceof Error ? err.message : 'Connection failed.', ok: false })
+    }
+  }
+
+  async function driveSave() {
+    setDrive({ busy: 'save', msg: '', ok: false })
+    try {
+      const id = await saveToDrive(data, clientId)
+      update((d) => {
+        d.settings.driveFileId = id
+        return d
+      })
+      setDrive({ busy: '', msg: 'Saved to Google Drive.', ok: true })
+    } catch (err) {
+      setDrive({ busy: '', msg: err instanceof Error ? err.message : 'Save failed.', ok: false })
+    }
+  }
+
+  async function driveLoad() {
+    setDrive({ busy: 'load', msg: '', ok: false })
+    try {
+      const next = await loadFromDrive(clientId)
+      // Keep the API key that's already on this device if the backup lacks one.
+      if (!next.settings.apiKey && data.settings.apiKey) {
+        next.settings.apiKey = data.settings.apiKey
+      }
+      setData(next)
+      setDrive({ busy: '', msg: 'Loaded from Google Drive.', ok: true })
+    } catch (err) {
+      setDrive({ busy: '', msg: err instanceof Error ? err.message : 'Load failed.', ok: false })
+    }
+  }
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
 
   return (
     <div className="space-y-6 animate-fade-up max-w-2xl">
@@ -161,6 +211,72 @@ export function Settings() {
             e.target.value = ''
           }}
         />
+      </div>
+
+      {/* Google Drive */}
+      <div className="card p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg">Google Drive sync</h3>
+          <button
+            className="btn-subtle text-xs"
+            onClick={() => setShowDriveHelp((s) => !s)}
+          >
+            {showDriveHelp ? 'Hide setup' : 'How to set up'}
+          </button>
+        </div>
+        <p className="text-sm text-muted">
+          Keep an encrypted-at-rest copy in your own Google Drive. The app uses the
+          restricted <span className="text-ink">drive.file</span> scope — it can only ever
+          see the single backup file it creates, never the rest of your Drive.
+        </p>
+
+        {showDriveHelp && (
+          <div className="rounded-lg bg-forest-tint/50 border border-line px-4 py-3 text-sm text-ink/80 space-y-1.5">
+            <p className="font-medium text-ink">One-time setup (≈3 min)</p>
+            <p>
+              1. Go to <span className="text-ink">console.cloud.google.com</span> → create a
+              project → <span className="text-ink">APIs &amp; Services → Library</span> → enable{' '}
+              <span className="text-ink">Google Drive API</span>.
+            </p>
+            <p>
+              2. <span className="text-ink">APIs &amp; Services → Credentials → Create
+              credentials → OAuth client ID → Web application</span>.
+            </p>
+            <p>
+              3. Under <span className="text-ink">Authorized JavaScript origins</span> add:
+              <br />
+              <code className="text-forest break-all">{origin || 'https://your-app-url'}</code>
+            </p>
+            <p>4. Copy the Client ID and paste it below. Then press Connect.</p>
+          </div>
+        )}
+
+        <div>
+          <label className="label">Google OAuth Client ID</label>
+          <input
+            className="input font-mono text-xs"
+            placeholder="xxxxxxxx.apps.googleusercontent.com"
+            value={data.settings.googleClientId ?? ''}
+            onChange={(e) => set('googleClientId', e.target.value.trim())}
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-ghost" onClick={driveConnect} disabled={!clientId || !!drive.busy}>
+            {drive.busy === 'connect' ? 'Connecting…' : 'Connect'}
+          </button>
+          <button className="btn-ghost" onClick={driveSave} disabled={!clientId || !!drive.busy}>
+            <IconDownload width={16} height={16} />
+            {drive.busy === 'save' ? 'Saving…' : 'Save to Drive'}
+          </button>
+          <button className="btn-ghost" onClick={driveLoad} disabled={!clientId || !!drive.busy}>
+            <IconUpload width={16} height={16} />
+            {drive.busy === 'load' ? 'Loading…' : 'Load from Drive'}
+          </button>
+        </div>
+        {drive.msg && (
+          <div className={`text-sm ${drive.ok ? 'text-forest' : 'text-clay'}`}>{drive.msg}</div>
+        )}
       </div>
 
       <p className="text-xs text-muted text-center pt-2">

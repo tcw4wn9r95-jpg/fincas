@@ -70,6 +70,10 @@ export interface Settings {
   locale: string
   /** Display name used to personalise the assistant. */
   name?: string
+  /** Google OAuth Client ID for optional Drive backup (stored on-device). */
+  googleClientId?: string
+  /** Drive file id of the backup, once created. */
+  driveFileId?: string
 }
 
 export interface AppData {
