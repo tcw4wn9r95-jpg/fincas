@@ -15,6 +15,11 @@ function monthsBetween(a: string, b: string): number {
 
 /** How much a recurring item contributes during a given YYYY-MM. */
 export function itemAmountForMonth(item: RecurringItem, month: string): number {
+  // An explicit per-month value always wins — this is what makes the plan precise.
+  if (item.monthly && Object.prototype.hasOwnProperty.call(item.monthly, month)) {
+    const v = item.monthly[month]
+    if (typeof v === 'number' && !Number.isNaN(v)) return v
+  }
   const startMonth = item.startDate.slice(0, 7)
   if (month < startMonth) return 0
   if (item.endDate && month >= item.endDate.slice(0, 7)) return 0
@@ -40,6 +45,31 @@ export function itemAmountForMonth(item: RecurringItem, month: string): number {
 
 export function totalBalance(data: AppData): number {
   return data.accounts.reduce((sum, a) => sum + a.balance, 0)
+}
+
+/** The latest month any plan line has an explicit value for (or '' if none). */
+export function lastPlanMonth(data: AppData): string {
+  let last = ''
+  for (const item of data.recurring) {
+    if (!item.monthly) continue
+    for (const m of Object.keys(item.monthly)) {
+      if (m > last) last = m
+    }
+  }
+  return last
+}
+
+/** How many months the forecast should span: through the end of the plan. */
+export function forecastHorizon(data: AppData): number {
+  const last = lastPlanMonth(data)
+  if (!last) return 12
+  const span = monthsBetween(currentMonth(), last) + 1
+  return Math.min(36, Math.max(12, span))
+}
+
+/** The forward months the planner/forecast covers (current month → end of plan). */
+export function planMonths(data: AppData): string[] {
+  return monthRange(currentMonth(), forecastHorizon(data))
 }
 
 function plannedFlowsForMonth(data: AppData, month: string) {
@@ -121,10 +151,11 @@ export function computeReview(data: AppData, month: string): MonthReview {
     }
   }
 
-  // Planned expense per category = explicit budget if set, else recurring sum.
+  // Planned expense per category: the precise per-line plan for this month wins;
+  // a flat budget only fills in categories that have no plan lines.
   const plannedExpenseByCat: Record<string, number> = { ...recurringExpenseByCat }
   for (const [cat, budget] of Object.entries(data.categoryBudgets)) {
-    plannedExpenseByCat[cat] = budget
+    if (!(cat in plannedExpenseByCat)) plannedExpenseByCat[cat] = budget
   }
 
   const plannedIncome = Object.values(plannedIncomeByCat).reduce((a, b) => a + b, 0)

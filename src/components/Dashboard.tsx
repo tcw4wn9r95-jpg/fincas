@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useData } from '../store'
-import { buildForecast, totalBalance } from '../lib/forecast'
+import { buildForecast, totalBalance, forecastHorizon } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
 
@@ -36,7 +36,7 @@ export function Dashboard() {
   const { data } = useData()
   const { currency, locale } = data.settings
 
-  const forecast = useMemo(() => buildForecast(data, 12), [data])
+  const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
   const balance = totalBalance(data)
   const thisMonth = forecast[0]
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
@@ -79,7 +79,7 @@ export function Dashboard() {
           label="Avg monthly net"
           value={fx(avgNet, { signed: true })}
           tone={avgNet >= 0 ? 'good' : 'warn'}
-          sub="next 12 months"
+          sub={`next ${forecast.length} months`}
         />
         <Stat
           label="Savings rate"
@@ -94,7 +94,7 @@ export function Dashboard() {
           <div>
             <h2 className="text-xl">Cash-flow forecast</h2>
             <p className="text-sm text-muted">
-              Projected balance and monthly net over the next 12 months
+              Projected balance and monthly net over the next {forecast.length} months
             </p>
           </div>
           {lowest && lowest.balance < balance && (

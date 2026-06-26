@@ -36,6 +36,12 @@ export interface RecurringItem {
   endDate?: string
   /** For monthly+ cadences, the day of month it lands (1–31). */
   dayOfMonth?: number
+  /**
+   * Explicit per-month amounts (YYYY-MM → amount). When a month is present
+   * here it overrides the cadence-derived value, letting a line vary month to
+   * month exactly like a spreadsheet. Months absent fall back to `amount`/cadence.
+   */
+  monthly?: Record<string, number>
   notes?: string
 }
 

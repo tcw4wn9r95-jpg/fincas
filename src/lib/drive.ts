@@ -157,5 +157,6 @@ export async function loadFromDrive(clientId?: string): Promise<AppData> {
     ...emptyData(),
     ...parsed,
     settings: { ...DEFAULT_SETTINGS, ...parsed.settings, driveFileId: fileId },
+    updatedAt: new Date().toISOString(),
   }
 }

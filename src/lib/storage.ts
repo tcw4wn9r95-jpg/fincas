@@ -77,6 +77,7 @@ export async function importData(file: File): Promise<AppData> {
     ...emptyData(),
     ...parsed,
     settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+    updatedAt: new Date().toISOString(),
   }
 }
 
