@@ -40,6 +40,8 @@ data/
 *transactions*
 fincas-backup*.json
 fincas-data*.json
+casaressan-finances-backup*.json
+*-finances-backup*.json
 .env
 .env.*
 !.env.example

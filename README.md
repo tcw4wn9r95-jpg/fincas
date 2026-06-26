@@ -1,8 +1,8 @@
-# Fincas
+# CasaresSan Finances
 
-A private, on-device **personal financial advisor**. Fincas gives you an
-elegant cash-flow forecast, a monthly "money date" where you see where you
-actually stand versus your plan, and a Claude assistant that can answer
+A private, on-device **personal financial advisor**. CasaresSan Finances gives
+you an elegant cash-flow forecast, a monthly "money date" where you see where
+you actually stand versus your plan, and a Claude assistant that can answer
 questions about your finances — all without your financial data ever leaving
 your device.
 

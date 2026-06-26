@@ -37,9 +37,9 @@ export function App() {
           <div className="flex items-center gap-2.5 px-2 mb-8">
             <Logo className="w-9 h-9 rounded-xl shadow-soft" />
             <div>
-              <div className="font-serif text-xl leading-none">Fincas</div>
+              <div className="font-serif text-xl leading-none">CasaresSan</div>
               <div className="text-[11px] uppercase tracking-widest text-muted mt-1">
-                Financial advisor
+                Finances
               </div>
             </div>
           </div>
@@ -70,7 +70,7 @@ export function App() {
           {/* Mobile header */}
           <header className="lg:hidden sticky top-0 z-30 flex items-center gap-2.5 border-b border-line bg-canvas/90 backdrop-blur px-4 py-3">
             <Logo className="w-8 h-8 rounded-lg" />
-            <span className="font-serif text-lg">Fincas</span>
+            <span className="font-serif text-lg">CasaresSan Finances</span>
           </header>
 
           <main className="px-4 sm:px-6 lg:px-10 py-6 lg:py-10 pb-24 lg:pb-10 max-w-5xl mx-auto">

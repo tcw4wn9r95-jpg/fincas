@@ -61,7 +61,7 @@ export function exportData(data: AppData): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `fincas-backup-${todayISO()}.json`
+  a.download = `casaressan-finances-backup-${todayISO()}.json`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -70,7 +70,7 @@ export async function importData(file: File): Promise<AppData> {
   const text = await file.text()
   const parsed = JSON.parse(text) as AppData
   if (!parsed || typeof parsed !== 'object' || !('version' in parsed)) {
-    throw new Error('That file does not look like a Fincas backup.')
+    throw new Error('That file does not look like a CasaresSan Finances backup.')
   }
   return {
     ...emptyData(),

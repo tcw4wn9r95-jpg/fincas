@@ -28,7 +28,8 @@ export function Splash() {
             <path d="M360 200 C352 170 326 150 318 152 C326 182 344 200 360 200 Z" fill="#6fae93" />
           </g>
         </svg>
-        <div className="splash-word">Fincas</div>
+        <div className="splash-word">CasaresSan</div>
+        <div className="splash-sub">Finances</div>
         <div className="splash-tag">your money, in focus</div>
         <div className="splash-dots">
           <span />

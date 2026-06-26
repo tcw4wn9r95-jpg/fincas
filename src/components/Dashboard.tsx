@@ -54,7 +54,7 @@ export function Dashboard() {
   if (empty) {
     return (
       <div className="card p-8 text-center animate-fade-up">
-        <h2 className="text-2xl mb-2">Welcome to Fincas</h2>
+        <h2 className="text-2xl mb-2">Welcome to CasaresSan Finances</h2>
         <p className="text-muted max-w-md mx-auto">
           Add an account balance and your recurring income and expenses in{' '}
           <span className="text-ink font-medium">Plan</span> to see your cash-flow

@@ -15,8 +15,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icon.svg', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Fincas — Personal Financial Advisor',
-        short_name: 'Fincas',
+        name: 'CasaresSan Finances — Personal Financial Advisor',
+        short_name: 'CasaresSan',
         description:
           'A private, on-device personal financial advisor: cash-flow forecasts, monthly money dates, and a Claude assistant for your finances.',
         theme_color: '#1f3d34',

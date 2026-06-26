@@ -140,7 +140,7 @@ export function Settings() {
           <button
             className="btn-subtle text-clay"
             onClick={() => {
-              if (confirm('Erase all Fincas data on this device? This cannot be undone.')) {
+              if (confirm('Erase all CasaresSan Finances data on this device? This cannot be undone.')) {
                 setData(emptyData())
                 flash('All data cleared.')
               }
@@ -164,7 +164,7 @@ export function Settings() {
       </div>
 
       <p className="text-xs text-muted text-center pt-2">
-        Fincas keeps your financial life private and on-device.
+        CasaresSan Finances keeps your financial life private and on-device.
       </p>
     </div>
   )
