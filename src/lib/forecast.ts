@@ -13,6 +13,24 @@ function monthsBetween(a: string, b: string): number {
   return (by - ay) * 12 + (bm - am)
 }
 
+// Which planner section a line belongs to. An explicit `group` wins; otherwise
+// we infer it from the category. Used for subtotals and the fixed/variable split.
+const FIXED_CATS = new Set(['Loans', 'Utilities', 'Insurance', 'Subscriptions', 'Entertainment'])
+const PROVISION_CATS = new Set(['Taxes', 'Provisions', 'Travel'])
+
+export function planSection(item: RecurringItem): string {
+  if (item.group) return item.group
+  if (item.flow === 'income') return 'Income'
+  if (FIXED_CATS.has(item.category)) return 'Fixed monthly'
+  if (PROVISION_CATS.has(item.category)) return 'Provisions'
+  return 'Variable'
+}
+
+/** Variable = the "Variable" section (everything after Imprevistos); else fixed. */
+export function isVariableExpense(item: RecurringItem): boolean {
+  return item.flow === 'expense' && planSection(item) === 'Variable'
+}
+
 /** How much a recurring item contributes during a given YYYY-MM. */
 export function itemAmountForMonth(item: RecurringItem, month: string): number {
   // An explicit per-month value always wins — this is what makes the plan precise.
@@ -74,13 +92,15 @@ export function planMonths(data: AppData): string[] {
 
 function plannedFlowsForMonth(data: AppData, month: string) {
   let income = 0
-  let expenses = 0
+  let fixed = 0
+  let variable = 0
   for (const item of data.recurring) {
     const amt = itemAmountForMonth(item, month)
     if (item.flow === 'income') income += amt
-    else expenses += amt
+    else if (isVariableExpense(item)) variable += amt
+    else fixed += amt
   }
-  return { income, expenses }
+  return { income, expenses: fixed + variable, fixed, variable }
 }
 
 /**
@@ -93,7 +113,7 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
   let running = totalBalance(data)
   const out: ForecastPoint[] = []
   for (const month of months) {
-    const { income, expenses } = plannedFlowsForMonth(data, month)
+    const { income, expenses, fixed, variable } = plannedFlowsForMonth(data, month)
     const net = income - expenses
     running += net
     out.push({
@@ -101,6 +121,8 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
       label: shortMonth(month, data.settings.locale),
       income,
       expenses,
+      fixedExpenses: fixed,
+      variableExpenses: variable,
       net,
       balance: running,
       projected: month > start,

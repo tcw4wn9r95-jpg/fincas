@@ -108,6 +108,9 @@ export interface ForecastPoint {
   label: string // e.g. "Jun"
   income: number
   expenses: number
+  /** Expense split: fixed = through Imprevistos; variable = everything after. */
+  fixedExpenses: number
+  variableExpenses: number
   net: number
   /** Projected end-of-month total balance across all accounts. */
   balance: number

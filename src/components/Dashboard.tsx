@@ -94,7 +94,8 @@ export function Dashboard() {
           <div>
             <h2 className="text-xl">Cash-flow forecast</h2>
             <p className="text-sm text-muted">
-              Projected balance and monthly net over the next {forecast.length} months
+              Income, fixed vs variable expenses, and projected balance · next{' '}
+              {forecast.length} months
             </p>
           </div>
           {lowest && lowest.balance < balance && (

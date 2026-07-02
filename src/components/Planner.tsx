@@ -1,6 +1,6 @@
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
-import { itemAmountForMonth, planMonths, totalBalance } from '../lib/forecast'
+import { itemAmountForMonth, planMonths, totalBalance, planSection } from '../lib/forecast'
 import { formatMoney, shortMonth, classNames, uid, currentMonth } from '../lib/format'
 import type { Flow, RecurringItem } from '../lib/types'
 import { IconPlus, IconTrash } from './icons'
@@ -10,17 +10,9 @@ import { IconPlus, IconTrash } from './icons'
 // Variable …) with live subtotals — mirroring the original spreadsheet.
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
-
-const FIXED = new Set(['Loans', 'Utilities', 'Insurance', 'Subscriptions', 'Entertainment'])
-const PROVISION = new Set(['Taxes', 'Provisions', 'Travel'])
 const SECTION_ORDER = ['Fixed monthly', 'Provisions', 'Variable']
 
-function sectionOf(item: RecurringItem): string {
-  if (item.group) return item.group
-  if (FIXED.has(item.category)) return 'Fixed monthly'
-  if (PROVISION.has(item.category)) return 'Provisions'
-  return 'Variable'
-}
+const sectionOf = planSection
 
 type DisplayRow =
   | { kind: 'section'; label: string }
