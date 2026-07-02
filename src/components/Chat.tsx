@@ -4,6 +4,7 @@ import { askClaude, hasApiKey } from '../lib/claude'
 import type { ChatMessage } from '../lib/types'
 import { IconSend, IconLock } from './icons'
 import { Logo } from './icons'
+import { Markdown } from './Markdown'
 
 const SUGGESTIONS = [
   'What should I do about expenses coming up next month?',
@@ -163,10 +164,10 @@ function Bubble({
         className={
           isUser
             ? 'max-w-[80%] rounded-2xl rounded-br-md bg-forest text-paper px-4 py-2.5 text-sm whitespace-pre-wrap'
-            : 'max-w-[85%] rounded-2xl rounded-bl-md bg-canvas border border-line px-4 py-2.5 text-sm whitespace-pre-wrap text-ink'
+            : 'max-w-[85%] rounded-2xl rounded-bl-md bg-canvas border border-line px-4 py-2.5 text-sm text-ink'
         }
       >
-        {content}
+        {isUser ? content : <Markdown text={content} />}
         {streaming && <span className="inline-block w-1.5 h-4 ml-0.5 align-middle bg-sage animate-pulse" />}
       </div>
     </div>

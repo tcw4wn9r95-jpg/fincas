@@ -163,7 +163,7 @@ export function Planner() {
         <table className="text-sm border-separate border-spacing-0">
           <thead>
             <tr>
-              <th className="sticky left-0 z-20 bg-paper text-left font-medium text-muted px-3 py-2 border-b border-line min-w-[220px]">
+              <th className="sticky left-0 z-20 bg-paper text-left font-medium text-muted px-3 py-2 border-b border-line min-w-[150px] sm:min-w-[220px]">
                 Line
               </th>
               {months.map((m, i) => (
@@ -246,7 +246,7 @@ function PlanRow({
   return (
     <tr className="group hover:bg-canvas/60">
       <td className="sticky left-0 z-10 bg-paper group-hover:bg-canvas/60 px-3 py-1.5 border-b border-line/60 align-middle">
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0">
           <button
             className="text-muted hover:text-clay opacity-0 group-hover:opacity-100 transition"
             onClick={() => onRemove(item.id)}
@@ -255,7 +255,7 @@ function PlanRow({
             <IconTrash width={14} height={14} />
           </button>
           <input
-            className="bg-transparent text-sm font-medium outline-none w-28 focus:text-forest"
+            className="bg-transparent text-sm font-medium outline-none w-24 sm:w-28 focus:text-forest"
             defaultValue={item.label}
             onBlur={(e) => onField(item.id, { label: e.target.value.trim() || item.label })}
           />

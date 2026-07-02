@@ -4,14 +4,14 @@ export function formatMoney(
   value: number,
   currency = 'USD',
   locale = 'en-US',
-  opts: { compact?: boolean; signed?: boolean } = {},
+  opts: { compact?: boolean; signed?: boolean; round?: boolean } = {},
 ): string {
   const fmt = new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
     notation: opts.compact ? 'compact' : 'standard',
-    maximumFractionDigits: opts.compact ? 1 : 2,
-    minimumFractionDigits: opts.compact ? 0 : 2,
+    maximumFractionDigits: opts.compact ? 1 : opts.round ? 0 : 2,
+    minimumFractionDigits: opts.compact || opts.round ? 0 : 2,
   })
   const out = fmt.format(Math.abs(value))
   if (opts.signed) return `${value < 0 ? '−' : '+'}${out}`

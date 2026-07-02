@@ -41,6 +41,17 @@ export function MoneyDate() {
   const incomeRows = review.categories.filter((c) => c.flow === 'income')
   const expenseRows = review.categories.filter((c) => c.flow === 'expense')
 
+  // The headline of a money date: the two or three places the month actually
+  // went off plan, before the full table.
+  const overPlan = expenseRows
+    .filter((c) => c.variance > 5)
+    .sort((a, b) => b.variance - a.variance)
+    .slice(0, 3)
+  const underPlan = expenseRows
+    .filter((c) => c.variance < -5)
+    .sort((a, b) => a.variance - b.variance)
+    .slice(0, 2)
+
   return (
     <div className="space-y-6 animate-fade-up">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -113,6 +124,24 @@ export function MoneyDate() {
               </div>
             </div>
           </div>
+
+          {(overPlan.length > 0 || underPlan.length > 0) && (
+            <div className="card p-5">
+              <h3 className="text-lg mb-3">Where it went off plan</h3>
+              <div className="flex flex-wrap gap-2">
+                {overPlan.map((c) => (
+                  <span key={c.category} className="pill bg-clay/10 text-clay">
+                    {c.category} {fx(c.variance)} over
+                  </span>
+                ))}
+                {underPlan.map((c) => (
+                  <span key={c.category} className="pill bg-forest-tint text-forest">
+                    {c.category} {fx(Math.abs(c.variance))} under
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="card overflow-hidden">
             <div className="px-6 pt-5 pb-2">

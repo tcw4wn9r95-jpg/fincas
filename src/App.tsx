@@ -74,7 +74,7 @@ export function App() {
           </header>
 
           <main className="px-4 sm:px-6 lg:px-10 py-6 lg:py-10 pb-24 lg:pb-10 max-w-5xl mx-auto">
-            {tab === 'overview' && <Dashboard />}
+            {tab === 'overview' && <Dashboard goTo={(t) => setTab(t)} />}
             {tab === 'money-date' && <MoneyDate />}
             {tab === 'assistant' && <Chat goToSettings={() => setTab('settings')} />}
             {tab === 'plan' && <Plan />}

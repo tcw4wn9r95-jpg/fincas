@@ -1,13 +1,35 @@
 import { useEffect, useState } from 'react'
 
-/** Animated brand splash, shown briefly on first paint (à la Coach Claudio). */
+const SEEN_KEY = 'casaressan.splash.seen'
+
+function alreadySeen(): boolean {
+  try {
+    return sessionStorage.getItem(SEEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Animated brand splash. Plays once per session — on app launch, not on every
+ * reload or tab switch, so it stays a moment of delight instead of a toll.
+ */
 export function Splash() {
+  const [skip] = useState(alreadySeen)
   const [hide, setHide] = useState(false)
 
   useEffect(() => {
-    const t = setTimeout(() => setHide(true), 2000)
+    if (skip) return
+    try {
+      sessionStorage.setItem(SEEN_KEY, '1')
+    } catch {
+      /* private mode — just show it */
+    }
+    const t = setTimeout(() => setHide(true), 1800)
     return () => clearTimeout(t)
-  }, [])
+  }, [skip])
+
+  if (skip) return null
 
   return (
     <div className={`splash ${hide ? 'hide' : ''}`} aria-hidden={hide}>
