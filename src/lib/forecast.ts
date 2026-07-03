@@ -5,7 +5,7 @@ import type {
   MonthReview,
   CategoryActual,
 } from './types'
-import { currentMonth, monthRange, shortMonth } from './format'
+import { currentMonth, monthRange, shortMonth, addMonths } from './format'
 
 function monthsBetween(a: string, b: string): number {
   const [ay, am] = a.split('-').map(Number)
@@ -65,6 +65,59 @@ export function totalBalance(data: AppData): number {
   return data.accounts.reduce((sum, a) => sum + a.balance, 0)
 }
 
+/**
+ * The month the recorded balances are anchored to (the latest `asOf` month).
+ * An account balance is treated as the balance at the *start* of this month.
+ */
+export function anchorMonth(data: AppData): string {
+  let m = ''
+  for (const a of data.accounts) {
+    const am = (a.asOf || '').slice(0, 7)
+    if (am && am > m) m = am
+  }
+  return m || currentMonth()
+}
+
+/**
+ * Self-anchoring balance: the known balance rolled forward (or back) through
+ * the plan to the start of the current month. This keeps the forecast's
+ * starting point current as real months pass, with no need to re-import.
+ * Once a past month's plan has been matched to actuals, that roll uses the
+ * real figures — so the forecast tracks reality.
+ */
+export function startingBalance(data: AppData): number {
+  const now = currentMonth()
+  const anchor = anchorMonth(data)
+  let bal = totalBalance(data)
+  let m = anchor
+  while (m < now) {
+    const { income, expenses } = plannedFlowsForMonth(data, m)
+    bal += income - expenses
+    m = addMonths(m, 1)
+  }
+  while (m > now) {
+    m = addMonths(m, -1)
+    const { income, expenses } = plannedFlowsForMonth(data, m)
+    bal -= income - expenses
+  }
+  return bal
+}
+
+/** Actual money in/out per category for a month, taken from imported transactions. */
+export function actualsByCategory(
+  data: AppData,
+  month: string,
+): { income: Record<string, number>; expense: Record<string, number> } {
+  const income: Record<string, number> = {}
+  const expense: Record<string, number> = {}
+  for (const t of data.transactions) {
+    if (t.month !== month) continue
+    if (t.amount >= 0) income[t.category] = (income[t.category] ?? 0) + t.amount
+    else expense[t.category] = (expense[t.category] ?? 0) + Math.abs(t.amount)
+  }
+  return { income, expense }
+}
+
 /** The latest month any plan line has an explicit value for (or '' if none). */
 export function lastPlanMonth(data: AppData): string {
   let last = ''
@@ -110,7 +163,7 @@ function plannedFlowsForMonth(data: AppData, month: string) {
 export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
   const start = currentMonth()
   const months = monthRange(start, count)
-  let running = totalBalance(data)
+  let running = startingBalance(data)
   const out: ForecastPoint[] = []
   for (const month of months) {
     const { income, expenses, fixed, variable } = plannedFlowsForMonth(data, month)

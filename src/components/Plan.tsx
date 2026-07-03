@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useData } from '../store'
-import { formatMoney, todayISO, uid, classNames } from '../lib/format'
+import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth } from '../lib/format'
+import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
 import type { Account, Goal } from '../lib/types'
 import { Planner } from './Planner'
 import { IconPlus, IconTrash } from './icons'
@@ -92,7 +93,7 @@ export function Plan() {
 
       <Section
         title="Accounts"
-        desc="Current balances — the starting point of the forecast. Tap a balance to edit it."
+        desc="Your last known balance. The forecast rolls it forward through your plan automatically, so it stays current each month — no re-import needed."
       >
         <div className="space-y-2 mb-4">
           {data.accounts.map((a) => (
@@ -100,11 +101,14 @@ export function Plan() {
               key={a.id}
               className="flex items-center justify-between rounded-lg bg-canvas px-4 py-2.5 border border-line"
             >
-              <input
-                className="bg-transparent font-medium outline-none flex-1 focus:text-forest"
-                defaultValue={a.name}
-                onBlur={(e) => editAccount(a.id, { name: e.target.value.trim() || a.name })}
-              />
+              <div className="flex-1 min-w-0">
+                <input
+                  className="bg-transparent font-medium outline-none w-full focus:text-forest"
+                  defaultValue={a.name}
+                  onBlur={(e) => editAccount(a.id, { name: e.target.value.trim() || a.name })}
+                />
+                <div className="text-[11px] text-muted">as of {formatMonthLabel(a.asOf, locale)}</div>
+              </div>
               <div className="flex items-center gap-3">
                 <input
                   type="number"
@@ -125,6 +129,20 @@ export function Plan() {
             <p className="text-sm text-muted">No accounts yet — add your starting balance below.</p>
           )}
         </div>
+        {data.accounts.length > 0 && anchorMonth(data) < currentMonth() && (
+          <div className="rounded-lg bg-forest-tint/50 border border-line px-4 py-2.5 mb-4 flex items-center justify-between text-sm">
+            <span className="text-muted">
+              Rolled forward to {formatMonthLabel(currentMonth(), locale)}
+            </span>
+            <span className="font-medium tabular-nums">
+              {fx(startingBalance(data))}
+              <span className="text-muted font-normal">
+                {' '}
+                (from {fx(totalBalance(data))})
+              </span>
+            </span>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <input
             className="input flex-1 min-w-[160px]"

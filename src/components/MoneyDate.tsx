@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
-import { computeReview, monthsWithData } from '../lib/forecast'
+import {
+  computeReview,
+  monthsWithData,
+  actualsByCategory,
+  itemAmountForMonth,
+} from '../lib/forecast'
 import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
 import { ImportModal } from './ImportModal'
 import { IconUpload } from './icons'
@@ -22,10 +27,15 @@ function VarianceBar({ planned, actual }: { planned: number; actual: number }) {
   )
 }
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
 export function MoneyDate() {
-  const { data } = useData()
+  const { data, update } = useData()
   const { currency, locale } = data.settings
   const [importing, setImporting] = useState(false)
+  const [applied, setApplied] = useState('')
 
   const months = useMemo(() => {
     const withData = monthsWithData(data)
@@ -51,6 +61,65 @@ export function MoneyDate() {
     .filter((c) => c.variance < -5)
     .sort((a, b) => a.variance - b.variance)
     .slice(0, 2)
+
+  // Closing the loop: how far this month's plan still differs from its actuals,
+  // over the categories that actually have transactions.
+  const reconcileGap = useMemo(() => {
+    const { income, expense } = actualsByCategory(data, activeMonth)
+    let gap = 0
+    for (const [cat, actual] of Object.entries(expense)) {
+      const planned = data.recurring
+        .filter((r) => r.flow === 'expense' && r.category === cat)
+        .reduce((s, r) => s + itemAmountForMonth(r, activeMonth), 0)
+      gap += Math.abs(actual - planned)
+    }
+    for (const [cat, actual] of Object.entries(income)) {
+      const planned = data.recurring
+        .filter((r) => r.flow === 'income' && r.category === cat)
+        .reduce((s, r) => s + itemAmountForMonth(r, activeMonth), 0)
+      gap += Math.abs(actual - planned)
+    }
+    return gap
+  }, [data, activeMonth])
+  const inSync = reconcileGap < 1
+
+  // Overwrite this month's plan values with the imported actuals, category by
+  // category — so the plan (and the forecast that rolls through it) reflects
+  // what actually happened. Multi-line categories scale proportionally.
+  function matchPlanToActuals() {
+    if (
+      !confirm(
+        `Replace your plan's ${formatMonthLabel(activeMonth, locale)} amounts with the imported actuals? Only this month changes; you can still edit any line afterwards.`,
+      )
+    )
+      return
+    update((d) => {
+      const { income, expense } = actualsByCategory(d, activeMonth)
+      const apply = (map: Record<string, number>, flow: 'income' | 'expense') => {
+        for (const [cat, actual] of Object.entries(map)) {
+          const lines = d.recurring.filter((r) => r.flow === flow && r.category === cat)
+          if (!lines.length) continue
+          const planned = lines.reduce((s, l) => s + itemAmountForMonth(l, activeMonth), 0)
+          if (lines.length === 1 || planned <= 0) {
+            lines[0].monthly = { ...(lines[0].monthly ?? {}), [activeMonth]: round2(actual) }
+            for (let i = 1; i < lines.length; i++) {
+              lines[i].monthly = { ...(lines[i].monthly ?? {}), [activeMonth]: 0 }
+            }
+          } else {
+            for (const l of lines) {
+              const cur = itemAmountForMonth(l, activeMonth)
+              l.monthly = { ...(l.monthly ?? {}), [activeMonth]: round2((cur * actual) / planned) }
+            }
+          }
+        }
+      }
+      apply(income, 'income')
+      apply(expense, 'expense')
+      return d
+    })
+    setApplied(activeMonth)
+    setTimeout(() => setApplied(''), 3000)
+  }
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -123,6 +192,29 @@ export function MoneyDate() {
                 {fx(netVsPlan, { signed: true })} vs plan
               </div>
             </div>
+          </div>
+
+          {/* Close the loop: make the plan (and forecast) reflect what happened */}
+          <div className="card p-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-lg">Close the loop</h3>
+              <p className="text-sm text-muted">
+                {applied === activeMonth
+                  ? `Plan updated for ${formatMonthLabel(activeMonth, locale)} — your forecast now builds on these actuals.`
+                  : inSync
+                    ? `Your plan for ${formatMonthLabel(activeMonth, locale)} already matches these actuals.`
+                    : `Match your plan for ${formatMonthLabel(activeMonth, locale)} to what actually happened, so the forecast builds on reality.`}
+              </p>
+            </div>
+            {applied === activeMonth || inSync ? (
+              <span className="pill bg-forest-tint text-forest shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-sage" /> In sync
+              </span>
+            ) : (
+              <button className="btn-primary shrink-0" onClick={matchPlanToActuals}>
+                Match plan to actuals
+              </button>
+            )}
           </div>
 
           {(overPlan.length > 0 || underPlan.length > 0) && (

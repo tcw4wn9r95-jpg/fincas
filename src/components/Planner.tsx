@@ -1,6 +1,6 @@
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
-import { itemAmountForMonth, planMonths, totalBalance, planSection } from '../lib/forecast'
+import { itemAmountForMonth, planMonths, startingBalance, planSection } from '../lib/forecast'
 import { formatMoney, shortMonth, classNames, uid, currentMonth } from '../lib/format'
 import type { Flow, RecurringItem } from '../lib/types'
 import { IconPlus, IconTrash } from './icons'
@@ -91,7 +91,7 @@ export function Planner() {
   )
   const expenseTotals = months.map((m) => sum(expense, m))
   const nets = months.map((_, i) => incomeTotals[i] - expenseTotals[i])
-  let running = totalBalance(data)
+  let running = startingBalance(data)
   const balances = nets.map((n) => (running += n))
 
   // Build the ordered list of display rows.

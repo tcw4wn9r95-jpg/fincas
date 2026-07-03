@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react'
 import { useData } from '../store'
-import { buildForecast, totalBalance, forecastHorizon } from '../lib/forecast'
+import { buildForecast, startingBalance, forecastHorizon } from '../lib/forecast'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
@@ -40,7 +40,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   const fileRef = useRef<HTMLInputElement>(null)
 
   const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
-  const balance = totalBalance(data)
+  const balance = startingBalance(data)
   const thisMonth = forecast[0]
   // Whole numbers at a glance; cents live in the planner where precision matters.
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, { round: true, ...opts })
