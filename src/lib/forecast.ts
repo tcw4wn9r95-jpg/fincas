@@ -118,13 +118,19 @@ export function actualsByCategory(
   return { income, expense }
 }
 
-/** The latest month any plan line has an explicit value for (or '' if none). */
+/** The latest month the plan reaches — explicit monthly values or a finite end date. */
 export function lastPlanMonth(data: AppData): string {
   let last = ''
   for (const item of data.recurring) {
-    if (!item.monthly) continue
-    for (const m of Object.keys(item.monthly)) {
-      if (m > last) last = m
+    if (item.monthly) {
+      for (const m of Object.keys(item.monthly)) {
+        if (m > last) last = m
+      }
+    }
+    // A finite end date extends the visible horizon so the whole run shows.
+    if (item.endDate) {
+      const em = addMonths(item.endDate.slice(0, 7), -1)
+      if (em > last) last = em
     }
   }
   return last

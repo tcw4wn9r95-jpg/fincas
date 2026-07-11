@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
 import { itemAmountForMonth, planMonths, startingBalance, planSection } from '../lib/forecast'
-import { formatMoney, shortMonth, classNames, uid, currentMonth } from '../lib/format'
+import { formatMoney, shortMonth, classNames } from '../lib/format'
 import type { Flow, RecurringItem } from '../lib/types'
 import { IconPlus, IconTrash } from './icons'
+import { AddLineModal } from './AddLineModal'
 
 // A spreadsheet-style editor: rows are plan lines, columns are months. Every
 // cell is editable, and lines are grouped into sections (Fixed / Provisions /
@@ -25,6 +27,15 @@ export function Planner() {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const months = planMonths(data)
+  const [adding, setAdding] = useState<Flow | null>(null)
+
+  function onAdd(item: RecurringItem) {
+    update((d) => {
+      d.recurring.push(item)
+      return d
+    })
+    setAdding(null)
+  }
 
   const income = data.recurring.filter((r) => r.flow === 'income')
   const expense = data.recurring.filter((r) => r.flow === 'expense')
@@ -42,21 +53,6 @@ export function Planner() {
     update((d) => {
       const it = d.recurring.find((r) => r.id === id)
       if (it) Object.assign(it, fields)
-      return d
-    })
-  }
-  function addRow(flow: Flow) {
-    update((d) => {
-      d.recurring.push({
-        id: uid(),
-        label: flow === 'income' ? 'New income' : 'New expense',
-        amount: 0,
-        flow,
-        cadence: 'monthly',
-        category: flow === 'income' ? 'Income' : 'Other',
-        startDate: currentMonth() + '-01',
-        monthly: {},
-      })
       return d
     })
   }
@@ -129,13 +125,21 @@ export function Planner() {
           A spreadsheet-style view of your plan — every month is editable.
         </p>
         <div className="flex gap-2">
-          <button className="btn-primary" onClick={() => addRow('income')}>
+          <button className="btn-primary" onClick={() => setAdding('income')}>
             <IconPlus width={16} height={16} /> Income line
           </button>
-          <button className="btn-ghost" onClick={() => addRow('expense')}>
+          <button className="btn-ghost" onClick={() => setAdding('expense')}>
             <IconPlus width={16} height={16} /> Expense line
           </button>
         </div>
+        {adding && (
+          <AddLineModal
+            flow={adding}
+            locale={locale}
+            onClose={() => setAdding(null)}
+            onAdd={onAdd}
+          />
+        )}
       </div>
     )
   }
@@ -150,10 +154,10 @@ export function Planner() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-ghost text-xs" onClick={() => addRow('income')}>
+          <button className="btn-ghost text-xs" onClick={() => setAdding('income')}>
             <IconPlus width={14} height={14} /> Income
           </button>
-          <button className="btn-ghost text-xs" onClick={() => addRow('expense')}>
+          <button className="btn-ghost text-xs" onClick={() => setAdding('expense')}>
             <IconPlus width={14} height={14} /> Expense
           </button>
         </div>
@@ -211,6 +215,15 @@ export function Planner() {
           </tbody>
         </table>
       </div>
+
+      {adding && (
+        <AddLineModal
+          flow={adding}
+          locale={locale}
+          onClose={() => setAdding(null)}
+          onAdd={onAdd}
+        />
+      )}
     </div>
   )
 }
