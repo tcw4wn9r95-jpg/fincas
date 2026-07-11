@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CATEGORIES } from '../lib/categorize'
-import { uid, currentMonth, addMonths, formatMonthLabel } from '../lib/format'
+import { uid, currentMonth, addMonths, formatMonthLabel, parseAmount } from '../lib/format'
 import type { Cadence, Flow, RecurringItem } from '../lib/types'
 import { IconClose } from './icons'
 
@@ -38,9 +38,9 @@ export function AddLineModal({ flow: initialFlow, locale, onClose, onAdd }: Prop
   }
 
   function submit() {
-    const amt = Math.abs(Number(amount))
+    const amt = Math.abs(parseAmount(amount))
     if (!label.trim()) return setError('Give the line a name.')
-    if (!amt) return setError('Enter an amount.')
+    if (!amt || Number.isNaN(amt)) return setError('Enter an amount.')
     if (end && end < start) return setError('The end month is before the start month.')
 
     const item: RecurringItem = {
@@ -102,7 +102,7 @@ export function AddLineModal({ flow: initialFlow, locale, onClose, onAdd }: Prop
               <label className="label">Amount</label>
               <input
                 className="input tabular-nums"
-                type="number"
+                type="text"
                 inputMode="decimal"
                 placeholder="0.00"
                 value={amount}

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useData } from '../store'
-import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth } from '../lib/format'
+import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, parseAmount } from '../lib/format'
 import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
 import type { Account, Goal } from '../lib/types'
 import { Planner } from './Planner'
@@ -36,7 +36,7 @@ export function Plan() {
     const a: Account = {
       id: uid(),
       name: acct.name.trim(),
-      balance: Number(acct.balance) || 0,
+      balance: parseAmount(acct.balance) || 0,
       asOf: todayISO(),
     }
     update((d) => {
@@ -62,12 +62,12 @@ export function Plan() {
   // ── Goals ──
   const [goal, setGoal] = useState({ label: '', target: '', saved: '' })
   function addGoal() {
-    if (!goal.label.trim() || !Number(goal.target)) return
+    if (!goal.label.trim() || !parseAmount(goal.target)) return
     const g: Goal = {
       id: uid(),
       label: goal.label.trim(),
-      target: Number(goal.target),
-      saved: Number(goal.saved) || 0,
+      target: parseAmount(goal.target) || 0,
+      saved: parseAmount(goal.saved) || 0,
     }
     update((d) => {
       d.goals.push(g)
@@ -111,12 +111,12 @@ export function Plan() {
               </div>
               <div className="flex items-center gap-3">
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   className="bg-transparent text-right outline-none tabular-nums w-32 focus:text-forest"
                   defaultValue={a.balance}
                   onBlur={(e) =>
-                    editAccount(a.id, { balance: Number(e.target.value) || 0, asOf: todayISO() })
+                    editAccount(a.id, { balance: parseAmount(e.target.value) || 0, asOf: todayISO() })
                   }
                 />
                 <button className="text-muted hover:text-clay" onClick={() => removeAccount(a.id)}>
@@ -152,7 +152,8 @@ export function Plan() {
           />
           <input
             className="input w-40"
-            type="number"
+            type="text"
+            inputMode="decimal"
             placeholder="Balance"
             value={acct.balance}
             onChange={(e) => setAcct({ ...acct, balance: e.target.value })}
@@ -205,14 +206,16 @@ export function Plan() {
           />
           <input
             className="input w-28"
-            type="number"
+            type="text"
+            inputMode="decimal"
             placeholder="Target"
             value={goal.target}
             onChange={(e) => setGoal({ ...goal, target: e.target.value })}
           />
           <input
             className="input w-28"
-            type="number"
+            type="text"
+            inputMode="decimal"
             placeholder="Saved"
             value={goal.saved}
             onChange={(e) => setGoal({ ...goal, saved: e.target.value })}

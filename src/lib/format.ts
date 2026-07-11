@@ -63,3 +63,27 @@ export function uid(): string {
     Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
   ).toUpperCase()
 }
+
+/**
+ * Parse a money amount typed by a human, accepting either a comma or a dot as
+ * the decimal separator (a euro/es-ES keyboard produces a comma). Returns NaN
+ * for blank/garbage so callers can decide the fallback.
+ */
+export function parseAmount(input: string | number): number {
+  if (typeof input === 'number') return input
+  let v = String(input ?? '').trim().replace(/[^0-9.,-]/g, '')
+  if (!v) return NaN
+  const hasDot = v.includes('.')
+  const hasComma = v.includes(',')
+  if (hasDot && hasComma) {
+    // Whichever separator comes last is the decimal one.
+    if (v.lastIndexOf(',') > v.lastIndexOf('.')) v = v.replace(/\./g, '').replace(',', '.')
+    else v = v.replace(/,/g, '')
+  } else if (hasComma) {
+    const parts = v.split(',')
+    // "1,50" → decimal; "1,500" → thousands separator.
+    v = parts.length === 2 && parts[1].length <= 2 ? parts[0] + '.' + parts[1] : v.replace(/,/g, '')
+  }
+  const n = parseFloat(v)
+  return Number.isNaN(n) ? NaN : n
+}

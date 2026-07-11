@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
 import { itemAmountForMonth, planMonths, startingBalance, planSection } from '../lib/forecast'
-import { formatMoney, shortMonth, classNames } from '../lib/format'
+import { formatMoney, shortMonth, classNames, parseAmount } from '../lib/format'
 import type { Flow, RecurringItem } from '../lib/types'
 import { IconPlus, IconTrash } from './icons'
 import { AddLineModal } from './AddLineModal'
@@ -41,7 +41,7 @@ export function Planner() {
   const expense = data.recurring.filter((r) => r.flow === 'expense')
 
   function commitCell(id: string, month: string, raw: string) {
-    const value = raw.trim() === '' ? 0 : Number(raw)
+    const value = raw.trim() === '' ? 0 : parseAmount(raw)
     if (Number.isNaN(value)) return
     update((d) => {
       const it = d.recurring.find((r) => r.id === id)
@@ -292,8 +292,8 @@ function PlanRow({
       {months.map((m) => (
         <td key={m} className="border-b border-line/60 p-0" style={{ minWidth: colW }}>
           <input
-            type="number"
-            step="0.01"
+            type="text"
+            inputMode="decimal"
             defaultValue={round2(itemAmountForMonth(item, m))}
             onBlur={(e) => onCell(item.id, m, e.target.value)}
             className="w-full bg-transparent text-right text-sm px-2 py-1.5 outline-none tabular-nums text-ink focus:bg-forest-tint/40 focus:text-forest"
