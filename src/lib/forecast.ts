@@ -285,6 +285,64 @@ export function computeReview(data: AppData, month: string): MonthReview {
   }
 }
 
+/** A focused, model-friendly breakdown of one month's actuals vs plan. */
+export function monthReviewText(data: AppData, month: string): string {
+  const { currency, locale } = data.settings
+  const fx = (n: number) =>
+    new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(n)
+  const r = computeReview(data, month)
+  if (!r.transactionCount) return `No transactions have been imported for ${month} yet.`
+
+  const lines: string[] = []
+  lines.push(
+    `Money date for ${month}: money in ${fx(r.income)} (planned ${fx(r.plannedIncome)}), ` +
+      `money out ${fx(r.expenses)} (planned ${fx(r.plannedExpenses)}), ` +
+      `net ${fx(r.net)} (planned ${fx(r.plannedNet)}).`,
+  )
+  const expenses = r.categories.filter((c) => c.flow === 'expense')
+  const over = expenses.filter((c) => c.variance > 1).sort((a, b) => b.variance - a.variance)
+  const under = expenses.filter((c) => c.variance < -1).sort((a, b) => a.variance - b.variance)
+  if (over.length) {
+    lines.push('Over plan: ' + over.map((c) => `${c.category} ${fx(c.actual)} vs ${fx(c.planned)} planned (+${fx(c.variance)})`).join('; '))
+  }
+  if (under.length) {
+    lines.push('Under plan: ' + under.map((c) => `${c.category} ${fx(c.actual)} vs ${fx(c.planned)} planned (${fx(c.variance)})`).join('; '))
+  }
+  return lines.join('\n')
+}
+
+/** Actual spend per expense category across the given months, chronological. */
+export function spendSeriesByCategory(
+  data: AppData,
+  months: string[],
+): Record<string, number[]> {
+  const series: Record<string, number[]> = {}
+  const perMonth = months.map((m) => actualsByCategory(data, m).expense)
+  const cats = new Set<string>()
+  perMonth.forEach((e) => Object.keys(e).forEach((c) => cats.add(c)))
+  for (const cat of cats) {
+    series[cat] = perMonth.map((e) => e[cat] ?? 0)
+  }
+  return series
+}
+
+/** Longest monotonic run ending at the last point: +n rising, -n falling, 0 flat. */
+export function streak(values: number[]): number {
+  if (values.length < 2) return 0
+  let up = 0
+  let down = 0
+  for (let i = values.length - 1; i > 0; i--) {
+    if (values[i] > values[i - 1] + 0.5) {
+      if (down) break
+      up++
+    } else if (values[i] < values[i - 1] - 0.5) {
+      if (up) break
+      down++
+    } else break
+  }
+  return up ? up : -down
+}
+
 /** A compact, model-friendly summary of the user's finances for the chatbot. */
 export function financialSummary(data: AppData): string {
   const { currency } = data.settings

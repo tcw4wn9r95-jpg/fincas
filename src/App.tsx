@@ -27,6 +27,13 @@ const NAV: { id: Tab; label: string; icon: typeof IconDashboard }[] = [
 
 export function App() {
   const [tab, setTab] = useState<Tab>('overview')
+  // A month the user asked to discuss — hands the Assistant that context.
+  const [assistantSeed, setAssistantSeed] = useState<{ month: string; nonce: number } | null>(null)
+
+  function discussMonth(month: string) {
+    setAssistantSeed({ month, nonce: Date.now() })
+    setTab('assistant')
+  }
 
   return (
     <>
@@ -75,8 +82,10 @@ export function App() {
 
           <main className="px-4 sm:px-6 lg:px-10 py-6 lg:py-10 pb-24 lg:pb-10 max-w-5xl mx-auto">
             {tab === 'overview' && <Dashboard goTo={(t) => setTab(t)} />}
-            {tab === 'money-date' && <MoneyDate />}
-            {tab === 'assistant' && <Chat goToSettings={() => setTab('settings')} />}
+            {tab === 'money-date' && <MoneyDate onDiscuss={discussMonth} />}
+            {tab === 'assistant' && (
+              <Chat goToSettings={() => setTab('settings')} seed={assistantSeed} />
+            )}
             {tab === 'plan' && <Plan />}
             {tab === 'settings' && <Settings />}
           </main>

@@ -1,13 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AppData, ChatMessage } from './types'
-import { financialSummary } from './forecast'
+import { financialSummary, monthReviewText } from './forecast'
 
 // The assistant runs entirely from the browser using the user's own
 // Anthropic API key (kept on-device). Their financial data is sent only
 // to Anthropic's API when they ask a question — never to GitHub or any
 // server we control.
 
-function systemPrompt(data: AppData): string {
+function systemPrompt(data: AppData, focusMonth?: string): string {
   const name = data.settings.name?.trim()
   return [
     'You are the CasaresSan Finances assistant, a calm, sharp personal financial advisor embedded in a private budgeting app.',
@@ -21,6 +21,8 @@ function systemPrompt(data: AppData): string {
     '--- FINANCIAL SNAPSHOT ---',
     financialSummary(data),
     '--- END SNAPSHOT ---',
+    focusMonth ? '\nThe user is reviewing this specific month — focus on it:' : '',
+    focusMonth ? monthReviewText(data, focusMonth) : '',
   ]
     .filter(Boolean)
     .join('\n')
@@ -40,6 +42,7 @@ export async function askClaude(
   data: AppData,
   history: ChatMessage[],
   handlers: StreamHandlers,
+  focusMonth?: string,
 ): Promise<void> {
   const apiKey = data.settings.apiKey?.trim()
   if (!apiKey) {
@@ -53,7 +56,7 @@ export async function askClaude(
     const stream = client.messages.stream({
       model: data.settings.model || 'claude-opus-4-8',
       max_tokens: 1600,
-      system: systemPrompt(data),
+      system: systemPrompt(data, focusMonth),
       messages: history.map((m) => ({ role: m.role, content: m.content })),
     })
 

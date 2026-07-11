@@ -5,10 +5,13 @@ import {
   monthsWithData,
   actualsByCategory,
   itemAmountForMonth,
+  spendSeriesByCategory,
+  streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth } from '../lib/format'
 import { ImportModal } from './ImportModal'
-import { IconUpload } from './icons'
+import { Sparkline } from './Sparkline'
+import { IconUpload, IconChat } from './icons'
 
 function VarianceBar({ planned, actual }: { planned: number; actual: number }) {
   const max = Math.max(planned, actual, 1)
@@ -31,7 +34,16 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-export function MoneyDate() {
+interface TrendRow {
+  cat: string
+  vals: number[]
+  current: number
+  prev: number
+  delta: number
+  run: number
+}
+
+export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void }) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const [importing, setImporting] = useState(false)
@@ -83,6 +95,26 @@ export function MoneyDate() {
   }, [data, activeMonth])
   const inSync = reconcileGap < 1
 
+  // Month-over-month trends: actual spend per category across recent months.
+  const trends = useMemo(() => {
+    const hist = monthsWithData(data)
+      .filter((m) => m <= activeMonth)
+      .sort()
+      .slice(-6)
+    if (hist.length < 2) return { months: hist as string[], rows: [] as TrendRow[], streaks: [] as TrendRow[] }
+    const series = spendSeriesByCategory(data, hist)
+    const rows: TrendRow[] = Object.entries(series).map(([cat, vals]) => {
+      const current = vals[vals.length - 1]
+      const prev = vals[vals.length - 2]
+      return { cat, vals, current, prev, delta: current - prev, run: streak(vals) }
+    })
+    rows.sort((a, b) => b.current - a.current)
+    const streaks = rows
+      .filter((r) => Math.abs(r.run) >= 3 && r.current > 5)
+      .sort((a, b) => Math.abs(b.run) - Math.abs(a.run))
+    return { months: hist, rows: rows.filter((r) => r.current > 0).slice(0, 8), streaks }
+  }, [data, activeMonth])
+
   // Overwrite this month's plan values with the imported actuals, category by
   // category — so the plan (and the forecast that rolls through it) reflects
   // what actually happened. Multi-line categories scale proportionally.
@@ -128,7 +160,7 @@ export function MoneyDate() {
           <h2 className="text-2xl">Money date</h2>
           <p className="text-muted">Where you actually stand vs. your plan</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <select
             className="input w-auto"
             value={activeMonth}
@@ -140,6 +172,9 @@ export function MoneyDate() {
               </option>
             ))}
           </select>
+          <button className="btn-ghost" onClick={() => onDiscuss(activeMonth)}>
+            <IconChat width={16} height={16} /> Discuss
+          </button>
           <button className="btn-primary" onClick={() => setImporting(true)}>
             <IconUpload width={16} height={16} /> Import statement
           </button>
@@ -231,6 +266,63 @@ export function MoneyDate() {
                     {c.category} {fx(Math.abs(c.variance))} under
                   </span>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {trends.months.length >= 2 && trends.rows.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-baseline justify-between mb-3">
+                <h3 className="text-lg">Trends</h3>
+                <span className="text-xs text-muted">
+                  actual spend · {shortMonth(trends.months[0], locale)}–
+                  {shortMonth(trends.months[trends.months.length - 1], locale)}
+                </span>
+              </div>
+
+              {trends.streaks.length > 0 && (
+                <div className="space-y-1.5 mb-4">
+                  {trends.streaks.slice(0, 3).map((r) => {
+                    const rising = r.run > 0
+                    return (
+                      <div key={r.cat} className="flex items-center gap-2 text-sm">
+                        <span className={rising ? 'text-clay' : 'text-forest'}>
+                          {rising ? '▲' : '▼'}
+                        </span>
+                        <span className="text-ink">
+                          <span className="font-medium">{r.cat}</span>{' '}
+                          {rising ? 'up' : 'down'} {Math.abs(r.run)} months in a row
+                        </span>
+                        <span className="text-muted tabular-nums">
+                          {fx(r.vals[r.vals.length - Math.abs(r.run) - 1] ?? r.prev)} → {fx(r.current)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              <div className="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+                {trends.rows.map((r) => {
+                  const up = r.delta > 0.5
+                  const down = r.delta < -0.5
+                  return (
+                    <div key={r.cat} className="flex items-center gap-3 py-1">
+                      <span className="text-sm text-ink w-24 truncate">{r.cat}</span>
+                      <Sparkline values={r.vals} color={up ? '#b95f38' : '#2e5347'} />
+                      <span className="ml-auto text-sm tabular-nums text-ink">{fx(r.current)}</span>
+                      <span
+                        className={classNames(
+                          'text-xs tabular-nums w-14 text-right',
+                          up ? 'text-clay' : down ? 'text-forest' : 'text-muted',
+                        )}
+                      >
+                        {up ? '▲' : down ? '▼' : '–'}{' '}
+                        {r.prev > 0 ? `${Math.round((r.delta / r.prev) * 100)}%` : ''}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}

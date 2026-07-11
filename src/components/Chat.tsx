@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useData } from '../store'
 import { askClaude, hasApiKey } from '../lib/claude'
 import type { ChatMessage } from '../lib/types'
+import { formatMonthLabel } from '../lib/format'
 import { IconSend, IconLock } from './icons'
 import { Logo } from './icons'
 import { Markdown } from './Markdown'
@@ -13,21 +14,41 @@ const SUGGESTIONS = [
   'Can I afford to put more toward my goals?',
 ]
 
-export function Chat({ goToSettings }: { goToSettings: () => void }) {
+export function Chat({
+  goToSettings,
+  seed,
+}: {
+  goToSettings: () => void
+  seed?: { month: string; nonce: number } | null
+}) {
   const { data } = useData()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
+  const [focusMonth, setFocusMonth] = useState<string | undefined>()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const lastSeed = useRef<number>(0)
   const keyed = hasApiKey(data)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, draft])
 
-  async function send(text: string) {
+  // When the user hands off from a money date, focus that month and either
+  // auto-ask (if keyed) or pre-fill the question for them to send.
+  useEffect(() => {
+    if (!seed || seed.nonce === lastSeed.current) return
+    lastSeed.current = seed.nonce
+    setFocusMonth(seed.month)
+    const prompt = `Let's review my ${formatMonthLabel(seed.month + '-01', data.settings.locale)} money date. Where did I go off plan, and what should I adjust going forward?`
+    if (hasApiKey(data)) send(prompt, seed.month)
+    else setInput(prompt)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed])
+
+  async function send(text: string, month = focusMonth) {
     const trimmed = text.trim()
     if (!trimmed || streaming) return
     setError('')
@@ -38,28 +59,47 @@ export function Chat({ goToSettings }: { goToSettings: () => void }) {
     setDraft('')
 
     let accumulated = ''
-    await askClaude(data, next, {
-      onText: (delta) => {
-        accumulated += delta
-        setDraft(accumulated)
+    await askClaude(
+      data,
+      next,
+      {
+        onText: (delta) => {
+          accumulated += delta
+          setDraft(accumulated)
+        },
+        onDone: (full) => {
+          setMessages((m) => [...m, { role: 'assistant', content: full || accumulated }])
+          setDraft('')
+          setStreaming(false)
+        },
+        onError: (msg) => {
+          setError(msg)
+          setStreaming(false)
+          setDraft('')
+        },
       },
-      onDone: (full) => {
-        setMessages((m) => [...m, { role: 'assistant', content: full || accumulated }])
-        setDraft('')
-        setStreaming(false)
-      },
-      onError: (msg) => {
-        setError(msg)
-        setStreaming(false)
-        setDraft('')
-      },
-    })
+      month,
+    )
   }
 
   return (
     <div className="flex flex-col h-[calc(100vh-9rem)] sm:h-[calc(100vh-7rem)] animate-fade-up">
       <div className="mb-4">
-        <h2 className="text-2xl">Assistant</h2>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h2 className="text-2xl">Assistant</h2>
+          {focusMonth && (
+            <span className="pill bg-forest-tint text-forest">
+              Reviewing {formatMonthLabel(focusMonth + '-01', data.settings.locale)}
+              <button
+                className="ml-1 hover:text-ink"
+                onClick={() => setFocusMonth(undefined)}
+                aria-label="Clear month focus"
+              >
+                ×
+              </button>
+            </span>
+          )}
+        </div>
         <p className="text-muted">
           Ask Claude about your finances. Your data is sent only to Anthropic when you ask —
           never stored on a server.
