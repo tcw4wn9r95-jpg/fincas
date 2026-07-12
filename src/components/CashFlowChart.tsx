@@ -18,6 +18,8 @@ interface Props {
   points: ForecastPoint[]
   currency: string
   locale: string
+  /** Optional what-if overlay: a second balance line drawn against the baseline. */
+  scenario?: { name: string; points: ForecastPoint[] }
 }
 
 // Series colors validated against the paper surface (#fbf9f4):
@@ -27,16 +29,22 @@ const COLOR = {
   variable: '#b95f38',
   income: '#3f7d63',
   balance: '#1f3d34',
+  // Violet reads as "hypothetical" and sits in a different hue family from the
+  // greens/clay, so it stays separable under colour-vision deficiency.
+  scenario: '#6d5296',
 }
+
+type ChartPoint = ForecastPoint & { scenarioBalance?: number }
 
 function SubtotalTooltip({
   active,
   payload,
   currency,
   locale,
-}: TooltipProps<number, string> & { currency: string; locale: string }) {
+  scenarioName,
+}: TooltipProps<number, string> & { currency: string; locale: string; scenarioName?: string }) {
   if (!active || !payload?.length) return null
-  const p = payload[0].payload as ForecastPoint
+  const p = payload[0].payload as ChartPoint
   const fx = (n: number) => formatMoney(n, currency, locale)
 
   const rows: Array<{ label: string; value: number; color?: string; strong?: boolean; top?: boolean }> = [
@@ -47,6 +55,14 @@ function SubtotalTooltip({
     { label: 'Net', value: p.net, strong: true },
     { label: 'End balance', value: p.balance, color: COLOR.balance, strong: true, top: true },
   ]
+  if (typeof p.scenarioBalance === 'number') {
+    rows.push({
+      label: scenarioName || 'Scenario',
+      value: p.scenarioBalance,
+      color: COLOR.scenario,
+      strong: true,
+    })
+  }
 
   return (
     <div className="rounded-xl border border-line bg-paper shadow-lift px-4 py-3 text-sm min-w-[220px]">
@@ -88,18 +104,24 @@ function SubtotalTooltip({
   )
 }
 
-export function CashFlowChart({ points, currency, locale }: Props) {
+export function CashFlowChart({ points, currency, locale, scenario }: Props) {
   const fxc = (n: number) => formatMoney(n, currency, locale, { compact: true })
+
+  // Merge the scenario's balance onto each month so it draws as one series.
+  const data: ChartPoint[] = points.map((p, i) => ({
+    ...p,
+    scenarioBalance: scenario?.points[i]?.balance,
+  }))
 
   return (
     <ResponsiveContainer width="100%" height={320}>
-      <ComposedChart data={points} margin={{ top: 10, right: 8, left: 4, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 10, right: 8, left: 4, bottom: 0 }}>
         <CartesianGrid stroke="#e6e0d4" vertical={false} />
         <XAxis dataKey="label" tickLine={false} axisLine={false} dy={6} />
         <YAxis tickFormatter={fxc} tickLine={false} axisLine={false} width={52} />
         <Tooltip
           cursor={{ fill: 'rgba(31,61,52,0.06)' }}
-          content={<SubtotalTooltip currency={currency} locale={locale} />}
+          content={<SubtotalTooltip currency={currency} locale={locale} scenarioName={scenario?.name} />}
         />
         <Legend
           verticalAlign="top"
@@ -139,12 +161,24 @@ export function CashFlowChart({ points, currency, locale }: Props) {
         <Line
           type="monotone"
           dataKey="balance"
-          name="Projected balance"
+          name={scenario ? 'Balance · baseline' : 'Projected balance'}
           stroke={COLOR.balance}
           strokeWidth={2.5}
           dot={false}
           activeDot={{ r: 5, fill: COLOR.balance, stroke: '#fbf9f4', strokeWidth: 2 }}
         />
+        {scenario && (
+          <Line
+            type="monotone"
+            dataKey="scenarioBalance"
+            name={`Balance · ${scenario.name}`}
+            stroke={COLOR.scenario}
+            strokeWidth={2.5}
+            strokeDasharray="6 4"
+            dot={false}
+            activeDot={{ r: 5, fill: COLOR.scenario, stroke: '#fbf9f4', strokeWidth: 2 }}
+          />
+        )}
       </ComposedChart>
     </ResponsiveContainer>
   )

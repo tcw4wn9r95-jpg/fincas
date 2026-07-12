@@ -4,8 +4,11 @@ import type {
   ForecastPoint,
   MonthReview,
   CategoryActual,
+  Scenario,
 } from './types'
-import { currentMonth, monthRange, shortMonth, addMonths } from './format'
+import { currentMonth, monthRange, shortMonth, addMonths, uid } from './format'
+
+const round2 = (n: number) => Math.round(n * 100) / 100
 
 function monthsBetween(a: string, b: string): number {
   const [ay, am] = a.split('-').map(Number)
@@ -188,6 +191,92 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
     })
   }
   return out
+}
+
+// ── Scenarios ─────────────────────────────────────────────────────
+
+/** Find a scenario by id (usually the active one). */
+export function activeScenario(data: AppData): Scenario | undefined {
+  if (!data.activeScenarioId) return undefined
+  return data.scenarios?.find((s) => s.id === data.activeScenarioId)
+}
+
+/**
+ * Returns a copy of the plan with a scenario's adjustments baked in, so the
+ * existing forecast engine can be re-run against it unchanged. Adjustments are
+ * expressed as precise per-month overrides on the affected lines — the same
+ * mechanism the planner uses — so nothing about the base engine has to know
+ * scenarios exist. The real plan is never touched.
+ */
+export function applyScenario(base: AppData, scenario: Scenario): AppData {
+  const data: AppData = structuredClone(base)
+  const months = planMonths(base) // current month → end of plan
+  const inRange = (m: string, from?: string, to?: string) =>
+    (!from || m >= from) && (!to || m <= to)
+
+  for (const adj of scenario.adjustments) {
+    if (adj.op === 'add') {
+      const from = adj.from || months[0]
+      const monthly: Record<string, number> = {}
+      for (const m of months) if (inRange(m, from, adj.to)) monthly[m] = adj.value ?? 0
+      data.recurring.push({
+        id: uid(),
+        label: adj.newLine?.label || 'What-if line',
+        amount: adj.value ?? 0,
+        flow: adj.newLine?.flow || 'expense',
+        cadence: 'monthly',
+        category: adj.newLine?.category || 'Other',
+        startDate: `${from}-01`,
+        endDate: adj.to ? `${addMonths(adj.to, 1)}-01` : undefined,
+        group: adj.newLine?.flow === 'income' ? 'Income' : undefined,
+        monthly,
+      })
+      continue
+    }
+    const item = data.recurring.find((r) => r.id === adj.targetId)
+    if (!item) continue
+    // Read base values off the original item before we start overwriting.
+    const next = { ...(item.monthly || {}) }
+    for (const m of months) {
+      if (!inRange(m, adj.from, adj.to)) continue
+      const baseAmt = itemAmountForMonth(item, m)
+      if (adj.op === 'pause') next[m] = 0
+      else if (adj.op === 'set') next[m] = adj.value ?? 0
+      else if (adj.op === 'scale') next[m] = round2(baseAmt * ((adj.value ?? 100) / 100))
+    }
+    item.monthly = next
+  }
+  return data
+}
+
+export interface ScenarioSummary {
+  baseEnd: number
+  scenarioEnd: number
+  endDiff: number
+  baseLow: number
+  scenarioLow: number
+  lowDiff: number
+}
+
+/** Baseline vs scenario end-of-plan balance and projected low, for the overlay caption. */
+export function scenarioSummary(data: AppData, scenario: Scenario): ScenarioSummary {
+  const count = forecastHorizon(data)
+  const base = buildForecast(data, count)
+  const scen = buildForecast(applyScenario(data, scenario), count)
+  const end = (p: ForecastPoint[]) => (p.length ? p[p.length - 1].balance : 0)
+  const low = (p: ForecastPoint[]) => p.reduce((m, x) => Math.min(m, x.balance), Infinity)
+  const baseEnd = end(base)
+  const scenarioEnd = end(scen)
+  const baseLow = low(base)
+  const scenarioLow = low(scen)
+  return {
+    baseEnd,
+    scenarioEnd,
+    endDiff: scenarioEnd - baseEnd,
+    baseLow,
+    scenarioLow,
+    lowDiff: scenarioLow - baseLow,
+  }
 }
 
 /** Months that actually have imported/added transactions, newest first. */
@@ -407,6 +496,16 @@ export function financialSummary(data: AppData): string {
         data.goals
           .map((g) => `${g.label} ${fx(g.saved)}/${fx(g.target)}`)
           .join(', '),
+    )
+  }
+
+  const scen = activeScenario(data)
+  if (scen) {
+    const s = scenarioSummary(data, scen)
+    lines.push(
+      `Active what-if scenario "${scen.name}": end-of-plan balance ${fx(s.scenarioEnd)} vs baseline ${fx(s.baseEnd)} (${fx(s.endDiff)}), ` +
+        `projected low ${fx(s.scenarioLow)} vs ${fx(s.baseLow)}. ` +
+        'This is a hypothetical overlay, not the committed plan.',
     )
   }
   return lines.join('\n')

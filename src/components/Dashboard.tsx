@@ -1,9 +1,16 @@
 import { useMemo, useRef } from 'react'
 import { useData } from '../store'
-import { buildForecast, startingBalance, forecastHorizon } from '../lib/forecast'
+import {
+  buildForecast,
+  startingBalance,
+  forecastHorizon,
+  activeScenario,
+  applyScenario,
+} from '../lib/forecast'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
+import { ScenarioBar } from './Scenarios'
 import { Logo, IconPlan, IconUpload } from './icons'
 
 function Stat({
@@ -40,6 +47,17 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   const fileRef = useRef<HTMLInputElement>(null)
 
   const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
+  const scenario = activeScenario(data)
+  const scenarioOverlay = useMemo(
+    () =>
+      scenario
+        ? {
+            name: scenario.name,
+            points: buildForecast(applyScenario(data, scenario), forecastHorizon(data)),
+          }
+        : undefined,
+    [data, scenario],
+  )
   const balance = startingBalance(data)
   const thisMonth = forecast[0]
   // Whole numbers at a glance; cents live in the planner where precision matters.
@@ -170,7 +188,13 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
             </div>
           )}
         </div>
-        <CashFlowChart points={forecast} currency={currency} locale={locale} />
+        <ScenarioBar />
+        <CashFlowChart
+          points={forecast}
+          currency={currency}
+          locale={locale}
+          scenario={scenarioOverlay}
+        />
       </div>
 
       <div className="card overflow-hidden">

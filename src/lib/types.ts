@@ -93,12 +93,46 @@ export interface AppData {
   goals: Goal[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
+  /** Saved what-if scenarios layered over the plan (on-device only). */
+  scenarios?: Scenario[]
+  /** The scenario currently overlaid on the forecast, if any. */
+  activeScenarioId?: string
   updatedAt: string
 }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+}
+
+// ── Scenarios ─────────────────────────────────────────────────────
+// A scenario is a lightweight "what-if" layer over the base plan. It never
+// changes the real plan — it's a named set of adjustments the forecast can be
+// re-run through, so the user can overlay e.g. "Diana takes 3 more months off"
+// against their baseline. Like all financial data it lives on-device only.
+
+export type AdjustmentOp = 'scale' | 'set' | 'pause' | 'add'
+
+export interface ScenarioAdjustment {
+  id: string
+  /** Existing recurring line this modifies. Omitted for a brand-new line (op 'add'). */
+  targetId?: string
+  op: AdjustmentOp
+  /** scale: percent (120 = +20%). set/add: the monthly amount. pause: ignored. */
+  value?: number
+  /** Applies from this month (YYYY-MM) inclusive. Omitted = start of the plan. */
+  from?: string
+  /** Applies through this month (YYYY-MM) inclusive. Omitted = end of the plan. */
+  to?: string
+  /** For op 'add': the new line's identity. */
+  newLine?: { label: string; flow: Flow; category: string }
+}
+
+export interface Scenario {
+  id: string
+  name: string
+  adjustments: ScenarioAdjustment[]
+  createdAt: string
 }
 
 // ── Derived / view models ─────────────────────────────────────────
