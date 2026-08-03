@@ -97,6 +97,12 @@ export interface AppData {
   scenarios?: Scenario[]
   /** The scenario currently overlaid on the forecast, if any. */
   activeScenarioId?: string
+  /**
+   * Weekly check-in transactions — a sample of variable spending (e.g. a
+   * Revolut export). Kept separate from `transactions` so the monthly money
+   * date (full bank statements) and the weekly pulse never double-count.
+   */
+  sampleTransactions?: Transaction[]
   updatedAt: string
 }
 

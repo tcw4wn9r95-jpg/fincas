@@ -34,6 +34,13 @@ export function isVariableExpense(item: RecurringItem): boolean {
   return item.flow === 'expense' && planSection(item) === 'Variable'
 }
 
+/** Planned variable spend for a month — the budget the weekly check-in paces against. */
+export function variablePlanForMonth(data: AppData, month: string): number {
+  return data.recurring
+    .filter(isVariableExpense)
+    .reduce((s, it) => s + itemAmountForMonth(it, month), 0)
+}
+
 /** How much a recurring item contributes during a given YYYY-MM. */
 export function itemAmountForMonth(item: RecurringItem, month: string): number {
   // An explicit per-month value always wins — this is what makes the plan precise.

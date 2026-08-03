@@ -114,6 +114,23 @@ export function IconLock(p: IconProps) {
     </svg>
   )
 }
+export function IconEdit(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+    </svg>
+  )
+}
+export function IconWeek(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <rect x="3" y="4" width="18" height="17" rx="3" />
+      <path d="M3 9h18M8 2v4M16 2v4" />
+      <path d="M8 15l2.5 2.5L16 12" />
+    </svg>
+  )
+}
 
 export function Logo({ className = '' }: { className?: string }) {
   return (

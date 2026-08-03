@@ -6,7 +6,16 @@ import { formatMoney, classNames } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash } from './icons'
 
-export function ImportModal({ onClose }: { onClose: () => void }) {
+interface ImportModalProps {
+  onClose: () => void
+  title?: string
+  subtitle?: string
+  /** When provided, receives the reviewed rows instead of the default
+   *  save-into-money-date behaviour (used by the weekly check-in). */
+  onImport?: (rows: Transaction[]) => void
+}
+
+export function ImportModal({ onClose, title, subtitle, onImport }: ImportModalProps) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const fileRef = useRef<HTMLInputElement>(null)
@@ -43,11 +52,15 @@ export function ImportModal({ onClose }: { onClose: () => void }) {
 
   function save() {
     if (!rows.length) return
-    update((d) => {
-      d.transactions = [...d.transactions, ...rows]
-      // Learn any new categories into the budget map silently? No — keep budgets explicit.
-      return d
-    })
+    if (onImport) {
+      onImport(rows)
+    } else {
+      update((d) => {
+        d.transactions = [...d.transactions, ...rows]
+        // Learn any new categories into the budget map silently? No — keep budgets explicit.
+        return d
+      })
+    }
     onClose()
   }
 
@@ -59,8 +72,10 @@ export function ImportModal({ onClose }: { onClose: () => void }) {
       <div className="bg-paper w-full sm:max-w-3xl sm:rounded-xl2 rounded-t-xl2 shadow-lift max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line">
           <div>
-            <h2 className="text-xl">Import a statement</h2>
-            <p className="text-sm text-muted">CSV or PDF — parsed privately on your device</p>
+            <h2 className="text-xl">{title ?? 'Import a statement'}</h2>
+            <p className="text-sm text-muted">
+              {subtitle ?? 'CSV or PDF — parsed privately on your device'}
+            </p>
           </div>
           <button className="btn-subtle p-2" onClick={onClose} aria-label="Close">
             <IconClose />

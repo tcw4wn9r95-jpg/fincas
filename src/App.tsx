@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Splash } from './components/Splash'
 import { Dashboard } from './components/Dashboard'
 import { MoneyDate } from './components/MoneyDate'
+import { WeeklyCheckin } from './components/WeeklyCheckin'
 import { Chat } from './components/Chat'
 import { Plan } from './components/Plan'
 import { Settings } from './components/Settings'
@@ -9,16 +10,20 @@ import { Logo } from './components/icons'
 import {
   IconDashboard,
   IconMoneyDate,
+  IconWeek,
   IconChat,
   IconPlan,
   IconSettings,
 } from './components/icons'
 import { classNames } from './lib/format'
 
-type Tab = 'overview' | 'money-date' | 'assistant' | 'plan' | 'settings'
+type Tab = 'overview' | 'weekly' | 'money-date' | 'assistant' | 'plan' | 'settings'
+
+export type AssistantSeed = { month?: string; prompt?: string; nonce: number }
 
 const NAV: { id: Tab; label: string; icon: typeof IconDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: IconDashboard },
+  { id: 'weekly', label: 'Weekly', icon: IconWeek },
   { id: 'money-date', label: 'Money date', icon: IconMoneyDate },
   { id: 'assistant', label: 'Assistant', icon: IconChat },
   { id: 'plan', label: 'Plan', icon: IconPlan },
@@ -27,11 +32,17 @@ const NAV: { id: Tab; label: string; icon: typeof IconDashboard }[] = [
 
 export function App() {
   const [tab, setTab] = useState<Tab>('overview')
-  // A month the user asked to discuss — hands the Assistant that context.
-  const [assistantSeed, setAssistantSeed] = useState<{ month: string; nonce: number } | null>(null)
+  // Context the user asked to discuss — hands the Assistant a month or a
+  // ready-made prompt (e.g. a weekly check-in recap).
+  const [assistantSeed, setAssistantSeed] = useState<AssistantSeed | null>(null)
 
   function discussMonth(month: string) {
     setAssistantSeed({ month, nonce: Date.now() })
+    setTab('assistant')
+  }
+
+  function discussPrompt(prompt: string) {
+    setAssistantSeed({ prompt, nonce: Date.now() })
     setTab('assistant')
   }
 
@@ -82,6 +93,7 @@ export function App() {
 
           <main className="px-4 sm:px-6 lg:px-10 py-6 lg:py-10 pb-24 lg:pb-10 max-w-5xl mx-auto">
             {tab === 'overview' && <Dashboard goTo={(t) => setTab(t)} />}
+            {tab === 'weekly' && <WeeklyCheckin onDiscuss={discussPrompt} />}
             {tab === 'money-date' && <MoneyDate onDiscuss={discussMonth} />}
             {tab === 'assistant' && (
               <Chat goToSettings={() => setTab('settings')} seed={assistantSeed} />
@@ -98,7 +110,7 @@ export function App() {
               key={id}
               onClick={() => setTab(id)}
               className={classNames(
-                'flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg text-[10px] font-medium transition',
+                'flex flex-col items-center gap-0.5 px-1 py-1.5 rounded-lg text-[10px] font-medium transition',
                 tab === id ? 'text-forest' : 'text-muted',
               )}
             >

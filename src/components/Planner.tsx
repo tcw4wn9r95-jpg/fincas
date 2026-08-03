@@ -4,8 +4,9 @@ import { CATEGORIES } from '../lib/categorize'
 import { itemAmountForMonth, planMonths, startingBalance, planSection } from '../lib/forecast'
 import { formatMoney, shortMonth, classNames, parseAmount } from '../lib/format'
 import type { Flow, RecurringItem } from '../lib/types'
-import { IconPlus, IconTrash } from './icons'
+import { IconPlus, IconTrash, IconEdit } from './icons'
 import { AddLineModal } from './AddLineModal'
+import { EditLineModal } from './EditLineModal'
 
 // A spreadsheet-style editor: rows are plan lines, columns are months. Every
 // cell is editable, and lines are grouped into sections (Fixed / Provisions /
@@ -28,6 +29,12 @@ export function Planner() {
   const { currency, locale } = data.settings
   const months = planMonths(data)
   const [adding, setAdding] = useState<Flow | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const editingItem = data.recurring.find((r) => r.id === editingId) ?? null
+  // Grid cells are uncontrolled (defaultValue), so a bulk edit that rewrites
+  // many months needs the rows to remount to show the new numbers. Bumping this
+  // after a modal edit does that, without disturbing single-cell editing.
+  const [rev, setRev] = useState(0)
 
   function onAdd(item: RecurringItem) {
     update((d) => {
@@ -59,6 +66,24 @@ export function Planner() {
   function removeRow(id: string) {
     update((d) => {
       d.recurring = d.recurring.filter((r) => r.id !== id)
+      return d
+    })
+  }
+  // Push one amount change across a span of months at once — the bulk edit the
+  // grid alone can't do. Writes precise per-month values so the forecast updates.
+  function applyBulk(id: string, mode: 'set' | 'scale', value: number, from?: string, to?: string) {
+    update((d) => {
+      const it = d.recurring.find((r) => r.id === id)
+      if (!it) return d
+      const monthly = { ...(it.monthly ?? {}) }
+      for (const m of months) {
+        if (from && m < from) continue
+        if (to && m > to) continue
+        if (mode === 'set') monthly[m] = value
+        else monthly[m] = round2(itemAmountForMonth(it, m) * (value / 100))
+      }
+      it.monthly = monthly
+      if (mode === 'set') it.amount = value
       return d
     })
   }
@@ -192,13 +217,14 @@ export function Planner() {
               if (row.kind === 'item')
                 return (
                   <PlanRow
-                    key={row.item.id}
+                    key={`${row.item.id}:${rev}`}
                     item={row.item}
                     months={months}
                     colW={colW}
                     onCell={commitCell}
                     onField={commitField}
                     onRemove={removeRow}
+                    onEdit={() => setEditingId(row.item.id)}
                   />
                 )
               return (
@@ -222,6 +248,21 @@ export function Planner() {
           locale={locale}
           onClose={() => setAdding(null)}
           onAdd={onAdd}
+        />
+      )}
+      {editingItem && (
+        <EditLineModal
+          item={editingItem}
+          months={months}
+          currency={currency}
+          locale={locale}
+          onClose={() => {
+            setEditingId(null)
+            setRev((r) => r + 1) // remount rows so bulk/field changes show
+          }}
+          onField={(fields) => commitField(editingItem.id, fields)}
+          onBulk={(mode, value, from, to) => applyBulk(editingItem.id, mode, value, from, to)}
+          onRemove={() => removeRow(editingItem.id)}
         />
       )}
     </div>
@@ -248,6 +289,7 @@ function PlanRow({
   onCell,
   onField,
   onRemove,
+  onEdit,
 }: {
   item: RecurringItem
   months: string[]
@@ -255,13 +297,22 @@ function PlanRow({
   onCell: (id: string, month: string, raw: string) => void
   onField: (id: string, fields: Partial<RecurringItem>) => void
   onRemove: (id: string) => void
+  onEdit: () => void
 }) {
   return (
     <tr className="group hover:bg-canvas/60">
       <td className="sticky left-0 z-10 bg-paper group-hover:bg-canvas/60 px-3 py-1.5 border-b border-line/60 align-middle">
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0">
           <button
-            className="text-muted hover:text-clay opacity-0 group-hover:opacity-100 transition"
+            className="text-muted hover:text-forest transition shrink-0"
+            onClick={onEdit}
+            aria-label="Edit line — change across months"
+            title="Edit line — change across months"
+          >
+            <IconEdit width={14} height={14} />
+          </button>
+          <button
+            className="text-muted hover:text-clay opacity-0 group-hover:opacity-100 transition shrink-0"
             onClick={() => onRemove(item.id)}
             aria-label="Remove line"
           >

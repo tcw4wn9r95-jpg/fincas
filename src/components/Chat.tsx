@@ -19,7 +19,7 @@ export function Chat({
   seed,
 }: {
   goToSettings: () => void
-  seed?: { month: string; nonce: number } | null
+  seed?: { month?: string; prompt?: string; nonce: number } | null
 }) {
   const { data } = useData()
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -42,7 +42,13 @@ export function Chat({
     if (!seed || seed.nonce === lastSeed.current) return
     lastSeed.current = seed.nonce
     setFocusMonth(seed.month)
-    const prompt = `Let's review my ${formatMonthLabel(seed.month + '-01', data.settings.locale)} money date. Where did I go off plan, and what should I adjust going forward?`
+    // A weekly check-in hands off a ready-made recap; a money date hands off a month.
+    const prompt =
+      seed.prompt ??
+      (seed.month
+        ? `Let's review my ${formatMonthLabel(seed.month + '-01', data.settings.locale)} money date. Where did I go off plan, and what should I adjust going forward?`
+        : '')
+    if (!prompt) return
     if (hasApiKey(data)) send(prompt, seed.month)
     else setInput(prompt)
     // eslint-disable-next-line react-hooks/exhaustive-deps
