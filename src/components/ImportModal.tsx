@@ -1,10 +1,33 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
 import { CATEGORIES } from '../lib/categorize'
 import { formatMoney, classNames } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash } from './icons'
+
+// Exact duplicates (date+amount+description) are skipped on import. These helpers
+// catch the softer case: same date and amount, description merely similar — e.g.
+// a pending charge re-posted as settled with a tweaked label. We flag, never drop.
+function norm(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+function similarDesc(a: string, b: string): boolean {
+  const na = norm(a)
+  const nb = norm(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+  if (na.length >= 4 && nb.includes(na)) return true
+  if (nb.length >= 4 && na.includes(nb)) return true
+  const tb = new Set(nb.split(' ').filter((w) => w.length >= 4))
+  for (const w of na.split(' ')) if (w.length >= 4 && tb.has(w)) return true
+  return false
+}
 
 interface ImportModalProps {
   onClose: () => void
@@ -79,6 +102,45 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
     setRows((prev) => prev.map((r) => ({ ...r, amount: -r.amount })))
   }
 
+  // Rows that look like a possible re-post of something already saved, or of
+  // another staged row: same date and amount, similar (not identical) label.
+  const suspectIds = useMemo(() => {
+    const flagged = new Set<string>()
+    const savedByDA = new Map<string, string[]>()
+    for (const t of savedStream) {
+      const k = `${t.date}|${t.amount}`
+      const list = savedByDA.get(k)
+      if (list) list.push(t.description)
+      else savedByDA.set(k, [t.description])
+    }
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      const against = savedByDA.get(`${r.date}|${r.amount}`) ?? []
+      let hit = against.some((d) => d !== r.description && similarDesc(d, r.description))
+      if (!hit) {
+        for (let j = 0; j < rows.length; j++) {
+          if (j === i) continue
+          const o = rows[j]
+          if (
+            o.date === r.date &&
+            o.amount === r.amount &&
+            o.description !== r.description &&
+            similarDesc(o.description, r.description)
+          ) {
+            hit = true
+            break
+          }
+        }
+      }
+      if (hit) flagged.add(r.id)
+    }
+    return flagged
+  }, [rows, savedStream])
+
+  function removeSuspects() {
+    setRows((prev) => prev.filter((r) => !suspectIds.has(r.id)))
+  }
+
   function save() {
     if (!rows.length) return
     if (onImport) {
@@ -148,6 +210,19 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
                   </button>
                 </div>
               </div>
+
+              {suspectIds.size > 0 && (
+                <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-ink/80">
+                    {suspectIds.size} row{suspectIds.size === 1 ? '' : 's'} look like possible
+                    duplicates — same date and amount as something already imported, with a
+                    similar name. Check the highlighted rows.
+                  </span>
+                  <button className="btn-subtle text-xs shrink-0" onClick={removeSuspects}>
+                    Remove {suspectIds.size === 1 ? 'it' : 'them'}
+                  </button>
+                </div>
+              )}
               <div className="border border-line rounded-xl overflow-hidden">
                 <div className="max-h-[44vh] overflow-y-auto">
                   <table className="w-full text-sm">
@@ -161,11 +236,21 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r) => (
-                        <tr key={r.id} className="border-b border-line/60">
+                      {rows.map((r) => {
+                        const suspect = suspectIds.has(r.id)
+                        return (
+                        <tr
+                          key={r.id}
+                          className={classNames('border-b border-line/60', suspect && 'bg-gold/10')}
+                        >
                           <td className="px-3 py-1.5 whitespace-nowrap text-muted">{r.date}</td>
                           <td className="px-3 py-1.5 max-w-[200px] truncate" title={r.description}>
                             {r.description}
+                            {suspect && (
+                              <span className="ml-1.5 pill bg-gold/20 text-ink/70 align-middle">
+                                possible duplicate
+                              </span>
+                            )}
                           </td>
                           <td className="px-3 py-1.5">
                             <select
@@ -204,7 +289,8 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
