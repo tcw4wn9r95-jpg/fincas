@@ -5,6 +5,7 @@
 export const CATEGORIES = [
   'Income',
   'Housing',
+  'House',
   'Loans',
   'Food',
   'Dining',
@@ -61,7 +62,7 @@ const RULES: Array<[RegExp, string]> = [
 // is almost never a spending row, so we route it to Income instead of, say,
 // Shopping. Neutral buckets (Transfer, Savings, Fees, Income) are left alone.
 const EXPENSE_ONLY = new Set([
-  'Housing', 'Loans', 'Food', 'Dining', 'Transport', 'Utilities', 'Subscriptions',
+  'Housing', 'House', 'Loans', 'Food', 'Dining', 'Transport', 'Utilities', 'Subscriptions',
   'Shopping', 'Health', 'Insurance', 'Entertainment', 'Travel', 'Education',
   'Taxes', 'Baby', 'Kids',
 ])
