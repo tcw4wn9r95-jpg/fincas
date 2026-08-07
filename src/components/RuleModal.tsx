@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CATEGORIES, suggestKeyword } from '../lib/categorize'
 import { IconClose } from './icons'
+import { Portal } from './Portal'
 
 /** A tiny form to turn "this line means X" into a reusable, remembered rule. */
 export function RuleModal({
@@ -24,6 +25,7 @@ export function RuleModal({
   const affected = matchCount(match)
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-ink/40 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
       <div className="bg-paper w-full sm:max-w-sm sm:rounded-xl2 rounded-t-xl2 shadow-lift">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line">
@@ -76,5 +78,6 @@ export function RuleModal({
         </div>
       </div>
     </div>
+    </Portal>
   )
 }

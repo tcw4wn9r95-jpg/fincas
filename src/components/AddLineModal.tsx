@@ -3,6 +3,7 @@ import { CATEGORIES } from '../lib/categorize'
 import { uid, currentMonth, addMonths, formatMonthLabel, parseAmount } from '../lib/format'
 import type { Cadence, Flow, RecurringItem } from '../lib/types'
 import { IconClose } from './icons'
+import { Portal } from './Portal'
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
 
@@ -59,6 +60,7 @@ export function AddLineModal({ flow: initialFlow, locale, onClose, onAdd }: Prop
   }
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink/30 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
       <div className="bg-paper w-full sm:max-w-md sm:rounded-xl2 rounded-t-xl2 shadow-lift max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line">
@@ -183,5 +185,6 @@ export function AddLineModal({ flow: initialFlow, locale, onClose, onAdd }: Prop
         </div>
       </div>
     </div>
+    </Portal>
   )
 }

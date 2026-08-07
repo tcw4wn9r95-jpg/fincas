@@ -6,6 +6,7 @@ import { formatMoney, classNames, uid } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
+import { Portal } from './Portal'
 
 // Exact duplicates (date+amount+description) are skipped on import. These helpers
 // catch the softer case: same date and amount, description merely similar — e.g.
@@ -180,6 +181,7 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
   const outCount = rows.length - inCount
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink/30 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
       <div className="bg-paper w-full sm:max-w-3xl sm:rounded-xl2 rounded-t-xl2 shadow-lift max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line">
@@ -373,5 +375,6 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
         />
       )}
     </div>
+    </Portal>
   )
 }

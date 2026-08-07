@@ -4,6 +4,7 @@ import { itemAmountForMonth } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, parseAmount } from '../lib/format'
 import type { RecurringItem } from '../lib/types'
 import { IconClose, IconTrash } from './icons'
+import { Portal } from './Portal'
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
 
@@ -77,6 +78,7 @@ export function EditLineModal({
         } · ${scoped.length} ${scoped.length === 1 ? 'month' : 'months'}`
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink/30 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
       <div className="bg-paper w-full sm:max-w-md sm:rounded-xl2 rounded-t-xl2 shadow-lift max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line">
@@ -199,5 +201,6 @@ export function EditLineModal({
         </div>
       </div>
     </div>
+    </Portal>
   )
 }

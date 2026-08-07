@@ -5,6 +5,7 @@ import { applyScenario, buildForecast, forecastHorizon, scenarioSummary } from '
 import { CATEGORIES } from '../lib/categorize'
 import { uid, formatMoney, formatMonthLabel, parseAmount } from '../lib/format'
 import { IconPlus, IconTrash, IconClose } from './icons'
+import { Portal } from './Portal'
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
 
@@ -213,6 +214,7 @@ function ScenarioModal({
   }
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink/30 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
       <div className="bg-paper w-full sm:max-w-lg sm:rounded-xl2 rounded-t-xl2 shadow-lift max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line">
@@ -283,6 +285,7 @@ function ScenarioModal({
         </div>
       </div>
     </div>
+    </Portal>
   )
 }
 
