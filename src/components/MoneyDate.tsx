@@ -49,12 +49,12 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const [importing, setImporting] = useState(false)
   const [applied, setApplied] = useState('')
 
-  // The picker always offers the current month and the previous three, so you
-  // can review a just-finished month (e.g. all of July on Aug 7) even before any
-  // statement is imported — plus any older months you already have data for.
+  // The picker always offers the current month and the previous six, so you can
+  // back-fill and review recent months (e.g. all of July on Aug 7) even before
+  // any statement is imported — plus any older months you already have data for.
   const months = useMemo(() => {
     const set = new Set(monthsWithData(data))
-    for (let i = 0; i <= 3; i++) set.add(addMonths(currentMonth(), -i))
+    for (let i = 0; i <= 6; i++) set.add(addMonths(currentMonth(), -i))
     return Array.from(set).sort().reverse()
   }, [data])
   // Null until the user picks explicitly: the view then follows the newest month
