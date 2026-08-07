@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useData } from '../store'
 import {
   computeReview,
@@ -8,10 +8,13 @@ import {
   spendSeriesByCategory,
   streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid } from '../lib/format'
+import { CATEGORIES } from '../lib/categorize'
+import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
+import { RuleModal } from './RuleModal'
 import { Sparkline } from './Sparkline'
-import { IconUpload, IconChat } from './icons'
+import { IconUpload, IconChat, IconTag } from './icons'
 
 function VarianceBar({ planned, actual }: { planned: number; actual: number }) {
   const max = Math.max(planned, actual, 1)
@@ -48,6 +51,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const { currency, locale } = data.settings
   const [importing, setImporting] = useState(false)
   const [applied, setApplied] = useState('')
+  // Which category row is expanded to fix its transactions, and any row being
+  // turned into a rule.
+  const [openCat, setOpenCat] = useState<string | null>(null)
+  const [teaching, setTeaching] = useState<Transaction | null>(null)
 
   // The picker always offers the current month and the previous six, so you can
   // back-fill and review recent months (e.g. all of July on Aug 7) even before
@@ -66,6 +73,50 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
+
+  // This month's transactions grouped by "flow-category", so a category row can
+  // expand to the actual lines behind it — the place to fix "Other".
+  const txByCatKey = useMemo(() => {
+    const map = new Map<string, Transaction[]>()
+    for (const t of data.transactions) {
+      if (t.month !== activeMonth) continue
+      const key = `${t.amount >= 0 ? 'income' : 'expense'}-${t.category}`
+      const list = map.get(key)
+      if (list) list.push(t)
+      else map.set(key, [t])
+    }
+    return map
+  }, [data, activeMonth])
+
+  const internalTxs = [
+    ...(txByCatKey.get('income-Internal') ?? []),
+    ...(txByCatKey.get('expense-Internal') ?? []),
+  ]
+
+  function setTxCategory(id: string, category: string) {
+    update((d) => {
+      const t = d.transactions.find((x) => x.id === id)
+      if (t) t.category = category
+      return d
+    })
+  }
+
+  // Teach a rule from a saved transaction: remember it and re-file every saved
+  // line that matches, so the whole "Other" pile can be cleaned in one go.
+  function saveRule(match: string, category: string) {
+    const m = match.trim()
+    if (m) {
+      const needle = m.toLowerCase()
+      update((d) => {
+        d.categoryRules = [...(d.categoryRules ?? []), { id: uid(), match: m, category }]
+        for (const t of d.transactions) {
+          if (t.description.toLowerCase().includes(needle)) t.category = category
+        }
+        return d
+      })
+    }
+    setTeaching(null)
+  }
 
   const netVsPlan = review.net - review.plannedNet
   const incomeRows = review.categories.filter((c) => c.flow === 'income')
@@ -339,7 +390,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
             <div className="px-6 pt-5 pb-2">
               <h3 className="text-lg">By category</h3>
               <p className="text-sm text-muted">
-                Top bar = planned · bottom bar = actual ·{' '}
+                Tap a category to see and re-file its transactions ·{' '}
                 <span className="text-clay">red</span> means over plan
               </p>
             </div>
@@ -368,37 +419,119 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                         : c.variance > 0
                           ? 'over'
                           : 'under'
+                    const key = `${c.flow}-${c.category}`
+                    const txs = txByCatKey.get(key) ?? []
+                    const isOpen = openCat === key
                     return (
-                      <tr key={`${c.flow}-${c.category}`} className="border-b border-line/60">
-                        <td className="px-6 py-3">
-                          <span
+                      <Fragment key={key}>
+                        <tr
+                          className={classNames(
+                            'border-b border-line/60',
+                            txs.length > 0 && 'cursor-pointer hover:bg-canvas/50',
+                          )}
+                          onClick={() => txs.length > 0 && setOpenCat(isOpen ? null : key)}
+                        >
+                          <td className="px-6 py-3">
+                            <span className="inline-flex items-center gap-1.5">
+                              {txs.length > 0 && (
+                                <span
+                                  className={classNames(
+                                    'text-muted transition-transform text-[10px]',
+                                    isOpen && 'rotate-90',
+                                  )}
+                                >
+                                  ▶
+                                </span>
+                              )}
+                              <span
+                                className={classNames(
+                                  'pill',
+                                  c.flow === 'income'
+                                    ? 'bg-forest-tint text-forest'
+                                    : 'bg-clay/10 text-clay',
+                                )}
+                              >
+                                {c.category}
+                              </span>
+                              {txs.length > 0 && (
+                                <span className="text-xs text-muted">{txs.length}</span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <VarianceBar planned={c.planned} actual={c.actual} />
+                          </td>
+                          <td className="px-4 py-3 text-right text-muted">{fx(c.planned)}</td>
+                          <td className="px-4 py-3 text-right font-medium">{fx(c.actual)}</td>
+                          <td
                             className={classNames(
-                              'pill',
-                              c.flow === 'income'
-                                ? 'bg-forest-tint text-forest'
-                                : 'bg-clay/10 text-clay',
+                              'px-6 py-3 text-right font-medium',
+                              unfavourable ? 'text-clay' : 'text-forest',
                             )}
                           >
-                            {c.category}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <VarianceBar planned={c.planned} actual={c.actual} />
-                        </td>
-                        <td className="px-4 py-3 text-right text-muted">{fx(c.planned)}</td>
-                        <td className="px-4 py-3 text-right font-medium">{fx(c.actual)}</td>
-                        <td
-                          className={classNames(
-                            'px-6 py-3 text-right font-medium',
-                            unfavourable ? 'text-clay' : 'text-forest',
-                          )}
-                        >
-                          {fx(Math.abs(c.variance), { signed: false })}
-                          <span className="text-xs ml-1 text-muted">{label}</span>
-                        </td>
-                      </tr>
+                            {fx(Math.abs(c.variance), { signed: false })}
+                            <span className="text-xs ml-1 text-muted">{label}</span>
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr>
+                            <td colSpan={5} className="p-0 border-b border-line/60">
+                              <DrillList
+                                txs={txs}
+                                currency={currency}
+                                locale={locale}
+                                onSet={setTxCategory}
+                                onTeach={setTeaching}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   })}
+
+                  {internalTxs.length > 0 && (
+                    <Fragment>
+                      <tr
+                        className="border-b border-line/60 cursor-pointer hover:bg-canvas/50"
+                        onClick={() => setOpenCat(openCat === 'internal' ? null : 'internal')}
+                      >
+                        <td className="px-6 py-3">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span
+                              className={classNames(
+                                'text-muted transition-transform text-[10px]',
+                                openCat === 'internal' && 'rotate-90',
+                              )}
+                            >
+                              ▶
+                            </span>
+                            <span className="pill bg-line/60 text-muted">Internal</span>
+                            <span className="text-xs text-muted">{internalTxs.length}</span>
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-muted" colSpan={3}>
+                          Transfers between your own accounts — not counted
+                        </td>
+                        <td className="px-6 py-3 text-right text-muted tabular-nums">
+                          {fx(review.excludedIn - review.excludedOut, { signed: true })}
+                        </td>
+                      </tr>
+                      {openCat === 'internal' && (
+                        <tr>
+                          <td colSpan={5} className="p-0 border-b border-line/60">
+                            <DrillList
+                              txs={internalTxs}
+                              currency={currency}
+                              locale={locale}
+                              onSet={setTxCategory}
+                              onTeach={setTeaching}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -409,6 +542,80 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       {importing && (
         <ImportModal onClose={() => setImporting(false)} existing={data.transactions} />
       )}
+      {teaching && (
+        <RuleModal
+          description={teaching.description}
+          initialCategory={teaching.category}
+          matchCount={(m) =>
+            m.trim()
+              ? data.transactions.filter((t) =>
+                  t.description.toLowerCase().includes(m.trim().toLowerCase()),
+                ).length
+              : 0
+          }
+          onCancel={() => setTeaching(null)}
+          onSave={saveRule}
+        />
+      )}
+    </div>
+  )
+}
+
+/** The editable transaction list revealed under a category row. */
+function DrillList({
+  txs,
+  currency,
+  locale,
+  onSet,
+  onTeach,
+}: {
+  txs: Transaction[]
+  currency: string
+  locale: string
+  onSet: (id: string, category: string) => void
+  onTeach: (t: Transaction) => void
+}) {
+  return (
+    <div className="bg-canvas/40 px-6 py-2 divide-y divide-line/50">
+      {txs.map((t) => (
+        <div key={t.id} className="flex items-center gap-2 py-2 text-sm">
+          <span className="text-muted w-12 shrink-0 tabular-nums">{t.date.slice(5)}</span>
+          <span className="flex-1 min-w-0 truncate" title={t.description}>
+            {t.description}
+          </span>
+          <span
+            className={classNames(
+              'tabular-nums w-24 text-right shrink-0',
+              t.amount >= 0 ? 'text-forest' : 'text-ink',
+            )}
+          >
+            {formatMoney(t.amount, currency, locale, { signed: true })}
+          </span>
+          <select
+            className="input py-1 w-32 shrink-0 text-xs"
+            value={t.category}
+            onChange={(e) => onSet(t.id, e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <button
+            className="text-muted hover:text-forest shrink-0"
+            onClick={(e) => {
+              e.stopPropagation()
+              onTeach(t)
+            }}
+            title="Teach a rule from this line"
+            aria-label="Teach a rule"
+          >
+            <IconTag width={15} height={15} />
+          </button>
+        </div>
+      ))}
     </div>
   )
 }

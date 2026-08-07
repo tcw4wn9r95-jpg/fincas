@@ -113,6 +113,13 @@ export function startingBalance(data: AppData): number {
   return bal
 }
 
+/**
+ * Categories that are money moving between your own accounts, not real income
+ * or spending — excluded from money-date totals so a transfer to Revolut isn't
+ * counted as an expense.
+ */
+export const NON_CASHFLOW = new Set(['Internal'])
+
 /** Actual money in/out per category for a month, taken from imported transactions. */
 export function actualsByCategory(
   data: AppData,
@@ -122,6 +129,7 @@ export function actualsByCategory(
   const expense: Record<string, number> = {}
   for (const t of data.transactions) {
     if (t.month !== month) continue
+    if (NON_CASHFLOW.has(t.category)) continue
     if (t.amount >= 0) income[t.category] = (income[t.category] ?? 0) + t.amount
     else expense[t.category] = (expense[t.category] ?? 0) + Math.abs(t.amount)
   }
@@ -301,10 +309,18 @@ export function computeReview(data: AppData, month: string): MonthReview {
 
   let income = 0
   let expenses = 0
+  let excludedIn = 0
+  let excludedOut = 0
   const actualIncomeByCat: Record<string, number> = {}
   const actualExpenseByCat: Record<string, number> = {}
 
   for (const t of txs) {
+    // Internal moves between your own accounts don't count as income/spending.
+    if (NON_CASHFLOW.has(t.category)) {
+      if (t.amount >= 0) excludedIn += t.amount
+      else excludedOut += Math.abs(t.amount)
+      continue
+    }
     if (t.amount >= 0) {
       income += t.amount
       actualIncomeByCat[t.category] = (actualIncomeByCat[t.category] ?? 0) + t.amount
@@ -319,6 +335,7 @@ export function computeReview(data: AppData, month: string): MonthReview {
   const plannedIncomeByCat: Record<string, number> = {}
   const recurringExpenseByCat: Record<string, number> = {}
   for (const item of data.recurring) {
+    if (NON_CASHFLOW.has(item.category)) continue
     const amt = itemAmountForMonth(item, month)
     if (amt === 0) continue
     if (item.flow === 'income') {
@@ -378,6 +395,8 @@ export function computeReview(data: AppData, month: string): MonthReview {
     plannedNet: plannedIncome - plannedExpenses,
     categories,
     transactionCount: txs.length,
+    excludedIn,
+    excludedOut,
   }
 }
 

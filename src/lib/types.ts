@@ -189,4 +189,7 @@ export interface MonthReview {
   plannedNet: number
   categories: CategoryActual[]
   transactionCount: number
+  /** Money moved between the user's own accounts (Internal), not counted in totals. */
+  excludedIn: number
+  excludedOut: number
 }

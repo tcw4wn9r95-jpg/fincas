@@ -23,6 +23,7 @@ export const CATEGORIES = [
   'Kids',
   'Fees',
   'Transfer',
+  'Internal',
   'Savings',
   'Other',
 ] as const
@@ -48,6 +49,9 @@ const RULES: Array<[RegExp, string]> = [
   [/tuition|udemy|coursera|university|course|textbook|colegio|matr[ií]cula|academia|oposici[oó]n|librer[ií]a|escuela\b/i, 'Education'],
   [/hacienda|agencia tributaria|impuesto|\birpf\b|seguridad social|\btgss\b|aut[oó]nomo|\btasa\b|\bdgt\b|\bmulta\b|tributo/i, 'Taxes'],
   [/fee|charge|interest|atm|overdraft|comisi[oó]n|\bcuota\b/i, 'Fees'],
+  // Money moved between your own accounts (e.g. a top-up to Revolut) — not
+  // spending. Kept out of money-date income/expense totals.
+  [/\brevolut\b|to my|own account|internal transfer|traspaso interno/i, 'Internal'],
   [/transfer|zelle|venmo|paypal|wire|bizum|transferencia|traspaso/i, 'Transfer'],
   [/savings|vanguard|fidelity|401k|ira|investment|brokerage|ahorro|indexa|myinvestor|fondo indexado/i, 'Savings'],
 ]
