@@ -8,7 +8,7 @@ import {
   spendSeriesByCategory,
   streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths } from '../lib/format'
 import { ImportModal } from './ImportModal'
 import { Sparkline } from './Sparkline'
 import { IconUpload, IconChat } from './icons'
@@ -49,12 +49,20 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const [importing, setImporting] = useState(false)
   const [applied, setApplied] = useState('')
 
+  // The picker always offers the current month and the previous three, so you
+  // can review a just-finished month (e.g. all of July on Aug 7) even before any
+  // statement is imported — plus any older months you already have data for.
   const months = useMemo(() => {
-    const withData = monthsWithData(data)
-    return withData.length ? withData : [currentMonth()]
+    const set = new Set(monthsWithData(data))
+    for (let i = 0; i <= 3; i++) set.add(addMonths(currentMonth(), -i))
+    return Array.from(set).sort().reverse()
   }, [data])
-  const [month, setMonth] = useState(months[0])
-  const activeMonth = months.includes(month) ? month : months[0]
+  // Null until the user picks explicitly: the view then follows the newest month
+  // that has data (so a fresh July import shows straight away), while a manual
+  // pick sticks.
+  const [month, setMonth] = useState<string | null>(null)
+  const activeMonth =
+    month && months.includes(month) ? month : monthsWithData(data)[0] ?? currentMonth()
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
