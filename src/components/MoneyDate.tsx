@@ -13,8 +13,9 @@ import { CATEGORIES, suggestKeyword, withRule } from '../lib/categorize'
 import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
+import { ReconcileOverlay } from './ReconcileOverlay'
 import { Sparkline } from './Sparkline'
-import { IconUpload, IconChat, IconTag } from './icons'
+import { IconUpload, IconChat, IconTag, IconCheck, IconTrash } from './icons'
 
 function VarianceBar({ planned, actual }: { planned: number; actual: number }) {
   const max = Math.max(planned, actual, 1)
@@ -56,6 +57,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const [openCat, setOpenCat] = useState<string | null>(null)
   const [teaching, setTeaching] = useState<Transaction | null>(null)
   const [learned, setLearned] = useState<{ match: string; category: string } | null>(null)
+  const [reconciling, setReconciling] = useState(false)
 
   // The picker always offers the current month and the previous six, so you can
   // back-fill and review recent months (e.g. all of July on Aug 7) even before
@@ -93,6 +95,41 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
     ...(txByCatKey.get('income-Internal') ?? []),
     ...(txByCatKey.get('expense-Internal') ?? []),
   ]
+
+  const monthTxs = useMemo(
+    () => data.transactions.filter((t) => t.month === activeMonth),
+    [data, activeMonth],
+  )
+  const reconciledCount = monthTxs.filter((t) => t.reconciled).length
+
+  function setReconciled(id: string, reconciled: boolean) {
+    update((d) => {
+      const t = d.transactions.find((x) => x.id === id)
+      if (t) t.reconciled = reconciled
+      return d
+    })
+  }
+  function reconcileAllSuggestions() {
+    update((d) => {
+      for (const t of d.transactions) {
+        if (t.month === activeMonth && !t.reconciled && t.category !== 'Other') t.reconciled = true
+      }
+      return d
+    })
+  }
+  function deleteMonth() {
+    if (
+      !confirm(
+        `Delete all ${monthTxs.length} transaction${monthTxs.length === 1 ? '' : 's'} for ${formatMonthLabel(activeMonth, locale)}? This can't be undone.`,
+      )
+    )
+      return
+    update((d) => {
+      d.transactions = d.transactions.filter((t) => t.month !== activeMonth)
+      return d
+    })
+    setLearned(null)
+  }
 
   // Changing a saved transaction's category also learns it: the same line will
   // always file this way, and every matching saved line is re-filed to match.
@@ -254,14 +291,52 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
               </option>
             ))}
           </select>
+          {monthTxs.length > 0 && (
+            <button className="btn-ghost" onClick={() => setReconciling(true)}>
+              <IconCheck width={16} height={16} /> Reconcile
+            </button>
+          )}
           <button className="btn-ghost" onClick={() => onDiscuss(activeMonth)}>
             <IconChat width={16} height={16} /> Discuss
           </button>
           <button className="btn-primary" onClick={() => setImporting(true)}>
             <IconUpload width={16} height={16} /> Import statement
           </button>
+          {monthTxs.length > 0 && (
+            <button
+              className="btn-subtle p-2 text-muted hover:text-clay"
+              onClick={deleteMonth}
+              title={`Delete ${formatMonthLabel(activeMonth, locale)} data`}
+              aria-label="Delete this month's data"
+            >
+              <IconTrash width={16} height={16} />
+            </button>
+          )}
         </div>
       </div>
+
+      {monthTxs.length > 0 && reconciledCount < monthTxs.length && (
+        <button
+          onClick={() => setReconciling(true)}
+          className="card w-full p-4 flex items-center gap-4 text-left hover:shadow-lift transition"
+        >
+          <span className="w-10 h-10 rounded-xl bg-forest text-paper grid place-items-center shrink-0">
+            <IconCheck width={20} height={20} />
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block font-medium">
+              Reconcile {monthTxs.length - reconciledCount} transaction
+              {monthTxs.length - reconciledCount === 1 ? '' : 's'}
+            </span>
+            <span className="block text-sm text-muted">
+              Confirm or correct each — the app learns, so next month there's less to do
+            </span>
+          </span>
+          <span className="text-sm text-muted tabular-nums shrink-0">
+            {reconciledCount}/{monthTxs.length}
+          </span>
+        </button>
+      )}
 
       {review.transactionCount === 0 ? (
         <div className="card p-8 text-center">
@@ -593,6 +668,21 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           }
           onCancel={() => setTeaching(null)}
           onSave={saveRule}
+        />
+      )}
+      {reconciling && (
+        <ReconcileOverlay
+          month={activeMonth}
+          txs={monthTxs}
+          currency={currency}
+          locale={locale}
+          onSetCategory={(id, category) => {
+            setTxCategory(id, category)
+            setReconciled(id, true)
+          }}
+          onToggle={setReconciled}
+          onConfirmAll={reconcileAllSuggestions}
+          onClose={() => setReconciling(false)}
         />
       )}
     </div>

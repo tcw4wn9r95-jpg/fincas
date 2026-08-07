@@ -60,6 +60,8 @@ export interface Transaction {
   accountId?: string
   /** Denormalised YYYY-MM for fast monthly grouping. */
   month: string
+  /** Marked true once reviewed/confirmed in the reconcile flow. */
+  reconciled?: boolean
 }
 
 export interface Goal {

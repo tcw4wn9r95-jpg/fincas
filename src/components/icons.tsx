@@ -122,6 +122,13 @@ export function IconEdit(p: IconProps) {
     </svg>
   )
 }
+export function IconCheck(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M4 12.5l5 5 11-12" />
+    </svg>
+  )
+}
 export function IconTag(p: IconProps) {
   return (
     <svg {...base} {...p}>
