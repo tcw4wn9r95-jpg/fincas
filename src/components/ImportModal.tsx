@@ -13,31 +13,60 @@ interface ImportModalProps {
   /** When provided, receives the reviewed rows instead of the default
    *  save-into-money-date behaviour (used by the weekly check-in). */
   onImport?: (rows: Transaction[]) => void
+  /** Already-saved transactions for this stream, used to skip re-imports so you
+   *  can add statements one at a time without double-counting overlaps. */
+  existing?: Transaction[]
 }
 
-export function ImportModal({ onClose, title, subtitle, onImport }: ImportModalProps) {
+const dupeKey = (t: Transaction) => `${t.date}|${t.amount}|${t.description}`
+
+export function ImportModal({ onClose, title, subtitle, onImport, existing }: ImportModalProps) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const fileRef = useRef<HTMLInputElement>(null)
   const [rows, setRows] = useState<Transaction[]>([])
   const [warnings, setWarnings] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  const [fileName, setFileName] = useState('')
+  const [files, setFiles] = useState<string[]>([])
 
-  async function onPick(file: File) {
+  const savedStream = existing ?? data.transactions
+
+  // Parse one or several files and merge them into the review. Rows that already
+  // exist — in what you've saved before, or in what's staged here — are skipped,
+  // so re-adding an overlapping statement won't double-count; genuine repeat
+  // purchases inside a single statement are kept.
+  async function onPick(picked: File[]) {
+    if (!picked.length) return
     setBusy(true)
-    setWarnings([])
-    setFileName(file.name)
-    try {
-      const res = await parseFile(file)
-      setRows(res.transactions)
-      setWarnings(res.warnings)
-    } catch (err) {
-      setWarnings([err instanceof Error ? err.message : 'Could not read that file.'])
-      setRows([])
-    } finally {
-      setBusy(false)
+    const seen = new Set<string>([...savedStream.map(dupeKey), ...rows.map(dupeKey)])
+    const added: Transaction[] = []
+    const warns: string[] = []
+    const names: string[] = []
+    let skipped = 0
+    for (const file of picked) {
+      names.push(file.name)
+      try {
+        const res = await parseFile(file)
+        for (const w of res.warnings) warns.push(`${file.name}: ${w}`)
+        for (const t of res.transactions) {
+          const k = dupeKey(t)
+          if (seen.has(k)) {
+            skipped++
+            continue
+          }
+          seen.add(k)
+          added.push(t)
+        }
+      } catch (err) {
+        warns.push(`${file.name}: ${err instanceof Error ? err.message : 'could not be read'}`)
+      }
     }
+    if (skipped) warns.unshift(`Skipped ${skipped} row${skipped === 1 ? '' : 's'} already imported.`)
+    if (!added.length && !warns.length) warns.push('No new transactions found in that file.')
+    setRows((prev) => [...prev, ...added])
+    setFiles((prev) => [...prev, ...names])
+    setWarnings(warns)
+    setBusy(false)
   }
 
   function patch(id: string, fields: Partial<Transaction>) {
@@ -90,20 +119,34 @@ export function ImportModal({ onClose, title, subtitle, onImport }: ImportModalP
             >
               <IconUpload width={32} height={32} />
               <div className="font-medium text-ink">
-                {busy ? 'Reading…' : 'Choose a CSV or PDF statement'}
+                {busy ? 'Reading…' : 'Choose CSV or PDF statements'}
               </div>
-              <div className="text-sm">Your bank export or monthly statement</div>
+              <div className="text-sm">
+                Pick one or several — you can add more before saving, or come back anytime
+              </div>
             </button>
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                 <div className="text-sm text-muted">
                   <span className="text-ink font-medium">{rows.length}</span> rows from{' '}
-                  <span className="text-ink">{fileName}</span> · {inCount} in · {outCount} out
+                  <span className="text-ink">
+                    {files.length} {files.length === 1 ? 'file' : 'files'}
+                  </span>{' '}
+                  · {inCount} in · {outCount} out
                 </div>
-                <button className="btn-subtle text-xs" onClick={flipAll}>
-                  Flip all signs
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn-subtle text-xs inline-flex items-center gap-1"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={busy}
+                  >
+                    <IconUpload width={13} height={13} /> {busy ? 'Reading…' : 'Add more files'}
+                  </button>
+                  <button className="btn-subtle text-xs" onClick={flipAll}>
+                    Flip all signs
+                  </button>
+                </div>
               </div>
               <div className="border border-line rounded-xl overflow-hidden">
                 <div className="max-h-[44vh] overflow-y-auto">
@@ -191,10 +234,11 @@ export function ImportModal({ onClose, title, subtitle, onImport }: ImportModalP
           ref={fileRef}
           type="file"
           accept=".csv,.pdf,text/csv,application/pdf"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) onPick(f)
+            const picked = Array.from(e.target.files ?? [])
+            if (picked.length) onPick(picked)
             e.target.value = ''
           }}
         />

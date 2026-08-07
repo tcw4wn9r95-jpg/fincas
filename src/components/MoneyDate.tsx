@@ -398,7 +398,9 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
         </>
       )}
 
-      {importing && <ImportModal onClose={() => setImporting(false)} />}
+      {importing && (
+        <ImportModal onClose={() => setImporting(false)} existing={data.transactions} />
+      )}
     </div>
   )
 }

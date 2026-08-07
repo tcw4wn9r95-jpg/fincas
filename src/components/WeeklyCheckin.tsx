@@ -234,6 +234,7 @@ export function WeeklyCheckin({ onDiscuss }: { onDiscuss: (prompt: string) => vo
           onClose={() => setImporting(false)}
           title="Import Revolut export"
           subtitle="CSV from Revolut — a sample of your variable spending, parsed on your device"
+          existing={data.sampleTransactions ?? []}
           onImport={importSample}
         />
       )}
