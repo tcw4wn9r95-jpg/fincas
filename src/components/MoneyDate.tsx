@@ -540,7 +540,11 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       )}
 
       {importing && (
-        <ImportModal onClose={() => setImporting(false)} existing={data.transactions} />
+        <ImportModal
+          onClose={() => setImporting(false)}
+          existing={data.transactions}
+          replaceMonths
+        />
       )}
       {teaching && (
         <RuleModal

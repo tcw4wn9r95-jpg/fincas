@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
-import { CATEGORIES, matchRule } from '../lib/categorize'
-import { formatMoney, classNames, uid } from '../lib/format'
+import { CATEGORIES, matchRule, suggestKeyword } from '../lib/categorize'
+import { formatMoney, formatMonthLabel, classNames, uid } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
+import { CategorizeOverlay } from './CategorizeOverlay'
 import { Portal } from './Portal'
 
 // Exact duplicates (date+amount+description) are skipped on import. These helpers
@@ -41,11 +42,22 @@ interface ImportModalProps {
   /** Already-saved transactions for this stream, used to skip re-imports so you
    *  can add statements one at a time without double-counting overlaps. */
   existing?: Transaction[]
+  /** Money-date mode: saving replaces every covered month, so a re-uploaded
+   *  statement overwrites rather than appends. Existing rows for those months
+   *  are pulled into the review so nothing is lost. */
+  replaceMonths?: boolean
 }
 
 const dupeKey = (t: Transaction) => `${t.date}|${t.amount}|${t.description}`
 
-export function ImportModal({ onClose, title, subtitle, onImport, existing }: ImportModalProps) {
+export function ImportModal({
+  onClose,
+  title,
+  subtitle,
+  onImport,
+  existing,
+  replaceMonths,
+}: ImportModalProps) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const fileRef = useRef<HTMLInputElement>(null)
@@ -54,6 +66,7 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
   const [busy, setBusy] = useState(false)
   const [files, setFiles] = useState<string[]>([])
   const [teaching, setTeaching] = useState<Transaction | null>(null)
+  const [categorizing, setCategorizing] = useState(false)
 
   const savedStream = existing ?? data.transactions
 
@@ -83,7 +96,12 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
   async function onPick(picked: File[]) {
     if (!picked.length) return
     setBusy(true)
-    const seen = new Set<string>([...savedStream.map(dupeKey), ...rows.map(dupeKey)])
+    // In replace mode, saving overwrites the month, so we don't skip against
+    // saved data — only against what's already staged (avoids re-picking a file
+    // twice). In append mode we also skip anything already saved.
+    const seen = new Set<string>(
+      replaceMonths ? rows.map(dupeKey) : [...savedStream.map(dupeKey), ...rows.map(dupeKey)],
+    )
     const added: Transaction[] = []
     const warns: string[] = []
     const names: string[] = []
@@ -94,6 +112,9 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
         const res = await parseFile(file)
         for (const w of res.warnings) warns.push(`${file.name}: ${w}`)
         for (const t of res.transactions) {
+          // Check against the pre-existing set only — not rows added earlier in
+          // THIS batch — so two genuinely identical charges in one statement are
+          // both kept, while re-adding an already-staged statement is skipped.
           if (seen.has(dupeKey(t))) {
             skipped++
             continue
@@ -106,9 +127,27 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
         warns.push(`${file.name}: ${err instanceof Error ? err.message : 'could not be read'}`)
       }
     }
-    if (skipped) warns.unshift(`Skipped ${skipped} row${skipped === 1 ? '' : 's'} already imported.`)
+    if (skipped) warns.unshift(`Skipped ${skipped} row${skipped === 1 ? '' : 's'} already staged.`)
     if (!added.length && !warns.length) warns.push('No new transactions found in that file.')
-    setRows((prev) => [...prev, ...added])
+    setRows((prev) => {
+      let next = [...prev, ...added]
+      // Replace mode: fold in the existing transactions for the months this
+      // import touches, so the review shows the whole month and Save can safely
+      // overwrite it without dropping earlier statements.
+      if (replaceMonths) {
+        const monthsCovered = new Set(next.map((r) => r.month))
+        // Avoid re-adding a saved row that a freshly-imported row already covers,
+        // but never dedup saved rows against each other (identical pairs survive).
+        const importedKeys = new Set(next.map(dupeKey))
+        for (const t of savedStream) {
+          if (monthsCovered.has(t.month) && !importedKeys.has(dupeKey(t))) {
+            next.push(t)
+          }
+        }
+        next = next.slice().sort((a, b) => a.date.localeCompare(b.date))
+      }
+      return next
+    })
     setFiles((prev) => [...prev, ...names])
     setWarnings(warns)
     setBusy(false)
@@ -167,10 +206,16 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
     if (!rows.length) return
     if (onImport) {
       onImport(rows)
+    } else if (replaceMonths) {
+      // Overwrite every month this import covers with exactly what's reviewed.
+      const monthsCovered = new Set(rows.map((r) => r.month))
+      update((d) => {
+        d.transactions = [...d.transactions.filter((t) => !monthsCovered.has(t.month)), ...rows]
+        return d
+      })
     } else {
       update((d) => {
         d.transactions = [...d.transactions, ...rows]
-        // Learn any new categories into the budget map silently? No — keep budgets explicit.
         return d
       })
     }
@@ -179,6 +224,13 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
 
   const inCount = rows.filter((r) => r.amount >= 0).length
   const outCount = rows.length - inCount
+  const otherCount = rows.filter((r) => r.category === 'Other').length
+  // Months this import will overwrite that already hold saved data.
+  const replacingMonths = replaceMonths
+    ? Array.from(new Set(rows.map((r) => r.month)))
+        .filter((m) => savedStream.some((t) => t.month === m))
+        .sort()
+    : []
 
   return (
     <Portal>
@@ -221,6 +273,14 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
                   · {inCount} in · {outCount} out
                 </div>
                 <div className="flex items-center gap-2">
+                  {otherCount > 0 && (
+                    <button
+                      className="btn-primary text-xs inline-flex items-center gap-1 py-1.5"
+                      onClick={() => setCategorizing(true)}
+                    >
+                      <IconTag width={13} height={13} /> Categorize {otherCount}
+                    </button>
+                  )}
                   <button
                     className="btn-subtle text-xs inline-flex items-center gap-1"
                     onClick={() => fileRef.current?.click()}
@@ -233,6 +293,17 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
                   </button>
                 </div>
               </div>
+
+              {replacingMonths.length > 0 && (
+                <div className="mb-3 rounded-lg bg-forest-tint/60 border border-line px-4 py-2.5 text-sm text-ink/80">
+                  Saving updates{' '}
+                  {replacingMonths
+                    .map((m) => formatMonthLabel(m + '-01', locale))
+                    .join(', ')}{' '}
+                  — existing transactions for {replacingMonths.length === 1 ? 'that month' : 'those months'}{' '}
+                  are shown here and will be replaced by this reviewed set.
+                </div>
+              )}
 
               {suspectIds.size > 0 && (
                 <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
@@ -372,6 +443,16 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
           }
           onCancel={() => setTeaching(null)}
           onSave={saveRule}
+        />
+      )}
+      {categorizing && (
+        <CategorizeOverlay
+          rows={rows}
+          currency={currency}
+          locale={locale}
+          onSet={(id, category) => patch(id, { category })}
+          onLearn={(t, category) => saveRule(suggestKeyword(t.description), category)}
+          onClose={() => setCategorizing(false)}
         />
       )}
     </div>

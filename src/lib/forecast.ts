@@ -300,6 +300,48 @@ export function monthsWithData(data: AppData): string[] {
   return Array.from(set).sort().reverse()
 }
 
+export interface HistoryPoint {
+  month: string
+  label: string
+  plannedNet: number
+  actualNet: number
+  plannedIn: number
+  actualIn: number
+  plannedOut: number
+  actualOut: number
+  /** Running actual net across the shown months — the real cash-flow track. */
+  cumulativeActual: number
+  cumulativePlanned: number
+}
+
+/**
+ * The track record: for every month that has real transactions, the planned
+ * cash flow (from the plan) against what actually happened (from imports).
+ * Internal transfers are already excluded by computeReview.
+ */
+export function computeHistory(data: AppData): HistoryPoint[] {
+  const months = monthsWithData(data).slice().sort()
+  let cumA = 0
+  let cumP = 0
+  return months.map((m) => {
+    const r = computeReview(data, m)
+    cumA += r.net
+    cumP += r.plannedNet
+    return {
+      month: m,
+      label: shortMonth(m, data.settings.locale),
+      plannedNet: r.plannedNet,
+      actualNet: r.net,
+      plannedIn: r.plannedIncome,
+      actualIn: r.income,
+      plannedOut: r.plannedExpenses,
+      actualOut: r.expenses,
+      cumulativeActual: cumA,
+      cumulativePlanned: cumP,
+    }
+  })
+}
+
 /**
  * The "money date" review: actuals vs. plan for a single month, broken
  * down by category, so the user can see where they stand.

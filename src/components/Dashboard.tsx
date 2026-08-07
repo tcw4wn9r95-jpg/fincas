@@ -6,10 +6,12 @@ import {
   forecastHorizon,
   activeScenario,
   applyScenario,
+  computeHistory,
 } from '../lib/forecast'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
+import { HistoryChart } from './HistoryChart'
 import { ScenarioBar } from './Scenarios'
 import { Logo, IconPlan, IconUpload } from './icons'
 
@@ -47,6 +49,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   const fileRef = useRef<HTMLInputElement>(null)
 
   const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
+  const history = useMemo(() => computeHistory(data), [data])
   const scenario = activeScenario(data)
   const scenarioOverlay = useMemo(
     () =>
@@ -196,6 +199,49 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           scenario={scenarioOverlay}
         />
       </div>
+
+      {history.length > 0 && (
+        <div className="card p-6">
+          <div className="flex items-baseline justify-between mb-4 gap-4 flex-wrap">
+            <div>
+              <h2 className="text-xl">Projected vs actual</h2>
+              <p className="text-sm text-muted">
+                Your real cash flow against the plan · {history.length}{' '}
+                {history.length === 1 ? 'month' : 'months'} of money dates
+              </p>
+            </div>
+            {(() => {
+              const last = history[history.length - 1]
+              const diff = last.cumulativeActual - last.cumulativePlanned
+              return (
+                <div className="text-right">
+                  <div className="label">Net so far vs plan</div>
+                  <div
+                    className={classNames(
+                      'font-serif text-lg',
+                      diff >= 0 ? 'text-forest' : 'text-clay',
+                    )}
+                  >
+                    {fx(diff, { signed: true })}
+                  </div>
+                  <div className="text-xs text-muted">
+                    {fx(last.cumulativeActual)} actual · {fx(last.cumulativePlanned)} planned
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
+          <HistoryChart points={history} currency={currency} locale={locale} />
+          <div className="mt-2 flex items-center gap-4 text-xs text-muted">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm bg-forest" /> Actual net (bar)
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-4 h-0 border-t-2 border-dashed border-gold" /> Planned net
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="card overflow-hidden">
         <div className="px-6 pt-5 pb-3">
