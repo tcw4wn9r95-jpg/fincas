@@ -54,10 +54,12 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
 
   const savedStream = existing ?? data.transactions
 
-  // Parse one or several files and merge them into the review. Rows that already
-  // exist — in what you've saved before, or in what's staged here — are skipped,
-  // so re-adding an overlapping statement won't double-count; genuine repeat
-  // purchases inside a single statement are kept.
+  // Parse one or several files and merge them into the review. Rows matching what
+  // you've already saved or staged are skipped, so re-adding an overlapping
+  // statement won't double-count. Rows are only checked against that pre-existing
+  // set — never against each other in this same batch — so two genuinely distinct
+  // charges with the same date/amount/label inside one statement are both kept
+  // (the soft "possible duplicate" flag surfaces them for a look instead).
   async function onPick(picked: File[]) {
     if (!picked.length) return
     setBusy(true)
@@ -72,12 +74,10 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
         const res = await parseFile(file)
         for (const w of res.warnings) warns.push(`${file.name}: ${w}`)
         for (const t of res.transactions) {
-          const k = dupeKey(t)
-          if (seen.has(k)) {
+          if (seen.has(dupeKey(t))) {
             skipped++
             continue
           }
-          seen.add(k)
           added.push(t)
         }
       } catch (err) {

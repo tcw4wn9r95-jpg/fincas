@@ -23,20 +23,48 @@ function cleanAmount(raw: string): number | null {
     s = s.slice(1, -1)
   }
   if (s.includes('-')) negative = true
-  // Strip currency symbols, thousands separators, spaces, stray signs.
+  // Strip currency symbols, spaces, stray signs — keep digits and separators.
   s = s.replace(/[^0-9.,]/g, '')
-  // If both separators present, assume comma = thousands.
-  if (s.includes(',') && s.includes('.')) s = s.replace(/,/g, '')
-  else if (s.includes(',') && !s.includes('.')) {
-    // Ambiguous: treat comma as decimal only if it looks like cents.
-    s = /,\d{2}$/.test(s) ? s.replace(',', '.') : s.replace(/,/g, '')
+  // Decide which separator is the decimal point by whichever appears last —
+  // handles both "1,234.56" (US/UK) and "1.234,56" (European) statements.
+  const hasDot = s.includes('.')
+  const hasComma = s.includes(',')
+  if (hasDot && hasComma) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.')
+    else s = s.replace(/,/g, '')
+  } else if (hasComma) {
+    s = /,\d{1,2}$/.test(s) ? s.replace(',', '.') : s.replace(/,/g, '')
   }
   const n = parseFloat(s)
   if (Number.isNaN(n)) return null
   return negative ? -Math.abs(n) : n
 }
 
-function normalizeDate(raw: string): string | null {
+/**
+ * Decide whether numeric dates in a batch are day-first (DD/MM, most of the
+ * world) or month-first (MM/DD, US) by looking at the unambiguous ones — a part
+ * over 12 can only be the day. Applied uniformly so a whole statement is read in
+ * one convention, instead of guessing per row.
+ */
+function inferDayFirst(samples: Array<string | undefined>): boolean {
+  let dayFirst = 0
+  let monthFirst = 0
+  for (const s of samples) {
+    const m = String(s ?? '').match(/(\d{1,2})[/.\-](\d{1,2})[/.\-]\d{2,4}/)
+    if (!m) continue
+    const a = Number(m[1])
+    const b = Number(m[2])
+    if (a > 12 && b <= 12) dayFirst++
+    else if (b > 12 && a <= 12) monthFirst++
+  }
+  if (dayFirst && !monthFirst) return true
+  if (monthFirst && !dayFirst) return false
+  // All ambiguous (or conflicting): default day-first — the app's users are in
+  // Europe, and a US statement over a month almost always exposes a day > 12.
+  return dayFirst >= monthFirst
+}
+
+function normalizeDate(raw: string, dayFirst = true): string | null {
   if (!raw) return null
   const s = String(raw).trim()
   // ISO already.
@@ -47,10 +75,16 @@ function normalizeDate(raw: string): string | null {
   if (m) {
     let [, a, b, y] = m
     if (y.length === 2) y = (Number(y) > 50 ? '19' : '20') + y
-    // Heuristic: if first part > 12 it must be the day (DD/MM); otherwise
-    // assume the common US MM/DD. Either way we land on a valid month.
+    // A part over 12 is unambiguously the day; otherwise fall back to the
+    // convention inferred for this batch of dates.
     let month: string, day: string
     if (Number(a) > 12) {
+      day = a
+      month = b
+    } else if (Number(b) > 12) {
+      day = b
+      month = a
+    } else if (dayFirst) {
       day = a
       month = b
     } else {
@@ -100,8 +134,10 @@ export function parseCSV(text: string): ParsedResult {
     warnings.push('No amount/debit/credit column found — amounts may be wrong.')
   }
 
+  const dayFirst = inferDayFirst(result.data.map((row) => row[dateF]))
+
   for (const row of result.data) {
-    const date = normalizeDate(row[dateF])
+    const date = normalizeDate(row[dateF], dayFirst)
     if (!date) continue
     const description = (descF ? row[descF] : '') || 'Transaction'
 
@@ -142,7 +178,11 @@ export async function parseCSVFile(file: File): Promise<ParsedResult> {
 // best-effort pass; the import preview lets the user fix anything.
 
 const LINE_DATE = /(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4})/
-const LINE_AMOUNT = /[-+(]?\s?[$€£]?\s?\d{1,3}(?:[,.]\d{3})*(?:[.,]\d{2})\)?\s*(?:CR|DR)?$/i
+// A trailing amount, with the sign either leading ("-12,34") or trailing
+// ("12,34 -" / "…+" / CR/DR) as many European statements print it. The two
+// decimal places are required so bare years/reference numbers aren't mistaken
+// for amounts.
+const LINE_AMOUNT = /[-+(]?\s?[$€£]?\s?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\)?\s*(?:[-+]|CR|DR)?\s*$/i
 
 export async function parsePDFFile(file: File): Promise<ParsedResult> {
   const warnings: string[] = []
@@ -169,22 +209,32 @@ export async function parsePDFFile(file: File): Promise<ParsedResult> {
     }
   }
 
+  // Infer the date convention once, from every line that looks like a
+  // transaction, so the whole statement is read consistently.
+  const dayFirst = inferDayFirst(
+    lines.filter((l) => LINE_AMOUNT.test(l)).map((l) => l.match(LINE_DATE)?.[0]),
+  )
+  const dateStrip = new RegExp(LINE_DATE.source, 'g')
+
   const out: Transaction[] = []
   for (const line of lines) {
     const dateMatch = line.match(LINE_DATE)
     const amountMatch = line.match(LINE_AMOUNT)
     if (!dateMatch || !amountMatch) continue
-    const date = normalizeDate(dateMatch[0])
+    const date = normalizeDate(dateMatch[0], dayFirst)
     if (!date) continue
     let amount = cleanAmount(amountMatch[0])
-    if (amount == null) continue
-    // "CR" suffix marks a credit (money in); default rows are debits.
-    if (/cr\s*$/i.test(amountMatch[0])) amount = Math.abs(amount)
-    else if (/dr\s*$/i.test(amountMatch[0])) amount = -Math.abs(amount)
+    // Skip zero/blank amounts — they come from stray numbers, not real rows.
+    if (amount == null || amount === 0) continue
+    // A trailing "+"/CR marks a credit (money in), "-"/DR a debit; cleanAmount
+    // already reads a sign embedded in the token.
+    if (/(\+|cr)\s*$/i.test(amountMatch[0])) amount = Math.abs(amount)
+    else if (/(-|dr)\s*$/i.test(amountMatch[0])) amount = -Math.abs(amount)
 
+    // Drop every date token (booking and value dates) from the label.
     let description = line
-      .replace(dateMatch[0], '')
-      .replace(amountMatch[0], '')
+      .replace(amountMatch[0], ' ')
+      .replace(dateStrip, ' ')
       .replace(/\s+/g, ' ')
       .trim()
     if (!description) description = 'Transaction'
