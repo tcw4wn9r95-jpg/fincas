@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
-import { CATEGORIES, matchRule, suggestKeyword } from '../lib/categorize'
+import { CATEGORIES, matchRule, suggestKeyword, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
@@ -67,16 +67,18 @@ export function ImportModal({
   const [files, setFiles] = useState<string[]>([])
   const [teaching, setTeaching] = useState<Transaction | null>(null)
   const [categorizing, setCategorizing] = useState(false)
+  // The most recent auto-learned rule, so a category change can be reviewed/undone.
+  const [learned, setLearned] = useState<{ t: Transaction; match: string; category: string } | null>(null)
 
   const savedStream = existing ?? data.transactions
 
-  // Save a taught rule and apply it to every matching row on screen, so the
-  // lesson takes effect now and on every future import.
+  // Save (or update) a taught rule and apply it to every matching row on screen,
+  // so the lesson takes effect now and on every future import.
   function saveRule(match: string, category: string) {
     const m = match.trim()
     if (m) {
       update((d) => {
-        d.categoryRules = [...(d.categoryRules ?? []), { id: uid(), match: m, category }]
+        d.categoryRules = withRule(d.categoryRules, uid(), m, category)
         return d
       })
       const needle = m.toLowerCase()
@@ -85,6 +87,30 @@ export function ImportModal({
       )
     }
     setTeaching(null)
+  }
+
+  // Changing a category learns the rule too, so the same line always files this
+  // way from now on. A distinctive keyword is required — boilerplate bank lines
+  // just change that one row.
+  function changeCategory(t: Transaction, category: string) {
+    patch(t.id, { category })
+    const match = suggestKeyword(t.description)
+    if (match) {
+      saveRule(match, category)
+      setLearned({ t, match, category })
+    } else {
+      setLearned(null)
+    }
+  }
+
+  function undoLearned() {
+    if (!learned) return
+    const m = learned.match.trim().toLowerCase()
+    update((d) => {
+      d.categoryRules = (d.categoryRules ?? []).filter((r) => r.match.trim().toLowerCase() !== m)
+      return d
+    })
+    setLearned(null)
   }
 
   // Parse one or several files and merge them into the review. Rows matching what
@@ -305,6 +331,23 @@ export function ImportModal({
                 </div>
               )}
 
+              {learned && (
+                <div className="mb-3 rounded-lg bg-forest-tint/60 border border-line px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-ink/80">
+                    Learned: lines containing “<span className="font-medium">{learned.match}</span>”
+                    → {learned.category}. Applied to matching rows and future imports.
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button className="btn-subtle text-xs" onClick={() => setTeaching(learned.t)}>
+                      Edit
+                    </button>
+                    <button className="btn-subtle text-xs" onClick={undoLearned}>
+                      Undo
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {suspectIds.size > 0 && (
                 <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
                   <span className="text-ink/80">
@@ -350,7 +393,7 @@ export function ImportModal({
                             <select
                               className="bg-transparent text-sm outline-none cursor-pointer hover:text-forest"
                               value={r.category}
-                              onChange={(e) => patch(r.id, { category: e.target.value })}
+                              onChange={(e) => changeCategory(r, e.target.value)}
                             >
                               {CATEGORIES.map((c) => (
                                 <option key={c} value={c}>
@@ -451,7 +494,10 @@ export function ImportModal({
           currency={currency}
           locale={locale}
           onSet={(id, category) => patch(id, { category })}
-          onLearn={(t, category) => saveRule(suggestKeyword(t.description), category)}
+          onLearn={(t, category) => {
+            patch(t.id, { category })
+            saveRule(suggestKeyword(t.description), category)
+          }}
           onClose={() => setCategorizing(false)}
         />
       )}

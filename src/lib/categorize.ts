@@ -110,6 +110,23 @@ export function suggestKeyword(description: string): string {
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean)
+  // Only a genuinely distinctive token makes a good rule; if a description is
+  // all boilerplate/numbers, return nothing so we don't learn an over-broad rule.
   const pick = words.find((w) => w.length >= 3 && !NOISE.has(w) && !/^\d+$/.test(w))
-  return pick ?? words[0] ?? ''
+  return pick ?? ''
+}
+
+/** Upsert a rule (match is unique) into a rules array, returning a new array. */
+export function withRule(
+  rules: import('./types').CategoryRule[] | undefined,
+  id: string,
+  match: string,
+  category: string,
+): import('./types').CategoryRule[] {
+  const m = match.trim()
+  const list = rules ? [...rules] : []
+  const i = list.findIndex((r) => r.match.trim().toLowerCase() === m.toLowerCase())
+  if (i >= 0) list[i] = { ...list[i], category }
+  else list.push({ id, match: m, category })
+  return list
 }
