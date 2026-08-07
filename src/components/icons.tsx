@@ -122,6 +122,14 @@ export function IconEdit(p: IconProps) {
     </svg>
   )
 }
+export function IconTag(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+      <circle cx="7.5" cy="7.5" r="1.3" />
+    </svg>
+  )
+}
 export function IconWeek(p: IconProps) {
   return (
     <svg {...base} {...p}>

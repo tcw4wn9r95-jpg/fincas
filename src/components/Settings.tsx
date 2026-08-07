@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useData } from '../store'
 import { exportData, importData, demoData, emptyData } from '../lib/storage'
 import { connectDrive, saveToDrive, loadFromDrive } from '../lib/drive'
-import { IconDownload, IconUpload, IconLock } from './icons'
+import { IconDownload, IconUpload, IconLock, IconTrash, IconTag } from './icons'
 
 const MODELS = [
   { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 — most capable' },
@@ -211,6 +211,45 @@ export function Settings() {
             e.target.value = ''
           }}
         />
+      </div>
+
+      {/* Learned categories */}
+      <div className="card p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <IconTag width={18} height={18} className="text-forest" />
+          <h3 className="text-lg">Learned categories</h3>
+        </div>
+        <p className="text-sm text-muted">
+          Rules you taught while importing — any statement line containing the text is filed
+          under your category automatically. Add them from the import screen's{' '}
+          <IconTag width={12} height={12} className="inline align-[-1px]" /> button.
+        </p>
+        {(data.categoryRules ?? []).length === 0 ? (
+          <p className="text-sm text-muted italic">Nothing learned yet.</p>
+        ) : (
+          <div className="divide-y divide-line rounded-xl border border-line overflow-hidden">
+            {(data.categoryRules ?? []).map((r) => (
+              <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                <span className="text-muted">contains</span>
+                <span className="font-mono text-ink truncate">{r.match}</span>
+                <span className="text-muted">→</span>
+                <span className="pill bg-forest-tint text-forest">{r.category}</span>
+                <button
+                  className="ml-auto text-muted hover:text-clay shrink-0"
+                  aria-label="Delete rule"
+                  onClick={() =>
+                    update((d) => {
+                      d.categoryRules = (d.categoryRules ?? []).filter((x) => x.id !== r.id)
+                      return d
+                    })
+                  }
+                >
+                  <IconTrash width={16} height={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Google Drive */}

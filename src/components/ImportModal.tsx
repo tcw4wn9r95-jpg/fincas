@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
-import { CATEGORIES } from '../lib/categorize'
-import { formatMoney, classNames } from '../lib/format'
+import { CATEGORIES, matchRule, suggestKeyword } from '../lib/categorize'
+import { formatMoney, classNames, uid } from '../lib/format'
 import type { Transaction } from '../lib/types'
-import { IconClose, IconUpload, IconTrash } from './icons'
+import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 
 // Exact duplicates (date+amount+description) are skipped on import. These helpers
 // catch the softer case: same date and amount, description merely similar — e.g.
@@ -51,8 +51,26 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
   const [warnings, setWarnings] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [files, setFiles] = useState<string[]>([])
+  const [teaching, setTeaching] = useState<Transaction | null>(null)
 
   const savedStream = existing ?? data.transactions
+
+  // Save a taught rule and apply it to every matching row on screen, so the
+  // lesson takes effect now and on every future import.
+  function saveRule(match: string, category: string) {
+    const m = match.trim()
+    if (m) {
+      update((d) => {
+        d.categoryRules = [...(d.categoryRules ?? []), { id: uid(), match: m, category }]
+        return d
+      })
+      const needle = m.toLowerCase()
+      setRows((prev) =>
+        prev.map((r) => (r.description.toLowerCase().includes(needle) ? { ...r, category } : r)),
+      )
+    }
+    setTeaching(null)
+  }
 
   // Parse one or several files and merge them into the review. Rows matching what
   // you've already saved or staged are skipped, so re-adding an overlapping
@@ -78,7 +96,9 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
             skipped++
             continue
           }
-          added.push(t)
+          // Your taught rules win over the automatic guess.
+          const learned = matchRule(t.description, data.categoryRules)
+          added.push(learned ? { ...t, category: learned } : t)
         }
       } catch (err) {
         warns.push(`${file.name}: ${err instanceof Error ? err.message : 'could not be read'}`)
@@ -280,13 +300,23 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
                             </button>
                           </td>
                           <td className="px-2 py-1.5">
-                            <button
-                              className="text-muted hover:text-clay"
-                              onClick={() => remove(r.id)}
-                              aria-label="Remove"
-                            >
-                              <IconTrash width={16} height={16} />
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                className="text-muted hover:text-forest"
+                                onClick={() => setTeaching(r)}
+                                title="Teach a rule from this row"
+                                aria-label="Teach a rule"
+                              >
+                                <IconTag width={15} height={15} />
+                              </button>
+                              <button
+                                className="text-muted hover:text-clay"
+                                onClick={() => remove(r.id)}
+                                aria-label="Remove"
+                              >
+                                <IconTrash width={16} height={16} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                         )
@@ -328,6 +358,85 @@ export function ImportModal({ onClose, title, subtitle, onImport, existing }: Im
             e.target.value = ''
           }}
         />
+      </div>
+
+      {teaching && (
+        <RuleModal
+          row={teaching}
+          matchCount={(m) =>
+            rows.filter((r) => m.trim() && r.description.toLowerCase().includes(m.trim().toLowerCase())).length
+          }
+          onCancel={() => setTeaching(null)}
+          onSave={saveRule}
+        />
+      )}
+    </div>
+  )
+}
+
+/** A tiny form to turn "this row means X" into a reusable rule. */
+function RuleModal({
+  row,
+  matchCount,
+  onCancel,
+  onSave,
+}: {
+  row: Transaction
+  matchCount: (match: string) => number
+  onCancel: () => void
+  onSave: (match: string, category: string) => void
+}) {
+  const [match, setMatch] = useState(suggestKeyword(row.description))
+  const [category, setCategory] = useState(row.category === 'Other' ? 'Transfer' : row.category)
+  const affected = matchCount(match)
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-ink/40 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
+      <div className="bg-paper w-full sm:max-w-sm sm:rounded-xl2 rounded-t-xl2 shadow-lift">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+          <h2 className="text-lg">Teach a category</h2>
+          <button className="btn-subtle p-2" onClick={onCancel} aria-label="Close">
+            <IconClose />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-sm text-muted truncate" title={row.description}>
+            From: <span className="text-ink">{row.description}</span>
+          </p>
+          <div>
+            <label className="label">When a description contains</label>
+            <input
+              className="input"
+              value={match}
+              onChange={(e) => setMatch(e.target.value)}
+              placeholder="e.g. carte visa"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="label">Categorise as</label>
+            <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="text-xs text-muted">
+            {match.trim()
+              ? `Applies to ${affected} row${affected === 1 ? '' : 's'} here, and to matching lines on every future import.`
+              : 'Enter some text to match on.'}
+          </p>
+        </div>
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-line">
+          <button className="btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => onSave(match, category)} disabled={!match.trim()}>
+            Save rule
+          </button>
+        </div>
       </div>
     </div>
   )

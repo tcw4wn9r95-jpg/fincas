@@ -93,6 +93,8 @@ export interface AppData {
   goals: Goal[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
+  /** User-taught rules that override auto-categorisation on future imports. */
+  categoryRules?: CategoryRule[]
   /** Saved what-if scenarios layered over the plan (on-device only). */
   scenarios?: Scenario[]
   /** The scenario currently overlaid on the forecast, if any. */
@@ -109,6 +111,17 @@ export interface AppData {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+}
+
+/**
+ * A user-taught categorisation rule: any imported description containing
+ * `match` (case-insensitive) is filed under `category`. Lets people explain
+ * what their bank's cryptic lines actually are, and have it stick next time.
+ */
+export interface CategoryRule {
+  id: string
+  match: string
+  category: string
 }
 
 // ── Scenarios ─────────────────────────────────────────────────────

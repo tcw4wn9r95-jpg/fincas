@@ -72,3 +72,37 @@ export function categorize(description: string, amount: number): string {
   // Fall back on the sign: a positive amount with no match is likely income.
   return amount > 0 ? 'Income' : 'Other'
 }
+
+// ── User-taught rules ─────────────────────────────────────────────
+
+/** The category a user rule assigns to a description, or null if none match. */
+export function matchRule(
+  description: string,
+  rules: import('./types').CategoryRule[] | undefined,
+): string | null {
+  if (!rules?.length) return null
+  const d = description.toLowerCase()
+  for (const r of rules) {
+    const m = r.match.trim().toLowerCase()
+    if (m && d.includes(m)) return r.category
+  }
+  return null
+}
+
+// Generic banking words that make a poor rule keyword — skipped when guessing.
+const NOISE = new Set([
+  'debit', 'credit', 'transfer', 'direct', 'standing', 'order', 'instant', 'sepa',
+  'payment', 'carte', 'visa', 'tpv', 'fees', 'for', 'the', 'and', 'favour', 'from',
+  'net', 'card', 'purchase', 'pos', 'www', 'com',
+])
+
+/** A sensible starting keyword for a new rule, drawn from a noisy description. */
+export function suggestKeyword(description: string): string {
+  const words = description
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  const pick = words.find((w) => w.length >= 3 && !NOISE.has(w) && !/^\d+$/.test(w))
+  return pick ?? words[0] ?? ''
+}
