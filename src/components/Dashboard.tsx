@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react'
 import { useData } from '../store'
 import {
   buildForecast,
+  buildLedger,
   startingBalance,
   forecastHorizon,
   activeScenario,
@@ -49,6 +50,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   const fileRef = useRef<HTMLInputElement>(null)
 
   const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
+  const ledger = useMemo(() => buildLedger(data), [data])
   const history = useMemo(() => computeHistory(data), [data])
   const scenario = activeScenario(data)
   const scenarioOverlay = useMemo(
@@ -246,7 +248,10 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
       <div className="card overflow-hidden">
         <div className="px-6 pt-5 pb-3">
           <h2 className="text-xl">The actual numbers</h2>
-          <p className="text-sm text-muted">Month-by-month projection</p>
+          <p className="text-sm text-muted">
+            Month by month — <span className="text-forest">actual</span> from your money dates,
+            then projected
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -261,32 +266,40 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
               </tr>
             </thead>
             <tbody>
-              {forecast.map((f, i) => (
-                <tr
-                  key={f.month}
-                  className={classNames(
-                    'border-b border-line/60',
-                    i === 0 && 'bg-forest-tint/50',
-                  )}
-                >
-                  <td className="px-6 py-2.5 whitespace-nowrap">
-                    {formatMonthLabel(f.month, locale)}
-                    {i === 0 && <span className="ml-2 pill bg-forest-tint text-forest">now</span>}
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-muted tabular-nums">{fx(f.income)}</td>
-                  <td className="px-4 py-2.5 text-right text-muted tabular-nums">{fx(f.fixedExpenses)}</td>
-                  <td className="px-4 py-2.5 text-right text-muted tabular-nums">{fx(f.variableExpenses)}</td>
-                  <td
+              {ledger.map((f) => {
+                const isNow = f.month === forecast[0]?.month
+                return (
+                  <tr
+                    key={f.month}
                     className={classNames(
-                      'px-4 py-2.5 text-right font-medium tabular-nums',
-                      f.net >= 0 ? 'text-forest' : 'text-clay',
+                      'border-b border-line/60',
+                      isNow && 'bg-forest-tint/50',
+                      f.actual && !isNow && 'bg-forest-tint/15',
                     )}
                   >
-                    {fx(f.net, { signed: true })}
-                  </td>
-                  <td className="px-6 py-2.5 text-right font-medium tabular-nums">{fx(f.balance)}</td>
-                </tr>
-              ))}
+                    <td className="px-6 py-2.5 whitespace-nowrap">
+                      {formatMonthLabel(f.month, locale)}
+                      {isNow ? (
+                        <span className="ml-2 pill bg-forest-tint text-forest">now</span>
+                      ) : f.actual ? (
+                        <span className="ml-2 pill bg-forest/10 text-forest">actual</span>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-muted tabular-nums">{fx(f.income)}</td>
+                    <td className="px-4 py-2.5 text-right text-muted tabular-nums">{fx(f.fixedExpenses)}</td>
+                    <td className="px-4 py-2.5 text-right text-muted tabular-nums">{fx(f.variableExpenses)}</td>
+                    <td
+                      className={classNames(
+                        'px-4 py-2.5 text-right font-medium tabular-nums',
+                        f.net >= 0 ? 'text-forest' : 'text-clay',
+                      )}
+                    >
+                      {fx(f.net, { signed: true })}
+                    </td>
+                    <td className="px-6 py-2.5 text-right font-medium tabular-nums">{fx(f.balance)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

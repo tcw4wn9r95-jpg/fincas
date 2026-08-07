@@ -208,6 +208,75 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
   return out
 }
 
+/** Category-based fixed/variable split for actual transactions (no plan line to ask). */
+function expenseCategoryIsVariable(category: string): boolean {
+  return !FIXED_CATS.has(category) && !PROVISION_CATS.has(category)
+}
+
+export interface LedgerPoint extends ForecastPoint {
+  /** True where the row's figures come from imported actuals, not the plan. */
+  actual: boolean
+}
+
+/**
+ * A month-by-month ledger from the earliest money-dated month through the end of
+ * the forecast: past months use real imported figures, current and future months
+ * use the plan. Balances roll continuously so the actual past flows straight into
+ * the projected future, meeting the current balance at "now".
+ */
+export function buildLedger(data: AppData): LedgerPoint[] {
+  const now = currentMonth()
+  const locale = data.settings.locale
+  const horizon = monthRange(now, forecastHorizon(data))
+  const lastMonth = horizon[horizon.length - 1]
+  const withData = new Set(monthsWithData(data))
+  const earliestPast = monthsWithData(data)
+    .filter((m) => m < now)
+    .sort()[0]
+  const start = earliestPast && earliestPast < now ? earliestPast : now
+
+  // Build the contiguous month span.
+  const months: string[] = []
+  for (let m = start; m <= lastMonth; m = addMonths(m, 1)) months.push(m)
+
+  // Per-month figures: real actuals for past months that have data, else the plan.
+  const rows = months.map((month) => {
+    if (month < now && withData.has(month)) {
+      const { income, expense } = actualsByCategory(data, month)
+      const inc = Object.values(income).reduce((a, b) => a + b, 0)
+      let fixed = 0
+      let variable = 0
+      for (const [cat, amt] of Object.entries(expense)) {
+        if (expenseCategoryIsVariable(cat)) variable += amt
+        else fixed += amt
+      }
+      return { month, income: inc, fixed, variable, expenses: fixed + variable, net: inc - (fixed + variable), actual: true }
+    }
+    const { income, fixed, variable, expenses } = plannedFlowsForMonth(data, month)
+    return { month, income, fixed, variable, expenses, net: income - expenses, actual: false }
+  })
+
+  // Anchor: startingBalance is the balance at the start of `now`. Roll back over
+  // the shown past months so the running total lands exactly there.
+  const netBeforeNow = rows.filter((r) => r.month < now).reduce((s, r) => s + r.net, 0)
+  let running = startingBalance(data) - netBeforeNow
+  return rows.map((r) => {
+    running += r.net
+    return {
+      month: r.month,
+      label: shortMonth(r.month, locale),
+      income: r.income,
+      expenses: r.expenses,
+      fixedExpenses: r.fixed,
+      variableExpenses: r.variable,
+      net: r.net,
+      balance: running,
+      projected: r.month > now,
+      actual: r.actual,
+    }
+  })
+}
+
 // ── Scenarios ─────────────────────────────────────────────────────
 
 /** Find a scenario by id (usually the active one). */
