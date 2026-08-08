@@ -10,6 +10,7 @@ import {
 } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey } from '../lib/format'
 import { CATEGORIES, withRule } from '../lib/categorize'
+import { aiCategorize, hasApiKey } from '../lib/claude'
 import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
@@ -57,6 +58,8 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const [openCat, setOpenCat] = useState<string | null>(null)
   const [teaching, setTeaching] = useState<Transaction | null>(null)
   const [reconciling, setReconciling] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiError, setAiError] = useState('')
 
   // The picker always offers the current month and the previous six, so you can
   // back-fill and review recent months (e.g. all of July on Aug 7) even before
@@ -136,6 +139,31 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       return d
     })
   }
+  // Categorise the not-yet-reconciled lines with Claude, primed on the user's
+  // whole history, then leave them as suggestions to confirm.
+  async function runAiCategorize() {
+    const targets = monthTxs.filter((t) => !t.reconciled)
+    if (!targets.length || aiBusy) return
+    setAiBusy(true)
+    setAiError('')
+    try {
+      const result = await aiCategorize(data, targets)
+      if (result.size) {
+        update((d) => {
+          for (const t of d.transactions) {
+            const c = result.get(t.id)
+            if (c) t.category = c
+          }
+          return d
+        })
+      }
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'AI categorisation failed.')
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
   function deleteMonth() {
     if (
       !confirm(
@@ -688,6 +716,9 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           }}
           onToggle={setReconciled}
           onConfirmAll={reconcileAllSuggestions}
+          onAiCategorize={hasApiKey(data) ? runAiCategorize : undefined}
+          aiBusy={aiBusy}
+          aiError={aiError}
           onClose={() => setReconciling(false)}
         />
       )}

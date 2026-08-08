@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import type { Transaction } from '../lib/types'
-import { IconClose, IconCheck } from './icons'
+import { IconClose, IconCheck, IconSparkle } from './icons'
 import { Portal } from './Portal'
 
 /**
@@ -19,6 +19,9 @@ export function ReconcileOverlay({
   onSetCategory,
   onToggle,
   onConfirmAll,
+  onAiCategorize,
+  aiBusy,
+  aiError,
   onClose,
 }: {
   month: string
@@ -28,6 +31,9 @@ export function ReconcileOverlay({
   onSetCategory: (id: string, category: string) => void
   onToggle: (id: string, reconciled: boolean) => void
   onConfirmAll: () => void
+  onAiCategorize?: () => void
+  aiBusy?: boolean
+  aiError?: string
   onClose: () => void
 }) {
   // Needs-attention first (unreconciled, Other on top), then the rest by date.
@@ -38,6 +44,7 @@ export function ReconcileOverlay({
   const done = txs.filter((t) => t.reconciled).length
   const total = txs.length
   const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other').length
+  const unreconciled = total - done
   const pct = total ? Math.round((done / total) * 100) : 0
 
   return (
@@ -59,12 +66,26 @@ export function ReconcileOverlay({
             <div className="mt-3 h-1.5 rounded-full bg-line overflow-hidden">
               <div className="h-full bg-forest rounded-full transition-all" style={{ width: `${pct}%` }} />
             </div>
-            {suggestable > 0 && (
-              <button className="btn-ghost text-sm mt-3 inline-flex items-center gap-1.5" onClick={onConfirmAll}>
-                <IconCheck width={15} height={15} /> Confirm {suggestable} suggestion
-                {suggestable === 1 ? '' : 's'}
-              </button>
-            )}
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              {onAiCategorize && unreconciled > 0 && (
+                <button
+                  className="btn-ghost text-sm inline-flex items-center gap-1.5"
+                  onClick={onAiCategorize}
+                  disabled={aiBusy}
+                  title="Suggest categories from your history with Claude"
+                >
+                  <IconSparkle width={15} height={15} />
+                  {aiBusy ? 'Thinking…' : 'Auto-categorize with AI'}
+                </button>
+              )}
+              {suggestable > 0 && (
+                <button className="btn-ghost text-sm inline-flex items-center gap-1.5" onClick={onConfirmAll}>
+                  <IconCheck width={15} height={15} /> Confirm {suggestable} suggestion
+                  {suggestable === 1 ? '' : 's'}
+                </button>
+              )}
+            </div>
+            {aiError && <p className="text-xs text-clay mt-2">{aiError}</p>}
           </div>
 
           <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-2.5">

@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { AppData, ChatMessage } from './types'
+import type { AppData, ChatMessage, Transaction } from './types'
 import { financialSummary, monthReviewText } from './forecast'
+import { CATEGORIES } from './categorize'
+import { normDescription } from './format'
 
 // The assistant runs entirely from the browser using the user's own
 // Anthropic API key (kept on-device). Their financial data is sent only
@@ -36,6 +38,90 @@ export interface StreamHandlers {
 
 export function hasApiKey(data: AppData): boolean {
   return Boolean(data.settings.apiKey?.trim())
+}
+
+// ── AI categorisation ─────────────────────────────────────────────
+// Learns from every category the user has ever assigned: their past choices are
+// fed to Claude as examples, so recurring merchants that never match a rule
+// exactly (a changing date/reference, a different amount) stop coming in wrong.
+
+/** Distinct past choices (newest / reconciled first), deduped by description. */
+function categoryExamples(data: AppData, limit = 200): Transaction[] {
+  const sorted = [...data.transactions].sort(
+    (a, b) => (b.reconciled ? 1 : 0) - (a.reconciled ? 1 : 0),
+  )
+  const seen = new Map<string, Transaction>()
+  for (const t of sorted) {
+    if (t.category === 'Other') continue
+    const key = normDescription(t.description)
+    if (!seen.has(key)) seen.set(key, t)
+  }
+  return Array.from(seen.values()).slice(0, limit)
+}
+
+/**
+ * Ask Claude to categorise transactions, primed with the user's own history so
+ * it matches their habits (including amount-dependent ones, e.g. a standing
+ * order that's a loan at one amount and an internal transfer at another).
+ * Returns a map of transaction id → category (only valid categories).
+ */
+export async function aiCategorize(
+  data: AppData,
+  txs: Transaction[],
+): Promise<Map<string, string>> {
+  const apiKey = data.settings.apiKey?.trim()
+  if (!apiKey) throw new Error('Add your Anthropic API key in Settings to use AI categorisation.')
+  if (!txs.length) return new Map()
+
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
+  const examples = categoryExamples(data)
+  const exLines = examples.map((e) => `${e.description} | ${e.amount} | ${e.category}`).join('\n')
+  const txLines = txs.map((t, i) => `${i} | ${t.description} | ${t.amount}`).join('\n')
+
+  const system = [
+    'You categorise bank-statement transactions for a personal-finance app.',
+    `Assign each one exactly one category from this list, copied verbatim: ${CATEGORIES.join(', ')}.`,
+    "Learn the user's own habits from the history below and prefer their patterns over generic guesses — including when the same wording maps to different categories depending on the amount.",
+    'Money coming in (positive) that is salary, a refund, or a transfer in is Income or Transfer, never a spending category. Money the user moves to their own accounts (e.g. top-ups to Revolut) is Internal.',
+    examples.length
+      ? 'How the user has categorised before (description | amount | category):\n' + exLines
+      : 'The user has no history yet — use sensible defaults.',
+  ].join('\n\n')
+
+  const userMsg =
+    'Categorise each transaction below. Reply with ONLY a JSON array, one object per line index, like ' +
+    '[{"i":0,"category":"Food"}], and nothing else.\n\n' +
+    'index | description | amount\n' +
+    txLines
+
+  const msg = await client.messages.create({
+    model: data.settings.model || 'claude-opus-4-8',
+    max_tokens: Math.min(4096, 200 + txs.length * 16),
+    system,
+    messages: [{ role: 'user', content: userMsg }],
+  })
+
+  const text = msg.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+  const start = text.indexOf('[')
+  const end = text.lastIndexOf(']')
+  if (start < 0 || end < 0) throw new Error('The model returned an unexpected response.')
+  let parsed: Array<{ i: number; category: string }>
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1))
+  } catch {
+    throw new Error('Could not read the model’s response.')
+  }
+
+  const valid = new Set<string>(CATEGORIES)
+  const out = new Map<string, string>()
+  for (const { i, category } of parsed) {
+    const t = txs[i]
+    if (t && valid.has(category)) out.set(t.id, category)
+  }
+  return out
 }
 
 export async function askClaude(
