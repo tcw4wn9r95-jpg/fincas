@@ -658,6 +658,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           onClose={() => setImporting(false)}
           existing={data.transactions}
           replaceMonths
+          onSaved={() => setReconciling(true)}
         />
       )}
       {teaching && (

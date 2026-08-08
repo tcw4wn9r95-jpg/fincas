@@ -44,8 +44,11 @@ interface ImportModalProps {
   existing?: Transaction[]
   /** Money-date mode: saving replaces every covered month, so a re-uploaded
    *  statement overwrites rather than appends. Existing rows for those months
-   *  are pulled into the review so nothing is lost. */
+   *  are pulled into the review so nothing is lost. Also makes the review a
+   *  verify-only step (no categorising) — that happens once, in reconcile. */
   replaceMonths?: boolean
+  /** Called after a successful save (money date opens reconcile from here). */
+  onSaved?: () => void
 }
 
 const dupeKey = (t: Transaction) => `${t.date}|${t.amount}|${t.description}`
@@ -57,6 +60,7 @@ export function ImportModal({
   onImport,
   existing,
   replaceMonths,
+  onSaved,
 }: ImportModalProps) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
@@ -243,6 +247,7 @@ export function ImportModal({
       })
     }
     onClose()
+    onSaved?.()
   }
 
   const inCount = rows.filter((r) => r.amount >= 0).length
@@ -263,7 +268,10 @@ export function ImportModal({
           <div>
             <h2 className="text-xl">{title ?? 'Import a statement'}</h2>
             <p className="text-sm text-muted">
-              {subtitle ?? 'CSV or PDF — parsed privately on your device'}
+              {subtitle ??
+                (replaceMonths
+                  ? 'Check the amounts look right — you’ll sort categories next, in reconcile'
+                  : 'CSV or PDF — parsed privately on your device')}
             </p>
           </div>
           <button className="btn-subtle p-2" onClick={onClose} aria-label="Close">
@@ -296,7 +304,7 @@ export function ImportModal({
                   · {inCount} in · {outCount} out
                 </div>
                 <div className="flex items-center gap-2">
-                  {otherCount > 0 && (
+                  {otherCount > 0 && !replaceMonths && (
                     <button
                       className="btn-primary text-xs inline-flex items-center gap-1 py-1.5"
                       onClick={() => setCategorizing(true)}
@@ -348,7 +356,7 @@ export function ImportModal({
                       <tr className="text-left text-muted border-b border-line">
                         <th className="px-3 py-2 font-medium">Date</th>
                         <th className="px-3 py-2 font-medium">Description</th>
-                        <th className="px-3 py-2 font-medium">Category</th>
+                        {!replaceMonths && <th className="px-3 py-2 font-medium">Category</th>}
                         <th className="px-3 py-2 font-medium text-right">Amount</th>
                         <th className="px-2 py-2" />
                       </tr>
@@ -370,19 +378,21 @@ export function ImportModal({
                               </span>
                             )}
                           </td>
-                          <td className="px-3 py-1.5">
-                            <select
-                              className="bg-transparent text-sm outline-none cursor-pointer hover:text-forest"
-                              value={r.category}
-                              onChange={(e) => changeCategory(r, e.target.value)}
-                            >
-                              {CATEGORIES.map((c) => (
-                                <option key={c} value={c}>
-                                  {c}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
+                          {!replaceMonths && (
+                            <td className="px-3 py-1.5">
+                              <select
+                                className="bg-transparent text-sm outline-none cursor-pointer hover:text-forest"
+                                value={r.category}
+                                onChange={(e) => changeCategory(r, e.target.value)}
+                              >
+                                {CATEGORIES.map((c) => (
+                                  <option key={c} value={c}>
+                                    {c}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                          )}
                           <td
                             className={classNames(
                               'px-3 py-1.5 text-right font-medium tabular-nums',
@@ -399,14 +409,16 @@ export function ImportModal({
                           </td>
                           <td className="px-2 py-1.5">
                             <div className="flex items-center gap-1.5">
-                              <button
-                                className="text-muted hover:text-forest"
-                                onClick={() => setTeaching(r)}
-                                title="Teach a rule from this row"
-                                aria-label="Teach a rule"
-                              >
-                                <IconTag width={15} height={15} />
-                              </button>
+                              {!replaceMonths && (
+                                <button
+                                  className="text-muted hover:text-forest"
+                                  onClick={() => setTeaching(r)}
+                                  title="Teach a rule from this row"
+                                  aria-label="Teach a rule"
+                                >
+                                  <IconTag width={15} height={15} />
+                                </button>
+                              )}
                               <button
                                 className="text-muted hover:text-clay"
                                 onClick={() => remove(r.id)}
