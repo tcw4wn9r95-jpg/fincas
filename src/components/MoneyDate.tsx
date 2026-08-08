@@ -8,8 +8,8 @@ import {
   spendSeriesByCategory,
   streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, normDescription } from '../lib/format'
-import { CATEGORIES, suggestKeyword, withRule } from '../lib/categorize'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey } from '../lib/format'
+import { CATEGORIES, withRule } from '../lib/categorize'
 import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
@@ -56,7 +56,6 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   // turned into a rule.
   const [openCat, setOpenCat] = useState<string | null>(null)
   const [teaching, setTeaching] = useState<Transaction | null>(null)
-  const [learned, setLearned] = useState<{ match: string; category: string } | null>(null)
   const [reconciling, setReconciling] = useState(false)
 
   // The picker always offers the current month and the previous six, so you can
@@ -102,17 +101,18 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   )
   const reconciledCount = monthTxs.filter((t) => t.reconciled).length
 
-  // Reconciling one line reconciles every line with the exact same description
-  // — in this month and every other — and gives them the same category. Decide
-  // a recurring line once; the 10 copies (and next month's) settle themselves.
+  // Reconciling one line reconciles every line that is the same recurring item
+  // — same description AND amount — in this month and every other, with the same
+  // category. Decide a recurring line once; the copies (and next month's) settle
+  // themselves. Same wording but a different amount stays independent.
   function setReconciled(id: string, reconciled: boolean) {
     update((d) => {
       const t = d.transactions.find((x) => x.id === id)
       if (!t) return d
-      const key = normDescription(t.description)
+      const key = txMatchKey(t.description, t.amount)
       const category = t.category
       for (const x of d.transactions) {
-        if (normDescription(x.description) !== key) continue
+        if (txMatchKey(x.description, x.amount) !== key) continue
         x.reconciled = reconciled
         if (reconciled) x.category = category
       }
@@ -123,10 +123,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
     update((d) => {
       for (const t of d.transactions) {
         if (t.month === activeMonth && !t.reconciled && t.category !== 'Other') {
-          const key = normDescription(t.description)
+          const key = txMatchKey(t.description, t.amount)
           const category = t.category
           for (const x of d.transactions) {
-            if (normDescription(x.description) === key) {
+            if (txMatchKey(x.description, x.amount) === key) {
               x.reconciled = true
               x.category = category
             }
@@ -147,37 +147,22 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       d.transactions = d.transactions.filter((t) => t.month !== activeMonth)
       return d
     })
-    setLearned(null)
   }
 
-  // Changing a saved transaction's category also learns it: the same line will
-  // always file this way, and every matching saved line is re-filed to match.
+  // Changing a category re-files every line that is the same recurring item
+  // (same description AND amount) — so identical lines follow, but a same-worded
+  // line with a different amount is left alone. For a broad "any line like this"
+  // rule, use the tag (Teach) button instead.
   function setTxCategory(id: string, category: string) {
-    const t = data.transactions.find((x) => x.id === id)
-    const match = t ? suggestKeyword(t.description) : ''
-    const needle = match.toLowerCase()
     update((d) => {
-      const tx = d.transactions.find((x) => x.id === id)
-      if (tx) tx.category = category
-      if (match) {
-        d.categoryRules = withRule(d.categoryRules, uid(), match, category)
-        for (const x of d.transactions) {
-          if (x.description.toLowerCase().includes(needle)) x.category = category
-        }
+      const t = d.transactions.find((x) => x.id === id)
+      if (!t) return d
+      const key = txMatchKey(t.description, t.amount)
+      for (const x of d.transactions) {
+        if (txMatchKey(x.description, x.amount) === key) x.category = category
       }
       return d
     })
-    setLearned(match ? { match, category } : null)
-  }
-
-  function undoLearned() {
-    if (!learned) return
-    const m = learned.match.trim().toLowerCase()
-    update((d) => {
-      d.categoryRules = (d.categoryRules ?? []).filter((r) => r.match.trim().toLowerCase() !== m)
-      return d
-    })
-    setLearned(null)
   }
 
   // Teach a rule from a saved transaction: remember it and re-file every saved
@@ -523,17 +508,6 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                 <span className="text-clay">red</span> means over plan
               </p>
             </div>
-            {learned && (
-              <div className="mx-6 mb-2 rounded-lg bg-forest-tint/60 border border-line px-4 py-2 text-sm flex flex-wrap items-center justify-between gap-2">
-                <span className="text-ink/80">
-                  Learned: lines containing “<span className="font-medium">{learned.match}</span>”
-                  → {learned.category}, now and next month.
-                </span>
-                <button className="btn-subtle text-xs shrink-0" onClick={undoLearned}>
-                  Undo
-                </button>
-              </div>
-            )}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>

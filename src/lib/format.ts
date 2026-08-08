@@ -70,6 +70,15 @@ export function normDescription(description: string): string {
 }
 
 /**
+ * Identity key for "the same recurring line": description AND amount. Two lines
+ * with the same wording but different amounts (e.g. a standing order that's a
+ * loan one month, a transfer another) are kept distinct.
+ */
+export function txMatchKey(description: string, amount: number): string {
+  return `${normDescription(description)}|${amount}`
+}
+
+/**
  * Parse a money amount typed by a human, accepting either a comma or a dot as
  * the decimal separator (a euro/es-ES keyboard produces a comma). Returns NaN
  * for blank/garbage so callers can decide the fallback.

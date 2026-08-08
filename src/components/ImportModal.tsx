@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
 import { CATEGORIES, matchRule, suggestKeyword, withRule } from '../lib/categorize'
-import { formatMoney, formatMonthLabel, classNames, uid, normDescription } from '../lib/format'
+import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -67,8 +67,6 @@ export function ImportModal({
   const [files, setFiles] = useState<string[]>([])
   const [teaching, setTeaching] = useState<Transaction | null>(null)
   const [categorizing, setCategorizing] = useState(false)
-  // The most recent auto-learned rule, so a category change can be reviewed/undone.
-  const [learned, setLearned] = useState<{ t: Transaction; match: string; category: string } | null>(null)
 
   const savedStream = existing ?? data.transactions
 
@@ -89,28 +87,15 @@ export function ImportModal({
     setTeaching(null)
   }
 
-  // Changing a category learns the rule too, so the same line always files this
-  // way from now on. A distinctive keyword is required — boilerplate bank lines
-  // just change that one row.
+  // Changing a category re-files every staged row that's the same recurring item
+  // (same description AND amount), so identical lines follow while a same-worded
+  // line with a different amount stays independent. For a broad keyword rule,
+  // use the tag (Teach) button on the row.
   function changeCategory(t: Transaction, category: string) {
-    patch(t.id, { category })
-    const match = suggestKeyword(t.description)
-    if (match) {
-      saveRule(match, category)
-      setLearned({ t, match, category })
-    } else {
-      setLearned(null)
-    }
-  }
-
-  function undoLearned() {
-    if (!learned) return
-    const m = learned.match.trim().toLowerCase()
-    update((d) => {
-      d.categoryRules = (d.categoryRules ?? []).filter((r) => r.match.trim().toLowerCase() !== m)
-      return d
-    })
-    setLearned(null)
+    const key = txMatchKey(t.description, t.amount)
+    setRows((prev) =>
+      prev.map((r) => (txMatchKey(r.description, r.amount) === key ? { ...r, category } : r)),
+    )
   }
 
   // Parse one or several files and merge them into the review. Rows matching what
@@ -133,7 +118,7 @@ export function ImportModal({
     const reconciledMemory = new Map<string, string>()
     if (replaceMonths) {
       for (const t of savedStream) {
-        if (t.reconciled) reconciledMemory.set(normDescription(t.description), t.category)
+        if (t.reconciled) reconciledMemory.set(txMatchKey(t.description, t.amount), t.category)
       }
     }
     const added: Transaction[] = []
@@ -156,7 +141,7 @@ export function ImportModal({
           // An exact description you've reconciled before wins outright (and
           // comes in already reconciled); otherwise your taught keyword rules
           // beat the automatic guess.
-          const remembered = reconciledMemory.get(normDescription(t.description))
+          const remembered = reconciledMemory.get(txMatchKey(t.description, t.amount))
           const learned = matchRule(t.description, data.categoryRules)
           if (remembered) added.push({ ...t, category: remembered, reconciled: true })
           else added.push(learned ? { ...t, category: learned } : t)
@@ -343,22 +328,6 @@ export function ImportModal({
                 </div>
               )}
 
-              {learned && (
-                <div className="mb-3 rounded-lg bg-forest-tint/60 border border-line px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-ink/80">
-                    Learned: lines containing “<span className="font-medium">{learned.match}</span>”
-                    → {learned.category}. Applied to matching rows and future imports.
-                  </span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button className="btn-subtle text-xs" onClick={() => setTeaching(learned.t)}>
-                      Edit
-                    </button>
-                    <button className="btn-subtle text-xs" onClick={undoLearned}>
-                      Undo
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {suspectIds.size > 0 && (
                 <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
