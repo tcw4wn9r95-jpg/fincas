@@ -40,6 +40,53 @@ export function hasApiKey(data: AppData): boolean {
   return Boolean(data.settings.apiKey?.trim())
 }
 
+/** Stream tailored recommendations from the user's own numbers into the Insights view. */
+export async function streamInsights(data: AppData, handlers: StreamHandlers): Promise<void> {
+  const apiKey = data.settings.apiKey?.trim()
+  if (!apiKey) {
+    handlers.onError('Add your Anthropic API key in Settings to get AI recommendations.')
+    return
+  }
+  const name = data.settings.name?.trim()
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
+  const system = [
+    'You are a calm, sharp personal financial advisor writing a short "insights" briefing.',
+    name ? `You are advising ${name}.` : '',
+    'From the snapshot, surface 3–6 specific, actionable insights and recommendations as concise markdown bullets.',
+    'Ground every point in their real figures and currency. Call out trends (rising/falling categories), where they run over plan, their savings rate, and one or two concrete adjustments with rough euro impact.',
+    'Be direct and practical — no generic advice, no filler, no restating the whole snapshot. Lead each bullet with the takeaway.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+  try {
+    const stream = client.messages.stream({
+      model: data.settings.model || 'claude-opus-4-8',
+      max_tokens: 1200,
+      system,
+      messages: [
+        {
+          role: 'user',
+          content: `Here is my financial snapshot:\n\n${financialSummary(data)}\n\nGive me your top insights and recommendations.`,
+        },
+      ],
+    })
+    stream.on('text', (delta) => handlers.onText(delta))
+    const final = await stream.finalMessage()
+    handlers.onDone(
+      final.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map((b) => b.text)
+        .join(''),
+    )
+  } catch (err) {
+    let message = 'Something went wrong talking to Claude.'
+    if (err instanceof Anthropic.AuthenticationError) message = 'Your API key was rejected. Check it in Settings.'
+    else if (err instanceof Anthropic.APIError) message = `API error: ${err.message}`
+    else if (err instanceof Error) message = err.message
+    handlers.onError(message)
+  }
+}
+
 // ── AI categorisation ─────────────────────────────────────────────
 // Learns from every category the user has ever assigned: their past choices are
 // fed to Claude as examples, so recurring merchants that never match a rule

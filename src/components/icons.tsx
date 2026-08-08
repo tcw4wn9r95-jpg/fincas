@@ -130,6 +130,14 @@ export function IconSparkle(p: IconProps) {
     </svg>
   )
 }
+export function IconInsights(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M9 18h6M10 21h4" />
+      <path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3Z" />
+    </svg>
+  )
+}
 export function IconCheck(p: IconProps) {
   return (
     <svg {...base} {...p}>

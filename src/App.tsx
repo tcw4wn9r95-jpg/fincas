@@ -3,6 +3,7 @@ import { Splash } from './components/Splash'
 import { Dashboard } from './components/Dashboard'
 import { MoneyDate } from './components/MoneyDate'
 import { WeeklyCheckin } from './components/WeeklyCheckin'
+import { Insights } from './components/Insights'
 import { Chat } from './components/Chat'
 import { Plan } from './components/Plan'
 import { Settings } from './components/Settings'
@@ -11,13 +12,14 @@ import {
   IconDashboard,
   IconMoneyDate,
   IconWeek,
+  IconInsights,
   IconChat,
   IconPlan,
   IconSettings,
 } from './components/icons'
 import { classNames } from './lib/format'
 
-type Tab = 'overview' | 'weekly' | 'money-date' | 'assistant' | 'plan' | 'settings'
+type Tab = 'overview' | 'weekly' | 'money-date' | 'insights' | 'assistant' | 'plan' | 'settings'
 
 export type AssistantSeed = { month?: string; prompt?: string; nonce: number }
 
@@ -25,6 +27,7 @@ const NAV: { id: Tab; label: string; icon: typeof IconDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: IconDashboard },
   { id: 'weekly', label: 'Weekly', icon: IconWeek },
   { id: 'money-date', label: 'Money date', icon: IconMoneyDate },
+  { id: 'insights', label: 'Insights', icon: IconInsights },
   { id: 'assistant', label: 'Assistant', icon: IconChat },
   { id: 'plan', label: 'Plan', icon: IconPlan },
   { id: 'settings', label: 'Settings', icon: IconSettings },
@@ -95,6 +98,7 @@ export function App() {
             {tab === 'overview' && <Dashboard goTo={(t) => setTab(t)} />}
             {tab === 'weekly' && <WeeklyCheckin onDiscuss={discussPrompt} />}
             {tab === 'money-date' && <MoneyDate onDiscuss={discussMonth} />}
+            {tab === 'insights' && <Insights goToSettings={() => setTab('settings')} />}
             {tab === 'assistant' && (
               <Chat goToSettings={() => setTab('settings')} seed={assistantSeed} />
             )}
