@@ -79,24 +79,20 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
 
-  // This month's transactions grouped by "flow-category", so a category row can
-  // expand to the actual lines behind it — the place to fix "Other".
+  // This month's transactions grouped by category (both signs together, so a
+  // category with spends and refunds shows them all when expanded).
   const txByCatKey = useMemo(() => {
     const map = new Map<string, Transaction[]>()
     for (const t of data.transactions) {
       if (t.month !== activeMonth) continue
-      const key = `${t.amount >= 0 ? 'income' : 'expense'}-${t.category}`
-      const list = map.get(key)
+      const list = map.get(t.category)
       if (list) list.push(t)
-      else map.set(key, [t])
+      else map.set(t.category, [t])
     }
     return map
   }, [data, activeMonth])
 
-  const internalTxs = [
-    ...(txByCatKey.get('income-Internal') ?? []),
-    ...(txByCatKey.get('expense-Internal') ?? []),
-  ]
+  const internalTxs = txByCatKey.get('Internal') ?? []
 
   const monthTxs = useMemo(
     () => data.transactions.filter((t) => t.month === activeMonth),
@@ -562,8 +558,8 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                           ? 'over'
                           : 'under'
                     const key = `${c.flow}-${c.category}`
-                    const txs = txByCatKey.get(key) ?? []
-                    const isOpen = openCat === key
+                    const txs = txByCatKey.get(c.category) ?? []
+                    const isOpen = openCat === c.category
                     return (
                       <Fragment key={key}>
                         <tr
@@ -571,7 +567,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                             'border-b border-line/60',
                             txs.length > 0 && 'cursor-pointer hover:bg-canvas/50',
                           )}
-                          onClick={() => txs.length > 0 && setOpenCat(isOpen ? null : key)}
+                          onClick={() => txs.length > 0 && setOpenCat(isOpen ? null : c.category)}
                         >
                           <td className="px-6 py-3">
                             <span className="inline-flex items-center gap-1.5">

@@ -120,18 +120,27 @@ export function startingBalance(data: AppData): number {
  */
 export const NON_CASHFLOW = new Set(['Internal'])
 
-/** Actual money in/out per category for a month, taken from imported transactions. */
+/**
+ * Actual money in/out per category for a month. Positives and negatives inside
+ * the same category are netted first (a Health spend minus its reimbursement
+ * shows as the net spend), then the net lands on the in or out side by its sign.
+ */
 export function actualsByCategory(
   data: AppData,
   month: string,
 ): { income: Record<string, number>; expense: Record<string, number> } {
-  const income: Record<string, number> = {}
-  const expense: Record<string, number> = {}
+  const net: Record<string, number> = {}
   for (const t of data.transactions) {
     if (t.month !== month) continue
     if (NON_CASHFLOW.has(t.category)) continue
-    if (t.amount >= 0) income[t.category] = (income[t.category] ?? 0) + t.amount
-    else expense[t.category] = (expense[t.category] ?? 0) + Math.abs(t.amount)
+    net[t.category] = (net[t.category] ?? 0) + t.amount
+  }
+  const income: Record<string, number> = {}
+  const expense: Record<string, number> = {}
+  for (const [cat, n] of Object.entries(net)) {
+    const r = round2(n)
+    if (r > 0) income[cat] = r
+    else if (r < 0) expense[cat] = -r
   }
   return { income, expense }
 }
@@ -425,6 +434,9 @@ export function computeReview(data: AppData, month: string): MonthReview {
   const actualIncomeByCat: Record<string, number> = {}
   const actualExpenseByCat: Record<string, number> = {}
 
+  // Net positives and negatives within each category first, so a refund offsets
+  // the spend it belongs to (e.g. a reimbursed Health cost shows its net).
+  const netByCat: Record<string, number> = {}
   for (const t of txs) {
     // Internal moves between your own accounts don't count as income/spending.
     if (NON_CASHFLOW.has(t.category)) {
@@ -432,13 +444,16 @@ export function computeReview(data: AppData, month: string): MonthReview {
       else excludedOut += Math.abs(t.amount)
       continue
     }
-    if (t.amount >= 0) {
-      income += t.amount
-      actualIncomeByCat[t.category] = (actualIncomeByCat[t.category] ?? 0) + t.amount
-    } else {
-      const abs = Math.abs(t.amount)
-      expenses += abs
-      actualExpenseByCat[t.category] = (actualExpenseByCat[t.category] ?? 0) + abs
+    netByCat[t.category] = (netByCat[t.category] ?? 0) + t.amount
+  }
+  for (const [cat, n] of Object.entries(netByCat)) {
+    const net = round2(n)
+    if (net > 0) {
+      income += net
+      actualIncomeByCat[cat] = net
+    } else if (net < 0) {
+      expenses += -net
+      actualExpenseByCat[cat] = -net
     }
   }
 
