@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CATEGORIES, suggestKeyword } from '../lib/categorize'
+import { CATEGORIES } from '../lib/categorize'
 import { IconClose } from './icons'
 import { Portal } from './Portal'
 
@@ -18,7 +18,9 @@ export function RuleModal({
   onCancel: () => void
   onSave: (match: string, category: string) => void
 }) {
-  const [match, setMatch] = useState(suggestKeyword(description))
+  // Default to the whole description so the rule is precise; the field stays
+  // editable if you'd rather match on just part of it.
+  const [match, setMatch] = useState(description.trim())
   const [category, setCategory] = useState(
     initialCategory === 'Other' ? 'Transfer' : initialCategory,
   )

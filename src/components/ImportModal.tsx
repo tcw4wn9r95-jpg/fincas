@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
-import { CATEGORIES, matchRule, suggestKeyword, withRule } from '../lib/categorize'
+import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
@@ -477,7 +477,7 @@ export function ImportModal({
           onSet={(id, category) => patch(id, { category })}
           onLearn={(t, category) => {
             patch(t.id, { category })
-            saveRule(suggestKeyword(t.description), category)
+            saveRule(t.description.trim(), category)
           }}
           onClose={() => setCategorizing(false)}
         />

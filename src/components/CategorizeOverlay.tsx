@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CATEGORIES, suggestKeyword } from '../lib/categorize'
+import { CATEGORIES } from '../lib/categorize'
 import { formatMoney, classNames } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconTag } from './icons'
@@ -146,9 +146,9 @@ function CategorizeCard({
       </div>
       {chosen && (
         <p className="text-xs text-muted mt-2">
-          <span className="text-forest">Learn this</span> files future lines containing “
-          {suggestKeyword(t.description)}” as {chosen}. <span className="text-forest">Just once</span>{' '}
-          changes only this one.
+          <span className="text-forest">Learn this</span> files future lines with this exact
+          description as {chosen}. <span className="text-forest">Just once</span> changes only this
+          one.
         </p>
       )}
     </div>
