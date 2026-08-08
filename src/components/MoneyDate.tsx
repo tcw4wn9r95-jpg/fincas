@@ -8,7 +8,7 @@ import {
   spendSeriesByCategory,
   streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, normDescription } from '../lib/format'
 import { CATEGORIES, suggestKeyword, withRule } from '../lib/categorize'
 import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
@@ -102,17 +102,36 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   )
   const reconciledCount = monthTxs.filter((t) => t.reconciled).length
 
+  // Reconciling one line reconciles every line with the exact same description
+  // — in this month and every other — and gives them the same category. Decide
+  // a recurring line once; the 10 copies (and next month's) settle themselves.
   function setReconciled(id: string, reconciled: boolean) {
     update((d) => {
       const t = d.transactions.find((x) => x.id === id)
-      if (t) t.reconciled = reconciled
+      if (!t) return d
+      const key = normDescription(t.description)
+      const category = t.category
+      for (const x of d.transactions) {
+        if (normDescription(x.description) !== key) continue
+        x.reconciled = reconciled
+        if (reconciled) x.category = category
+      }
       return d
     })
   }
   function reconcileAllSuggestions() {
     update((d) => {
       for (const t of d.transactions) {
-        if (t.month === activeMonth && !t.reconciled && t.category !== 'Other') t.reconciled = true
+        if (t.month === activeMonth && !t.reconciled && t.category !== 'Other') {
+          const key = normDescription(t.description)
+          const category = t.category
+          for (const x of d.transactions) {
+            if (normDescription(x.description) === key) {
+              x.reconciled = true
+              x.category = category
+            }
+          }
+        }
       }
       return d
     })
@@ -276,7 +295,19 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
     <div className="space-y-6 animate-fade-up">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl">Money date</h2>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h2 className="text-2xl">Money date</h2>
+            {monthTxs.length > 0 &&
+              (reconciledCount === monthTxs.length ? (
+                <span className="pill bg-forest text-paper inline-flex items-center gap-1">
+                  <IconCheck width={13} height={13} /> Reconciled
+                </span>
+              ) : (
+                <span className="pill bg-gold/15 text-ink/70">
+                  {reconciledCount}/{monthTxs.length} reconciled
+                </span>
+              ))}
+          </div>
           <p className="text-muted">Where you actually stand vs. your plan</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">

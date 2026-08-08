@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
 import { CATEGORIES, matchRule, suggestKeyword, withRule } from '../lib/categorize'
-import { formatMoney, formatMonthLabel, classNames, uid } from '../lib/format'
+import { formatMoney, formatMonthLabel, classNames, uid, normDescription } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -128,6 +128,14 @@ export function ImportModal({
     const seen = new Set<string>(
       replaceMonths ? rows.map(dupeKey) : [...savedStream.map(dupeKey), ...rows.map(dupeKey)],
     )
+    // Memory of exact descriptions you've already reconciled (any month) → their
+    // category, so an identical line arrives pre-categorised and pre-reconciled.
+    const reconciledMemory = new Map<string, string>()
+    if (replaceMonths) {
+      for (const t of savedStream) {
+        if (t.reconciled) reconciledMemory.set(normDescription(t.description), t.category)
+      }
+    }
     const added: Transaction[] = []
     const warns: string[] = []
     const names: string[] = []
@@ -145,9 +153,13 @@ export function ImportModal({
             skipped++
             continue
           }
-          // Your taught rules win over the automatic guess.
+          // An exact description you've reconciled before wins outright (and
+          // comes in already reconciled); otherwise your taught keyword rules
+          // beat the automatic guess.
+          const remembered = reconciledMemory.get(normDescription(t.description))
           const learned = matchRule(t.description, data.categoryRules)
-          added.push(learned ? { ...t, category: learned } : t)
+          if (remembered) added.push({ ...t, category: remembered, reconciled: true })
+          else added.push(learned ? { ...t, category: learned } : t)
         }
       } catch (err) {
         warns.push(`${file.name}: ${err instanceof Error ? err.message : 'could not be read'}`)

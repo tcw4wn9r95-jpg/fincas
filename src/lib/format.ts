@@ -64,6 +64,11 @@ export function uid(): string {
   ).toUpperCase()
 }
 
+/** Normalised transaction description for exact-match grouping (case/space-insensitive). */
+export function normDescription(description: string): string {
+  return description.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 /**
  * Parse a money amount typed by a human, accepting either a comma or a dot as
  * the decimal separator (a euro/es-ES keyboard produces a comma). Returns NaN
