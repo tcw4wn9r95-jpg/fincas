@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { CATEGORIES } from '../lib/categorize'
-import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
+import { formatMoney, formatMonthLabel, classNames, parseAmount } from '../lib/format'
+import { suggestProvisionAmount, type ProvisionStatus } from '../lib/provisions'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconCheck, IconSparkle } from './icons'
 import { Portal } from './Portal'
@@ -16,10 +17,13 @@ export function ReconcileOverlay({
   txs,
   currency,
   locale,
+  provisions,
   onSetCategory,
   onToggle,
   onConfirmAll,
   onAiCategorize,
+  onLink,
+  onLinkAmount,
   aiBusy,
   aiError,
   onClose,
@@ -28,10 +32,13 @@ export function ReconcileOverlay({
   txs: Transaction[]
   currency: string
   locale: string
+  provisions: ProvisionStatus[]
   onSetCategory: (id: string, category: string) => void
   onToggle: (id: string, reconciled: boolean) => void
   onConfirmAll: () => void
   onAiCategorize?: () => void
+  onLink: (id: string, provisionId: string | null, amount?: number) => void
+  onLinkAmount: (id: string, amount: number) => void
   aiBusy?: boolean
   aiError?: string
   onClose: () => void
@@ -154,6 +161,43 @@ export function ReconcileOverlay({
                       </button>
                     )}
                   </div>
+                  {provisions.length > 0 && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <select
+                        className="input py-1.5 text-xs flex-1 min-w-0"
+                        value={t.provisionId ?? ''}
+                        onChange={(e) => {
+                          const id = e.target.value || null
+                          const status = id ? provisions.find((p) => p.id === id) : undefined
+                          onLink(t.id, id, status ? suggestProvisionAmount(t, status) : undefined)
+                        }}
+                        title="Link to a provision"
+                      >
+                        <option value="">No provision</option>
+                        {provisions.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                      {t.provisionId && (
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="input py-1.5 w-24 text-xs text-right shrink-0"
+                          defaultValue={
+                            t.provisionAmount ??
+                            (() => {
+                              const status = provisions.find((p) => p.id === t.provisionId)
+                              return status ? suggestProvisionAmount(t, status) : Math.abs(t.amount)
+                            })()
+                          }
+                          onBlur={(e) => onLinkAmount(t.id, parseAmount(e.target.value) || 0)}
+                          title="Amount assigned to this provision"
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}

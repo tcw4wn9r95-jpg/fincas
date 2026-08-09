@@ -66,6 +66,12 @@ export interface Transaction {
   provisionId?: string
   /** Set once at link time and held fixed — see `provisionId`. */
   provisionRole?: 'contribution' | 'drawdown'
+  /**
+   * How much of this transaction counts toward the provision — not always
+   * the full transaction amount (e.g. a €500 transfer where only €300 is
+   * really earmarked for the tax pot). Defaults to the full amount when unset.
+   */
+  provisionAmount?: number
 }
 
 export interface Goal {

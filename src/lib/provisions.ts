@@ -1,4 +1,4 @@
-import type { AppData, Provision } from './types'
+import type { AppData, Provision, Transaction } from './types'
 
 // Kept free of `forecast.ts` imports (it will import from here) so the two
 // modules never form a cycle — hence the small local month-diff helper below
@@ -10,6 +10,16 @@ function monthsBetween(a: string, b: string): number {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * How much of a linked transaction actually counts toward its provision —
+ * the transaction rarely matches the provision exactly (a €500 transfer
+ * where only €300 is really for the tax pot), so an explicit assigned
+ * amount always wins; the full transaction amount is just the fallback.
+ */
+export function provisionLinkedAmount(t: Transaction): number {
+  return t.provisionAmount ?? Math.abs(t.amount)
+}
 
 export interface ProvisionStatus {
   id: string
@@ -32,8 +42,8 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
   let drawn = 0
   for (const t of data.transactions) {
     if (t.provisionId !== p.id) continue
-    if (t.provisionRole === 'contribution') contributed += Math.abs(t.amount)
-    else if (t.provisionRole === 'drawdown') drawn += Math.abs(t.amount)
+    if (t.provisionRole === 'contribution') contributed += provisionLinkedAmount(t)
+    else if (t.provisionRole === 'drawdown') drawn += provisionLinkedAmount(t)
   }
   const funded = Math.max(0, round2(contributed - drawn))
   const pct = p.targetAmount > 0 ? Math.min(100, Math.round((funded / p.targetAmount) * 100)) : 0
@@ -67,6 +77,26 @@ export function allProvisionStatuses(data: AppData): ProvisionStatus[] {
   return data.provisions.map((p) => provisionStatus(data, p))
 }
 
+/** A transaction matching the provision's own category is the real bill (drawdown); anything else is money set aside for it (contribution). */
+export function provisionRoleFor(category: string, provision: Pick<Provision, 'category'>): 'contribution' | 'drawdown' {
+  return category === provision.category ? 'drawdown' : 'contribution'
+}
+
+/**
+ * The amount to pre-fill when linking a transaction to a provision. A
+ * drawdown (the real bill) defaults to the transaction's own amount — that's
+ * usually the exact bill. A contribution defaults to the provision's
+ * suggested monthly set-aside (target remaining ÷ months until due), since
+ * the transfer itself rarely matches that figure exactly.
+ */
+export function suggestProvisionAmount(t: Transaction, status: ProvisionStatus): number {
+  const role = provisionRoleFor(t.category, status)
+  if (role === 'drawdown') return round2(Math.abs(t.amount))
+  return status.suggestedMonthly && status.suggestedMonthly > 0
+    ? status.suggestedMonthly
+    : round2(Math.abs(t.amount))
+}
+
 /**
  * This month's drawdown-role transaction totals (absolute), keyed by the
  * owning provision's category — how much of a category's actual spend was
@@ -79,7 +109,7 @@ export function provisionCoveredByCategory(data: AppData, month: string): Record
     if (t.month !== month || t.provisionRole !== 'drawdown' || !t.provisionId) continue
     const p = byId.get(t.provisionId)
     if (!p) continue
-    covered[p.category] = round2((covered[p.category] ?? 0) + Math.abs(t.amount))
+    covered[p.category] = round2((covered[p.category] ?? 0) + provisionLinkedAmount(t))
   }
   return covered
 }

@@ -8,11 +8,12 @@ import {
   spendSeriesByCategory,
   streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, parseAmount } from '../lib/format'
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey } from '../lib/sankey'
-import type { Transaction, Provision } from '../lib/types'
+import { allProvisionStatuses, provisionRoleFor, suggestProvisionAmount, type ProvisionStatus } from '../lib/provisions'
+import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
@@ -79,6 +80,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
     month && months.includes(month) ? month : monthsWithData(data)[0] ?? currentMonth()
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
+  const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
 
   const sankeyGraph = useMemo(() => {
@@ -199,6 +201,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           if (x.provisionId) {
             x.provisionId = undefined
             x.provisionRole = undefined
+            x.provisionAmount = undefined
           }
         }
       }
@@ -210,20 +213,35 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   // this is instance-specific — it doesn't propagate to matching lines. The
   // role is fixed at link time by comparing to the provision's own category:
   // a match means this is the real bill (drawdown), anything else is money
-  // being set aside for it (contribution).
-  function setTxProvision(id: string, provisionId: string | null) {
+  // being set aside for it (contribution). `amount` is how much of this
+  // transaction actually counts toward the provision — the transaction
+  // itself rarely matches exactly, so callers pre-fill a suggestion
+  // (`suggestProvisionAmount`) rather than assuming the full amount.
+  function setTxProvision(id: string, provisionId: string | null, amount?: number) {
     update((d) => {
       const t = d.transactions.find((x) => x.id === id)
       if (!t) return d
       if (!provisionId) {
         t.provisionId = undefined
         t.provisionRole = undefined
+        t.provisionAmount = undefined
         return d
       }
       const p = d.provisions.find((x) => x.id === provisionId)
       if (!p) return d
       t.provisionId = provisionId
-      t.provisionRole = t.category === p.category ? 'drawdown' : 'contribution'
+      t.provisionRole = provisionRoleFor(t.category, p)
+      t.provisionAmount = amount !== undefined ? round2(amount) : undefined
+      return d
+    })
+  }
+
+  // Edit the assigned amount on an already-linked transaction, without
+  // touching which provision or role it has.
+  function setTxProvisionAmount(id: string, amount: number) {
+    update((d) => {
+      const t = d.transactions.find((x) => x.id === id)
+      if (t && t.provisionId) t.provisionAmount = round2(amount)
       return d
     })
   }
@@ -678,10 +696,11 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                                 txs={txs}
                                 currency={currency}
                                 locale={locale}
-                                provisions={data.provisions}
+                                provisions={provisionStatuses}
                                 onSet={setTxCategory}
                                 onTeach={setTeaching}
                                 onLink={setTxProvision}
+                                onLinkAmount={setTxProvisionAmount}
                               />
                             </td>
                           </tr>
@@ -724,10 +743,11 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                               txs={internalTxs}
                               currency={currency}
                               locale={locale}
-                              provisions={data.provisions}
+                              provisions={provisionStatuses}
                               onSet={setTxCategory}
                               onTeach={setTeaching}
                               onLink={setTxProvision}
+                              onLinkAmount={setTxProvisionAmount}
                             />
                           </td>
                         </tr>
@@ -770,6 +790,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           txs={monthTxs}
           currency={currency}
           locale={locale}
+          provisions={provisionStatuses}
           onSetCategory={(id, category) => {
             setTxCategory(id, category)
             setReconciled(id, true)
@@ -777,6 +798,8 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           onToggle={setReconciled}
           onConfirmAll={reconcileAllSuggestions}
           onAiCategorize={hasApiKey(data) ? runAiCategorize : undefined}
+          onLink={setTxProvision}
+          onLinkAmount={setTxProvisionAmount}
           aiBusy={aiBusy}
           aiError={aiError}
           onClose={() => setReconciling(false)}
@@ -795,14 +818,16 @@ function DrillList({
   onSet,
   onTeach,
   onLink,
+  onLinkAmount,
 }: {
   txs: Transaction[]
   currency: string
   locale: string
-  provisions: Provision[]
+  provisions: ProvisionStatus[]
   onSet: (id: string, category: string) => void
   onTeach: (t: Transaction) => void
-  onLink: (id: string, provisionId: string | null) => void
+  onLink: (id: string, provisionId: string | null, amount?: number) => void
+  onLinkAmount: (id: string, amount: number) => void
 }) {
   return (
     <div className="bg-canvas/40 px-6 py-2 divide-y divide-line/50">
@@ -833,20 +858,43 @@ function DrillList({
             ))}
           </select>
           {provisions.length > 0 && (
-            <select
-              className="input py-1 w-32 shrink-0 text-xs"
-              value={t.provisionId ?? ''}
-              onChange={(e) => onLink(t.id, e.target.value || null)}
-              onClick={(e) => e.stopPropagation()}
-              title="Link to a provision"
-            >
-              <option value="">No provision</option>
-              {provisions.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                className="input py-1 w-32 shrink-0 text-xs"
+                value={t.provisionId ?? ''}
+                onChange={(e) => {
+                  const id = e.target.value || null
+                  const status = id ? provisions.find((p) => p.id === id) : undefined
+                  onLink(t.id, id, status ? suggestProvisionAmount(t, status) : undefined)
+                }}
+                onClick={(e) => e.stopPropagation()}
+                title="Link to a provision"
+              >
+                <option value="">No provision</option>
+                {provisions.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              {t.provisionId && (
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className="input py-1 w-20 shrink-0 text-xs text-right"
+                  defaultValue={
+                    t.provisionAmount ??
+                    (() => {
+                      const status = provisions.find((p) => p.id === t.provisionId)
+                      return status ? suggestProvisionAmount(t, status) : Math.abs(t.amount)
+                    })()
+                  }
+                  onBlur={(e) => onLinkAmount(t.id, parseAmount(e.target.value) || 0)}
+                  onClick={(e) => e.stopPropagation()}
+                  title="Amount assigned to this provision"
+                />
+              )}
+            </>
           )}
           <button
             className="text-muted hover:text-forest shrink-0"
