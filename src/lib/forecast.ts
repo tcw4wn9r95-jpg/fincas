@@ -19,7 +19,10 @@ function monthsBetween(a: string, b: string): number {
 
 // Which planner section a line belongs to. An explicit `group` wins; otherwise
 // we infer it from the category. Used for subtotals and the fixed/variable split.
-const FIXED_CATS = new Set(['Loans', 'Utilities', 'Insurance', 'Subscriptions', 'Entertainment'])
+// Entertainment is deliberately NOT here: it's discretionary, day-to-day
+// spending that should be paced by the weekly check-in like any other
+// variable category, not treated as a committed fixed cost.
+const FIXED_CATS = new Set(['Loans', 'Utilities', 'Insurance', 'Subscriptions'])
 const PROVISION_CATS = new Set(['Taxes', 'Provisions', 'Travel'])
 
 export function planSection(item: RecurringItem): string {
@@ -122,10 +125,14 @@ export function startingBalance(data: AppData): number {
 export const NON_CASHFLOW = new Set(['Internal'])
 
 /**
- * A synthetic income line: money released from a provision to cover a bill
- * that landed this month. It was really earned/saved in earlier months, but
- * counting it as this month's income keeps the net honest — a fully
- * pre-funded bill shouldn't make the month look like it ran a deficit.
+ * A label for money released from a provision to cover a bill that landed
+ * this month — surfaced separately (`MonthReview.provisionedIncome`, the
+ * Sankey's shortfall split) for display only. It is never added into
+ * `income`/`net`/`actualsByCategoryRange`: those feed the balance ledger and
+ * multi-month averages, which must reflect real cash movement. The
+ * contribution that funded it was already excluded from cash flow as
+ * `Internal` when it happened — adding the release back as fresh income here
+ * too would count the same money twice across the year.
  */
 export const PROVISIONED_BRACKET = 'Provisioned'
 
@@ -153,10 +160,6 @@ export function actualsByCategoryRange(
     if (r > 0) income[cat] = r
     else if (r < 0) expense[cat] = -r
   }
-  const provisioned = round2(
-    Object.values(provisionCoveredByCategoryRange(data, months)).reduce((a, b) => a + b, 0),
-  )
-  if (provisioned > 0.5) income[PROVISIONED_BRACKET] = provisioned
   return { income, expense }
 }
 
@@ -480,17 +483,13 @@ export function computeReview(data: AppData, month: string): MonthReview {
     }
   }
 
-  // A bill covered by a provision was really paid for in earlier months —
-  // count what was drawn as this month's income too, so a big pre-funded
-  // bill doesn't make the month look like it ran a deficit.
+  // A bill covered by a provision was really paid for in earlier months.
+  // Surfaced separately rather than folded into `income`/`net`: those feed
+  // the balance ledger and multi-month averages, which must track real cash
+  // movement (the contribution was already excluded as `Internal` when it
+  // happened, so adding the release back here too would double-count it).
   const provisionCovered = provisionCoveredByCategoryRange(data, [month])
-  const totalProvisioned = round2(Object.values(provisionCovered).reduce((a, b) => a + b, 0))
-  if (totalProvisioned > 0.5) {
-    income = round2(income + totalProvisioned)
-    actualIncomeByCat[PROVISIONED_BRACKET] = round2(
-      (actualIncomeByCat[PROVISIONED_BRACKET] ?? 0) + totalProvisioned,
-    )
-  }
+  const provisionedIncome = round2(Object.values(provisionCovered).reduce((a, b) => a + b, 0))
 
   // Planned figures from recurring items for this month.
   const plannedIncomeByCat: Record<string, number> = {}
@@ -566,6 +565,7 @@ export function computeReview(data: AppData, month: string): MonthReview {
     transactionCount: txs.length,
     excludedIn,
     excludedOut,
+    provisionedIncome,
   }
 }
 
@@ -583,6 +583,12 @@ export function monthReviewText(data: AppData, month: string): string {
       `money out ${fx(r.expenses)} (planned ${fx(r.plannedExpenses)}), ` +
       `net ${fx(r.net)} (planned ${fx(r.plannedNet)}).`,
   )
+  if (r.provisionedIncome > 0.5) {
+    lines.push(
+      `Of that spend, ${fx(r.provisionedIncome)} was already saved for in a provision ahead of time — ` +
+        `real cash flow this month, but not a surprise.`,
+    )
+  }
   const expenses = r.categories.filter((c) => c.flow === 'expense')
   const over = expenses.filter((c) => c.variance > 1).sort((a, b) => b.variance - a.variance)
   const under = expenses.filter((c) => c.variance < -1).sort((a, b) => a.variance - b.variance)
@@ -671,7 +677,10 @@ export function financialSummary(data: AppData): string {
   if (months.length) {
     const r = computeReview(data, months[0])
     lines.push(
-      `Latest reviewed month ${months[0]}: income ${fx(r.income)}, expenses ${fx(r.expenses)}, net ${fx(r.net)} (planned net ${fx(r.plannedNet)}).`,
+      `Latest reviewed month ${months[0]}: income ${fx(r.income)}, expenses ${fx(r.expenses)}, net ${fx(r.net)} (planned net ${fx(r.plannedNet)}).` +
+        (r.provisionedIncome > 0.5
+          ? ` Of that spend, ${fx(r.provisionedIncome)} was already saved for in a provision, so it wasn't a surprise even though it counts as real cash flow.`
+          : ''),
     )
     const over = r.categories
       .filter((c) => c.flow === 'expense' && c.variance > 1)

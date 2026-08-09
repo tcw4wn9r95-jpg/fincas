@@ -345,6 +345,11 @@ export function Plan() {
                 />
                 {p.suggestedMonthly ? <span>· ≈{fx(p.suggestedMonthly)}/mo to stay on track</span> : null}
               </div>
+              {p.overdrawn > 0.5 && (
+                <div className="text-xs text-clay mt-1">
+                  Drawn {fx(p.overdrawn)} more than ever set aside — that shortfall came from elsewhere.
+                </div>
+              )}
             </div>
           ))}
           {provisionStatuses.length === 0 && (

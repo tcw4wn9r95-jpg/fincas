@@ -1,5 +1,5 @@
 import type { AppData } from './types'
-import { monthsWithData, computeReview, spendSeriesByCategory, streak } from './forecast'
+import { monthsWithData, computeReview, spendSeriesByCategory, streak, totalBalance } from './forecast'
 
 export interface CatTrend {
   category: string
@@ -24,6 +24,25 @@ export interface OverPlanCat {
   avgPlanned: number
 }
 
+/**
+ * A standard, generic pre-investing checklist (emergency fund, savings rate,
+ * high-interest debt) — informational reference points from common personal
+ * finance guidance, not personalized advice. Everything here is derived
+ * on-device from figures already in the app; no external data.
+ */
+export interface InvestmentChecklist {
+  /** Total balance ÷ average monthly spend — null if spend can't be estimated yet. */
+  monthsCovered: number | null
+  /** The commonly cited emergency-fund range is 3–6 months of expenses. */
+  emergencyFundLow: number
+  emergencyFundHigh: number
+  savingsRate: number
+  /** ~20% is the savings slice in the widely-cited 50/30/20 budgeting guideline. */
+  savingsRateBenchmark: number
+  /** Count of active "Loans" plan lines — a nudge to weigh payoff against investing, not a debt payoff plan. */
+  debtPlanLines: number
+}
+
 export interface Insights {
   months: string[]
   avgIncome: number
@@ -36,6 +55,7 @@ export interface Insights {
   falling: CatTrend[]
   biggestMover: { category: string; prev: number; current: number; delta: number } | null
   overPlan: OverPlanCat[]
+  investment: InvestmentChecklist
 }
 
 const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0)
@@ -113,6 +133,17 @@ export function deriveInsights(data: AppData): Insights | null {
     .sort((a, b) => b.avgActual - b.avgPlanned - (a.avgActual - a.avgPlanned))
     .slice(0, 4)
 
+  const monthsCovered = avgSpend > 0 ? Math.round((totalBalance(data) / avgSpend) * 10) / 10 : null
+  const debtPlanLines = data.recurring.filter((r) => r.flow === 'expense' && r.category === 'Loans').length
+  const investment: InvestmentChecklist = {
+    monthsCovered,
+    emergencyFundLow: 3,
+    emergencyFundHigh: 6,
+    savingsRate,
+    savingsRateBenchmark: 0.2,
+    debtPlanLines,
+  }
+
   return {
     months,
     avgIncome,
@@ -125,5 +156,6 @@ export function deriveInsights(data: AppData): Insights | null {
     falling,
     biggestMover,
     overPlan,
+    investment,
   }
 }

@@ -7,7 +7,6 @@ import {
   itemAmountForMonth,
   spendSeriesByCategory,
   streak,
-  PROVISIONED_BRACKET,
 } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, parseAmount } from '../lib/format'
 import { CATEGORIES, withRule } from '../lib/categorize'
@@ -307,9 +306,6 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       gap += Math.abs(actual - planned)
     }
     for (const [cat, actual] of Object.entries(income)) {
-      // The provisioned bracket is a synthetic accounting line, not a real
-      // plan category — never a genuine plan-vs-actual gap to close.
-      if (cat === PROVISIONED_BRACKET) continue
       const planned = data.recurring
         .filter((r) => r.flow === 'income' && r.category === cat)
         .reduce((s, r) => s + itemAmountForMonth(r, activeMonth), 0)
@@ -500,6 +496,12 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
               >
                 {fx(netVsPlan, { signed: true })} vs plan
               </div>
+              {review.provisionedIncome > 0.5 && (
+                <div className="text-xs text-muted mt-1">
+                  incl. {fx(review.provisionedIncome)} released from a provision — already saved for, not a
+                  surprise
+                </div>
+              )}
             </div>
           </div>
 
@@ -685,11 +687,9 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                               <span
                                 className={classNames(
                                   'pill',
-                                  c.category === PROVISIONED_BRACKET
-                                    ? 'bg-gold/15 text-gold'
-                                    : c.flow === 'income'
-                                      ? 'bg-forest-tint text-forest'
-                                      : 'bg-clay/10 text-clay',
+                                  c.flow === 'income'
+                                    ? 'bg-forest-tint text-forest'
+                                    : 'bg-clay/10 text-clay',
                                 )}
                               >
                                 {c.category}

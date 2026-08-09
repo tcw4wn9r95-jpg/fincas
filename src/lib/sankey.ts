@@ -4,7 +4,6 @@
 // outran income). Kept independent of rendering so both the Money date and
 // Dashboard views can build the same shape from different month ranges.
 
-import { PROVISIONED_BRACKET } from './forecast'
 import { formatMoney } from './format'
 
 export interface SankeyNode {
@@ -72,27 +71,29 @@ export function buildSankey(
   }
 
   for (const [cat, v] of incomeCats) {
-    // The provisioned bracket gets the same gold as the provisioned expense
-    // slice it funds, so the diagram reads as one traceable flow: saved
-    // ahead of time, released this month, spent on the bill it was for.
-    const isProvisioned = cat === PROVISIONED_BRACKET
-    nodes.push({
-      id: `in:${cat}`,
-      label: cat,
-      value: v,
-      color: isProvisioned ? SAVINGS_COLOR : INCOME_COLOR,
-      column: 0,
-    })
-    links.push({
-      source: `in:${cat}`,
-      target: 'hub',
-      value: v,
-      color: isProvisioned ? 'rgba(201,161,74,0.5)' : 'rgba(111,174,147,0.5)',
-    })
+    nodes.push({ id: `in:${cat}`, label: cat, value: v, color: INCOME_COLOR, column: 0 })
+    links.push({ source: `in:${cat}`, target: 'hub', value: v, color: 'rgba(111,174,147,0.5)' })
   }
   if (net < -0.5) {
-    nodes.push({ id: 'shortfall', label: 'Shortfall', value: -net, color: SHORTFALL_COLOR, column: 0 })
-    links.push({ source: 'shortfall', target: 'hub', value: -net, color: 'rgba(162,74,52,0.5)' })
+    // A real cash gap — but if a provision was drawn down to cover part of
+    // it, that portion isn't a genuine shortfall, just savings arriving from
+    // an earlier month. Split it so only the unexplained remainder reads as
+    // a warning; this is purely a presentation split, not new money — it
+    // doesn't touch the income/expense totals the rest of the app relies on.
+    const deficit = -net
+    const totalProvisioned = round2(
+      Object.values(provisionCovered).reduce((s, v2) => s + Math.max(0, v2), 0),
+    )
+    const fromProvisions = round2(Math.min(deficit, totalProvisioned))
+    const shortfall = round2(deficit - fromProvisions)
+    if (fromProvisions > 0.5) {
+      nodes.push({ id: 'from-provisions', label: 'From provisions', value: fromProvisions, color: SAVINGS_COLOR, column: 0 })
+      links.push({ source: 'from-provisions', target: 'hub', value: fromProvisions, color: 'rgba(201,161,74,0.5)' })
+    }
+    if (shortfall > 0.5) {
+      nodes.push({ id: 'shortfall', label: 'Shortfall', value: shortfall, color: SHORTFALL_COLOR, column: 0 })
+      links.push({ source: 'shortfall', target: 'hub', value: shortfall, color: 'rgba(162,74,52,0.5)' })
+    }
   }
 
   const hubValue = Math.max(totalIncome, totalExpense)
@@ -147,13 +148,20 @@ export function describeSankeyFlow(
 
   const net = totalIncome - totalExpense
   const lines: string[] = []
+  const coveredEntries = Object.entries(provisionCovered).filter(([, v]) => v > 0.5)
+  const provisionedTotal = round2(coveredEntries.reduce((s, [, v]) => s + v, 0))
 
-  if (totalIncome > 0.5) {
+  if (totalIncome > 0.5 && net >= 0) {
     const rate = Math.round((net / totalIncome) * 100)
+    lines.push(`${fx(totalIncome)} came in against ${fx(totalExpense)} spent — a ${rate}% savings rate.`)
+  } else if (net < -0.5) {
+    const deficit = -net
+    const fromProvisions = Math.min(deficit, provisionedTotal)
     lines.push(
-      net >= 0
-        ? `${fx(totalIncome)} came in against ${fx(totalExpense)} spent — a ${rate}% savings rate.`
-        : `${fx(totalExpense)} went out against ${fx(totalIncome)} in — spending outpaced income by ${fx(-net)}.`,
+      fromProvisions > 0.5
+        ? `${fx(totalExpense)} went out against ${fx(totalIncome)} in. ${fx(fromProvisions)} of the ${fx(deficit)} gap came from money already set aside in a provision` +
+          (fromProvisions < deficit - 0.5 ? `, leaving a real shortfall of ${fx(deficit - fromProvisions)}.` : ' — not a real shortfall.')
+        : `${fx(totalExpense)} went out against ${fx(totalIncome)} in — spending outpaced income by ${fx(deficit)}.`,
     )
   } else if (totalExpense > 0.5) {
     lines.push(`${fx(totalExpense)} went out with no income recorded for this period.`)
@@ -169,8 +177,6 @@ export function describeSankeyFlow(
     lines.push(`${cat2} followed at ${fx(val2)}.`)
   }
 
-  const coveredEntries = Object.entries(provisionCovered).filter(([, v]) => v > 0.5)
-  const provisionedTotal = round2(coveredEntries.reduce((s, [, v]) => s + v, 0))
   if (provisionedTotal > 0.5) {
     const detail = coveredEntries.map(([cat, v]) => `${fx(v)} on ${cat}`).join(', ')
     lines.push(

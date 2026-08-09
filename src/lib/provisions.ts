@@ -27,13 +27,15 @@ export interface ProvisionStatus {
   category: string
   targetAmount: number
   dueDate?: string
-  /** Accrued so far: contributions minus drawdowns, derived from tagged transactions. */
+  /** Accrued so far: contributions minus drawdowns, floored at 0 for the progress bar. */
   funded: number
   contributed: number
   drawn: number
   pct: number
   monthsRemaining: number | null
   suggestedMonthly: number | null
+  /** Drawn more than was ever contributed — the shortfall came from somewhere else, not this pot. */
+  overdrawn: number
 }
 
 /** A provision's accrued balance and progress, derived live from tagged transactions. */
@@ -45,7 +47,9 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
     if (t.provisionRole === 'contribution') contributed += provisionLinkedAmount(t)
     else if (t.provisionRole === 'drawdown') drawn += provisionLinkedAmount(t)
   }
-  const funded = Math.max(0, round2(contributed - drawn))
+  const balance = round2(contributed - drawn)
+  const funded = Math.max(0, balance)
+  const overdrawn = Math.max(0, -balance)
   const pct = p.targetAmount > 0 ? Math.min(100, Math.round((funded / p.targetAmount) * 100)) : 0
 
   let monthsRemaining: number | null = null
@@ -70,6 +74,7 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
     pct,
     monthsRemaining,
     suggestedMonthly,
+    overdrawn,
   }
 }
 

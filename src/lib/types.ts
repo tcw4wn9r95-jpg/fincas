@@ -225,4 +225,10 @@ export interface MonthReview {
   /** Money moved between the user's own accounts (Internal), not counted in totals. */
   excludedIn: number
   excludedOut: number
+  /**
+   * Real cash this month that came from a provision drawdown (already counted
+   * in `income`/`expenses` — this is a breakdown, not an addition). Lets the
+   * UI show "this wasn't a surprise" without altering the true totals.
+   */
+  provisionedIncome: number
 }

@@ -5,7 +5,7 @@ import { streamInsights, hasApiKey } from '../lib/claude'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { Sparkline } from './Sparkline'
 import { Markdown } from './Markdown'
-import { IconInsights, IconLock } from './icons'
+import { IconInsights, IconLock, IconCheck } from './icons'
 
 export function Insights({ goToSettings }: { goToSettings: () => void }) {
   const { data } = useData()
@@ -52,8 +52,19 @@ export function Insights({ goToSettings }: { goToSettings: () => void }) {
     )
   }
 
-  const { months, savingsRate, savingsTrend, avgSpend, avgNet, topCategories, rising, falling, biggestMover, overPlan } =
-    insights
+  const {
+    months,
+    savingsRate,
+    savingsTrend,
+    avgSpend,
+    avgNet,
+    topCategories,
+    rising,
+    falling,
+    biggestMover,
+    overPlan,
+    investment,
+  } = insights
   const rangeLabel = `${formatMonthLabel(months[0] + '-01', locale)} – ${formatMonthLabel(
     months[months.length - 1] + '-01',
     locale,
@@ -158,6 +169,48 @@ export function Insights({ goToSettings }: { goToSettings: () => void }) {
         </div>
       )}
 
+      {/* Investment strategies */}
+      <div className="card p-6">
+        <h3 className="text-lg mb-1">Before you invest</h3>
+        <p className="text-sm text-muted mb-4">
+          Standard checkpoints from common personal-finance guidance, built from your own numbers —
+          not personalized advice.
+        </p>
+        <div className="space-y-2.5 mb-5">
+          <ChecklistRow
+            ok={investment.monthsCovered !== null && investment.monthsCovered >= investment.emergencyFundLow}
+            label={
+              investment.monthsCovered === null
+                ? "Emergency fund — not enough spending history yet to estimate"
+                : `Emergency fund: ${investment.monthsCovered} ${investment.monthsCovered === 1 ? 'month' : 'months'} of expenses saved (aim for ${investment.emergencyFundLow}–${investment.emergencyFundHigh})`
+            }
+          />
+          <ChecklistRow
+            ok={investment.savingsRate >= investment.savingsRateBenchmark}
+            label={`Savings rate: ${Math.round(investment.savingsRate * 100)}% (aim for ~${Math.round(investment.savingsRateBenchmark * 100)}%, the "save" slice of the 50/30/20 guideline)`}
+          />
+        </div>
+        {investment.debtPlanLines > 0 && (
+          <div className="rounded-lg bg-gold/5 border border-gold/40 px-4 py-3 text-sm text-ink mb-5">
+            {investment.debtPlanLines} loan payment{investment.debtPlanLines === 1 ? '' : 's'} in your plan.
+            Paying off high-interest debt usually beats what investing returns, so weigh payoff against
+            investing before committing new cash to the market.
+          </div>
+        )}
+        <h4 className="text-sm font-medium text-ink mb-2">General principles</h4>
+        <ul className="space-y-1.5 text-sm text-muted mb-4 list-disc ml-5">
+          <li>Capture any employer retirement match first — it's an immediate, guaranteed return.</li>
+          <li>Prioritize paying off high-interest debt (credit cards, etc.) before investing new cash.</li>
+          <li>Favor low-cost, diversified index funds over picking individual stocks.</li>
+          <li>Invest on a regular schedule (dollar-cost averaging) rather than trying to time the market.</li>
+          <li>Match your risk level to your time horizon — a longer horizon can carry more in equities.</li>
+        </ul>
+        <p className="text-xs text-muted">
+          This is general, educational information, not personalized investment advice. Consider a
+          licensed financial advisor for your specific situation.
+        </p>
+      </div>
+
       {/* AI recommendations */}
       <div className="card p-6">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
@@ -193,6 +246,21 @@ export function Insights({ goToSettings }: { goToSettings: () => void }) {
           </p>
         )}
       </div>
+    </div>
+  )
+}
+
+function ChecklistRow({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <div className="flex items-start gap-2.5 text-sm">
+      <span className={classNames('mt-0.5 shrink-0', ok ? 'text-forest' : 'text-gold')}>
+        {ok ? (
+          <IconCheck width={15} height={15} />
+        ) : (
+          <span className="block w-[13px] h-[13px] rounded-full border-2 border-gold" />
+        )}
+      </span>
+      <span className="text-ink leading-relaxed">{label}</span>
     </div>
   )
 }
