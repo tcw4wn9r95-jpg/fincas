@@ -121,17 +121,19 @@ export function startingBalance(data: AppData): number {
 export const NON_CASHFLOW = new Set(['Internal'])
 
 /**
- * Actual money in/out per category for a month. Positives and negatives inside
- * the same category are netted first (a Health spend minus its reimbursement
- * shows as the net spend), then the net lands on the in or out side by its sign.
+ * Actual money in/out per category across a set of months. Positives and
+ * negatives inside the same category are netted first (a Health spend minus
+ * its reimbursement shows as the net spend), then the net lands on the in or
+ * out side by its sign.
  */
-export function actualsByCategory(
+export function actualsByCategoryRange(
   data: AppData,
-  month: string,
+  months: string[],
 ): { income: Record<string, number>; expense: Record<string, number> } {
+  const monthSet = new Set(months)
   const net: Record<string, number> = {}
   for (const t of data.transactions) {
-    if (t.month !== month) continue
+    if (!monthSet.has(t.month)) continue
     if (NON_CASHFLOW.has(t.category)) continue
     net[t.category] = (net[t.category] ?? 0) + t.amount
   }
@@ -143,6 +145,14 @@ export function actualsByCategory(
     else if (r < 0) expense[cat] = -r
   }
   return { income, expense }
+}
+
+/** Actual money in/out per category for a single month — see `actualsByCategoryRange`. */
+export function actualsByCategory(
+  data: AppData,
+  month: string,
+): { income: Record<string, number>; expense: Record<string, number> } {
+  return actualsByCategoryRange(data, [month])
 }
 
 /** The latest month the plan reaches — explicit monthly values or a finite end date. */

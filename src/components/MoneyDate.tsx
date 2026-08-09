@@ -11,11 +11,13 @@ import {
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey } from '../lib/format'
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
+import { buildSankey } from '../lib/sankey'
 import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
 import { Sparkline } from './Sparkline'
+import { SankeyChart } from './SankeyChart'
 import { IconUpload, IconChat, IconTag, IconCheck, IconTrash } from './icons'
 
 function VarianceBar({ planned, actual }: { planned: number; actual: number }) {
@@ -78,6 +80,11 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
+
+  const sankeyGraph = useMemo(() => {
+    const { income, expense } = actualsByCategory(data, activeMonth)
+    return buildSankey(income, expense)
+  }, [data, activeMonth])
 
   // This month's transactions grouped by category (both signs together, so a
   // category with spends and refunds shows them all when expanded).
@@ -425,6 +432,16 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
               </div>
             </div>
           </div>
+
+          {sankeyGraph.nodes.length > 0 && (
+            <div className="card p-6">
+              <h3 className="text-lg mb-1">Where it went</h3>
+              <p className="text-sm text-muted mb-4">
+                Money in and where it went, {formatMonthLabel(activeMonth, locale)}
+              </p>
+              <SankeyChart graph={sankeyGraph} currency={currency} locale={locale} />
+            </div>
+          )}
 
           {/* Close the loop: make the plan (and forecast) reflect what happened */}
           <div className="card p-5 flex flex-wrap items-center justify-between gap-3">

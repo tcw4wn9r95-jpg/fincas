@@ -8,11 +8,15 @@ import {
   activeScenario,
   applyScenario,
   computeHistory,
+  monthsWithData,
+  actualsByCategoryRange,
 } from '../lib/forecast'
+import { buildSankey } from '../lib/sankey'
 import { demoData, importData } from '../lib/storage'
-import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
+import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
 import { HistoryChart } from './HistoryChart'
+import { SankeyChart } from './SankeyChart'
 import { ScenarioBar } from './Scenarios'
 import { Logo, IconPlan, IconUpload } from './icons'
 
@@ -52,6 +56,15 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
   const ledger = useMemo(() => buildLedger(data), [data])
   const history = useMemo(() => computeHistory(data), [data])
+  const year = currentMonth().slice(0, 4)
+  const yearMonths = useMemo(
+    () => monthsWithData(data).filter((m) => m.slice(0, 4) === year),
+    [data, year],
+  )
+  const yearSankey = useMemo(() => {
+    const { income, expense } = actualsByCategoryRange(data, yearMonths)
+    return buildSankey(income, expense)
+  }, [data, yearMonths])
   const scenario = activeScenario(data)
   const scenarioOverlay = useMemo(
     () =>
@@ -242,6 +255,17 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
               <span className="w-4 h-0 border-t-2 border-dashed border-gold" /> Planned net
             </span>
           </div>
+        </div>
+      )}
+
+      {yearSankey.nodes.length > 0 && (
+        <div className="card p-6">
+          <h2 className="text-xl mb-1">Where your money goes</h2>
+          <p className="text-sm text-muted mb-4">
+            Full year consolidated · {year} · {yearMonths.length}{' '}
+            {yearMonths.length === 1 ? 'month' : 'months'} of money dates
+          </p>
+          <SankeyChart graph={yearSankey} currency={currency} locale={locale} />
         </div>
       )}
 
