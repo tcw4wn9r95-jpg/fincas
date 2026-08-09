@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, parseAmount } from '../lib/format'
 import { suggestProvisionAmount, type ProvisionStatus } from '../lib/provisions'
@@ -43,11 +43,40 @@ export function ReconcileOverlay({
   aiError?: string
   onClose: () => void
 }) {
-  // Needs-attention first (unreconciled, Other on top), then the rest by date.
+  const [typeFilter, setTypeFilter] = useState('')
+  const [sortBy, setSortBy] = useState<'default' | 'date' | 'name' | 'amount'>('default')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  function changeSort(field: typeof sortBy) {
+    setSortBy(field)
+    setSortDir(field === 'amount' ? 'desc' : 'asc')
+  }
+
+  const availableTypes = useMemo(
+    () => Array.from(new Set(txs.map((t) => t.category))).sort((a, b) => a.localeCompare(b)),
+    [txs],
+  )
+
+  const filtered = useMemo(
+    () => (typeFilter ? txs.filter((t) => t.category === typeFilter) : txs),
+    [txs, typeFilter],
+  )
+
+  // Default: needs-attention first (unreconciled, Other on top), then by date.
+  // An explicit sort just orders the filtered list by that field, direction toggle-able.
   const ordered = useMemo(() => {
-    const rank = (t: Transaction) => (t.reconciled ? 2 : t.category === 'Other' ? 0 : 1)
-    return txs.slice().sort((a, b) => rank(a) - rank(b) || a.date.localeCompare(b.date))
-  }, [txs])
+    const dir = sortDir === 'asc' ? 1 : -1
+    const list = filtered.slice()
+    if (sortBy === 'date') list.sort((a, b) => dir * a.date.localeCompare(b.date))
+    else if (sortBy === 'name') list.sort((a, b) => dir * a.description.localeCompare(b.description))
+    else if (sortBy === 'amount') list.sort((a, b) => dir * (Math.abs(a.amount) - Math.abs(b.amount)))
+    else {
+      const rank = (t: Transaction) => (t.reconciled ? 2 : t.category === 'Other' ? 0 : 1)
+      list.sort((a, b) => rank(a) - rank(b) || a.date.localeCompare(b.date))
+    }
+    return list
+  }, [filtered, sortBy, sortDir])
+
   const done = txs.filter((t) => t.reconciled).length
   const total = txs.length
   const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other').length
@@ -93,11 +122,50 @@ export function ReconcileOverlay({
               )}
             </div>
             {aiError && <p className="text-xs text-clay mt-2">{aiError}</p>}
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <select
+                className="input py-1 w-auto text-xs"
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                aria-label="Filter by type"
+              >
+                <option value="">All types</option>
+                {availableTypes.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="input py-1 w-auto text-xs"
+                value={sortBy}
+                onChange={(e) => changeSort(e.target.value as typeof sortBy)}
+                aria-label="Sort by"
+              >
+                <option value="default">Needs attention</option>
+                <option value="date">Sort: Date</option>
+                <option value="name">Sort: Name</option>
+                <option value="amount">Sort: Amount</option>
+              </select>
+              {sortBy !== 'default' && (
+                <button
+                  className="btn-subtle p-1.5 text-xs"
+                  onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                  title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                  aria-label="Toggle sort direction"
+                >
+                  {sortDir === 'asc' ? '↑' : '↓'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-2.5">
-            {ordered.length === 0 && (
+            {ordered.length === 0 && txs.length === 0 && (
               <p className="text-center text-muted py-10">No transactions for this month.</p>
+            )}
+            {ordered.length === 0 && txs.length > 0 && (
+              <p className="text-center text-muted py-10">No transactions match this filter.</p>
             )}
             {ordered.map((t) => {
               const isOther = t.category === 'Other'
