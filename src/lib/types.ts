@@ -62,6 +62,10 @@ export interface Transaction {
   month: string
   /** Marked true once reviewed/confirmed in the reconcile flow. */
   reconciled?: boolean
+  /** Links this transaction to a provision it funds or draws down. */
+  provisionId?: string
+  /** Set once at link time and held fixed — see `provisionId`. */
+  provisionRole?: 'contribution' | 'drawdown'
 }
 
 export interface Goal {
@@ -70,6 +74,23 @@ export interface Goal {
   target: number
   saved: number
   targetDate?: string
+}
+
+/**
+ * A sinking fund for a known upcoming expense (e.g. a quarterly tax bill) —
+ * money set aside ahead of time so the real bill doesn't land as a shock.
+ * `funded` is never stored here: it's derived from transactions tagged with
+ * this provision's id via `provisionStatus()` in `lib/provisions.ts`.
+ */
+export interface Provision {
+  id: string
+  label: string
+  /** The expense category this money is set aside to cover, e.g. "Taxes". */
+  category: string
+  targetAmount: number
+  /** ISO date (or YYYY-MM) the provisioned expense is next expected. */
+  dueDate?: string
+  createdAt: string
 }
 
 export interface Settings {
@@ -93,6 +114,8 @@ export interface AppData {
   recurring: RecurringItem[]
   transactions: Transaction[]
   goals: Goal[]
+  /** Sinking funds for known upcoming expenses — see `Provision`. */
+  provisions: Provision[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */
@@ -179,6 +202,8 @@ export interface CategoryActual {
   planned: number
   actual: number
   variance: number // actual - planned (signed in plain terms)
+  /** Portion of this month's actual already funded by a provision drawdown. */
+  provisionCovered?: number
 }
 
 export interface MonthReview {

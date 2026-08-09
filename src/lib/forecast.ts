@@ -7,6 +7,7 @@ import type {
   Scenario,
 } from './types'
 import { currentMonth, monthRange, shortMonth, addMonths, uid } from './format'
+import { provisionCoveredByCategory } from './provisions'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -504,15 +505,24 @@ export function computeReview(data: AppData, month: string): MonthReview {
     categories.push({ category: cat, flow: 'income', planned, actual, variance: actual - planned })
   }
 
-  // Expense rows.
+  // Expense rows. `provisionCovered` flags the portion already set aside in
+  // advance via a provision, so a pre-funded bill doesn't read as a shock.
   const expenseCats = new Set([
     ...Object.keys(plannedExpenseByCat),
     ...Object.keys(actualExpenseByCat),
   ])
+  const covered = provisionCoveredByCategory(data, month)
   for (const cat of expenseCats) {
     const planned = plannedExpenseByCat[cat] ?? 0
     const actual = actualExpenseByCat[cat] ?? 0
-    categories.push({ category: cat, flow: 'expense', planned, actual, variance: actual - planned })
+    categories.push({
+      category: cat,
+      flow: 'expense',
+      planned,
+      actual,
+      variance: actual - planned,
+      provisionCovered: covered[cat] ?? 0,
+    })
   }
 
   // Sort: income first, then expenses by largest actual spend.

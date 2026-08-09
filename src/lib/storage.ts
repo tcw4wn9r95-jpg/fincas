@@ -21,6 +21,7 @@ export function emptyData(): AppData {
     recurring: [],
     transactions: [],
     goals: [],
+    provisions: [],
     categoryBudgets: {},
     updatedAt: new Date().toISOString(),
   }

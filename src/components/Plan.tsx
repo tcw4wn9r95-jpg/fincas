@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, parseAmount } from '../lib/format'
 import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
-import type { Account, Goal } from '../lib/types'
+import { allProvisionStatuses } from '../lib/provisions'
+import { CATEGORIES } from '../lib/categorize'
+import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
 import { IconPlus, IconTrash } from './icons'
 
@@ -78,6 +80,38 @@ export function Plan() {
   function removeGoal(id: string) {
     update((d) => {
       d.goals = d.goals.filter((g) => g.id !== id)
+      return d
+    })
+  }
+
+  // ── Provisions ──
+  const [prov, setProv] = useState({ label: '', category: CATEGORIES[0] as string, target: '', dueDate: '' })
+  const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
+  function addProvision() {
+    if (!prov.label.trim() || !parseAmount(prov.target)) return
+    const p: Provision = {
+      id: uid(),
+      label: prov.label.trim(),
+      category: prov.category,
+      targetAmount: parseAmount(prov.target) || 0,
+      dueDate: prov.dueDate || undefined,
+      createdAt: todayISO(),
+    }
+    update((d) => {
+      d.provisions.push(p)
+      return d
+    })
+    setProv({ label: '', category: CATEGORIES[0] as string, target: '', dueDate: '' })
+  }
+  function removeProvision(id: string) {
+    update((d) => {
+      d.provisions = d.provisions.filter((p) => p.id !== id)
+      for (const t of d.transactions) {
+        if (t.provisionId === id) {
+          t.provisionId = undefined
+          t.provisionRole = undefined
+        }
+      }
       return d
     })
   }
@@ -221,6 +255,84 @@ export function Plan() {
             onChange={(e) => setGoal({ ...goal, saved: e.target.value })}
           />
           <button className="btn-primary" onClick={addGoal}>
+            <IconPlus width={16} height={16} /> Add
+          </button>
+        </div>
+      </Section>
+
+      <Section
+        title="Provisions"
+        desc="Set money aside ahead of a known bill — like a company provisioning for taxes — so it's already covered when the bill lands."
+      >
+        <div className="space-y-3 mb-4">
+          {provisionStatuses.map((p) => (
+            <div key={p.id} className="rounded-lg bg-canvas px-4 py-3 border border-line">
+              <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="font-medium truncate">{p.label}</span>
+                  <span className="pill bg-clay/10 text-clay shrink-0">{p.category}</span>
+                </span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-sm text-muted tabular-nums">
+                    {fx(p.funded)} / {fx(p.targetAmount)}
+                  </span>
+                  <button className="text-muted hover:text-clay" onClick={() => removeProvision(p.id)}>
+                    <IconTrash width={16} height={16} />
+                  </button>
+                </div>
+              </div>
+              <div className="h-2 rounded-full bg-line overflow-hidden">
+                <div
+                  className={classNames('h-full rounded-full', p.pct >= 100 ? 'bg-forest' : 'bg-sage')}
+                  style={{ width: `${p.pct}%` }}
+                />
+              </div>
+              {(p.dueDate || p.suggestedMonthly) && (
+                <div className="text-xs text-muted mt-1.5">
+                  {p.dueDate && <>due {formatMonthLabel(p.dueDate, locale)}</>}
+                  {p.dueDate && p.suggestedMonthly ? ' · ' : ''}
+                  {p.suggestedMonthly ? <>≈{fx(p.suggestedMonthly)}/mo to stay on track</> : null}
+                </div>
+              )}
+            </div>
+          ))}
+          {provisionStatuses.length === 0 && (
+            <p className="text-sm text-muted">No provisions yet — add one for an upcoming bill below.</p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            className="input flex-1 min-w-[140px]"
+            placeholder="Provision (e.g. Quarterly tax)"
+            value={prov.label}
+            onChange={(e) => setProv({ ...prov, label: e.target.value })}
+          />
+          <select
+            className="input w-auto"
+            value={prov.category}
+            onChange={(e) => setProv({ ...prov, category: e.target.value })}
+          >
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <input
+            className="input w-28"
+            type="text"
+            inputMode="decimal"
+            placeholder="Target"
+            value={prov.target}
+            onChange={(e) => setProv({ ...prov, target: e.target.value })}
+          />
+          <input
+            className="input w-auto"
+            type="date"
+            value={prov.dueDate}
+            onChange={(e) => setProv({ ...prov, dueDate: e.target.value })}
+          />
+          <button className="btn-primary" onClick={addProvision}>
             <IconPlus width={16} height={16} /> Add
           </button>
         </div>

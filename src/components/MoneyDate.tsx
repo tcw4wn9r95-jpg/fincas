@@ -12,7 +12,7 @@ import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, ad
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey } from '../lib/sankey'
-import type { Transaction } from '../lib/types'
+import type { Transaction, Provision } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
@@ -190,8 +190,40 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       if (!t) return d
       const key = txMatchKey(t.description, t.amount)
       for (const x of d.transactions) {
-        if (txMatchKey(x.description, x.amount) === key) x.category = category
+        if (txMatchKey(x.description, x.amount) === key) {
+          x.category = category
+          // The category changed, so a prior provision link — whose role
+          // (contribution vs. drawdown) was set from the old category —
+          // can no longer be trusted; clear it rather than risk a silently
+          // wrong accrual. Re-linking afterwards is one click.
+          if (x.provisionId) {
+            x.provisionId = undefined
+            x.provisionRole = undefined
+          }
+        }
       }
+      return d
+    })
+  }
+
+  // Link (or unlink) a single transaction to a provision. Unlike category,
+  // this is instance-specific — it doesn't propagate to matching lines. The
+  // role is fixed at link time by comparing to the provision's own category:
+  // a match means this is the real bill (drawdown), anything else is money
+  // being set aside for it (contribution).
+  function setTxProvision(id: string, provisionId: string | null) {
+    update((d) => {
+      const t = d.transactions.find((x) => x.id === id)
+      if (!t) return d
+      if (!provisionId) {
+        t.provisionId = undefined
+        t.provisionRole = undefined
+        return d
+      }
+      const p = d.provisions.find((x) => x.id === provisionId)
+      if (!p) return d
+      t.provisionId = provisionId
+      t.provisionRole = t.category === p.category ? 'drawdown' : 'contribution'
       return d
     })
   }
@@ -218,10 +250,14 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const expenseRows = review.categories.filter((c) => c.flow === 'expense')
 
   // The headline of a money date: the two or three places the month actually
-  // went off plan, before the full table.
+  // went off plan, before the full table. A category already pre-funded by a
+  // provision (e.g. a quarterly tax bill saved for in advance) shouldn't read
+  // as a shock, so its provision-covered amount is netted out of the variance
+  // used here — the raw totals in the table below stay untouched.
+  const effVariance = (c: (typeof expenseRows)[number]) => c.variance - (c.provisionCovered ?? 0)
   const overPlan = expenseRows
-    .filter((c) => c.variance > 5)
-    .sort((a, b) => b.variance - a.variance)
+    .filter((c) => effVariance(c) > 5)
+    .sort((a, b) => effVariance(b) - effVariance(a))
     .slice(0, 3)
   const underPlan = expenseRows
     .filter((c) => c.variance < -5)
@@ -617,7 +653,14 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                             <VarianceBar planned={c.planned} actual={c.actual} />
                           </td>
                           <td className="px-4 py-3 text-right text-muted">{fx(c.planned)}</td>
-                          <td className="px-4 py-3 text-right font-medium">{fx(c.actual)}</td>
+                          <td className="px-4 py-3 text-right font-medium">
+                            {fx(c.actual)}
+                            {!!c.provisionCovered && (
+                              <div className="text-[11px] text-muted font-normal">
+                                prefunded {fx(c.provisionCovered)}
+                              </div>
+                            )}
+                          </td>
                           <td
                             className={classNames(
                               'px-6 py-3 text-right font-medium',
@@ -635,8 +678,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                                 txs={txs}
                                 currency={currency}
                                 locale={locale}
+                                provisions={data.provisions}
                                 onSet={setTxCategory}
                                 onTeach={setTeaching}
+                                onLink={setTxProvision}
                               />
                             </td>
                           </tr>
@@ -679,8 +724,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                               txs={internalTxs}
                               currency={currency}
                               locale={locale}
+                              provisions={data.provisions}
                               onSet={setTxCategory}
                               onTeach={setTeaching}
+                              onLink={setTxProvision}
                             />
                           </td>
                         </tr>
@@ -744,14 +791,18 @@ function DrillList({
   txs,
   currency,
   locale,
+  provisions,
   onSet,
   onTeach,
+  onLink,
 }: {
   txs: Transaction[]
   currency: string
   locale: string
+  provisions: Provision[]
   onSet: (id: string, category: string) => void
   onTeach: (t: Transaction) => void
+  onLink: (id: string, provisionId: string | null) => void
 }) {
   return (
     <div className="bg-canvas/40 px-6 py-2 divide-y divide-line/50">
@@ -781,6 +832,22 @@ function DrillList({
               </option>
             ))}
           </select>
+          {provisions.length > 0 && (
+            <select
+              className="input py-1 w-32 shrink-0 text-xs"
+              value={t.provisionId ?? ''}
+              onChange={(e) => onLink(t.id, e.target.value || null)}
+              onClick={(e) => e.stopPropagation()}
+              title="Link to a provision"
+            >
+              <option value="">No provision</option>
+              {provisions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             className="text-muted hover:text-forest shrink-0"
             onClick={(e) => {
