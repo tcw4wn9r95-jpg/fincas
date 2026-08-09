@@ -12,7 +12,13 @@ import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, ad
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey } from '../lib/sankey'
-import { allProvisionStatuses, provisionRoleFor, suggestProvisionAmount, type ProvisionStatus } from '../lib/provisions'
+import {
+  allProvisionStatuses,
+  provisionCoveredByCategory,
+  provisionRoleFor,
+  suggestProvisionAmount,
+  type ProvisionStatus,
+} from '../lib/provisions'
 import type { Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
@@ -85,7 +91,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
 
   const sankeyGraph = useMemo(() => {
     const { income, expense } = actualsByCategory(data, activeMonth)
-    return buildSankey(income, expense)
+    return buildSankey(income, expense, provisionCoveredByCategory(data, activeMonth))
   }, [data, activeMonth])
 
   // This month's transactions grouped by category (both signs together, so a
@@ -272,10 +278,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   // provision (e.g. a quarterly tax bill saved for in advance) shouldn't read
   // as a shock, so its provision-covered amount is netted out of the variance
   // used here — the raw totals in the table below stay untouched.
-  const effVariance = (c: (typeof expenseRows)[number]) => c.variance - (c.provisionCovered ?? 0)
+  const provisionNetVariance = (c: (typeof expenseRows)[number]) => c.variance - (c.provisionCovered ?? 0)
   const overPlan = expenseRows
-    .filter((c) => effVariance(c) > 5)
-    .sort((a, b) => effVariance(b) - effVariance(a))
+    .filter((c) => provisionNetVariance(c) > 5)
+    .sort((a, b) => provisionNetVariance(b) - provisionNetVariance(a))
     .slice(0, 3)
   const underPlan = expenseRows
     .filter((c) => c.variance < -5)
@@ -526,7 +532,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
               <div className="flex flex-wrap gap-2">
                 {overPlan.map((c) => (
                   <span key={c.category} className="pill bg-clay/10 text-clay">
-                    {c.category} {fx(c.variance)} over
+                    {c.category} {fx(provisionNetVariance(c))} over
                   </span>
                 ))}
                 {underPlan.map((c) => (
@@ -618,16 +624,27 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                   {[...incomeRows, ...expenseRows].map((c) => {
                     // For expenses, spending more than planned is "bad" (clay).
                     // For income, earning less than planned is "bad" (clay).
+                    // A category already covered by a provision nets that
+                    // amount out first — a fully pre-funded bill shouldn't
+                    // read as an overdraft just because there was no plan
+                    // line for it.
+                    const provisionCovered = c.provisionCovered ?? 0
+                    const effVariance = c.flow === 'expense' ? c.variance - provisionCovered : c.variance
                     const unfavourable =
-                      c.flow === 'expense' ? c.variance > 0 : c.variance < 0
+                      c.flow === 'expense' ? effVariance > 0.5 : c.variance < -0.5
                     const label =
                       c.flow === 'income'
                         ? c.variance >= 0
                           ? 'above'
                           : 'below'
-                        : c.variance > 0
+                        : effVariance > 0.5
                           ? 'over'
-                          : 'under'
+                          : effVariance < -0.5
+                            ? 'under'
+                            : provisionCovered > 0
+                              ? 'prefunded'
+                              : 'on plan'
+                    const displayVariance = c.flow === 'expense' ? effVariance : c.variance
                     const key = `${c.flow}-${c.category}`
                     const txs = txByCatKey.get(c.category) ?? []
                     const isOpen = openCat === c.category
@@ -685,7 +702,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                               unfavourable ? 'text-clay' : 'text-forest',
                             )}
                           >
-                            {fx(Math.abs(c.variance), { signed: false })}
+                            {fx(Math.abs(displayVariance), { signed: false })}
                             <span className="text-xs ml-1 text-muted">{label}</span>
                           </td>
                         </tr>

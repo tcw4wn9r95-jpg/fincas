@@ -110,6 +110,28 @@ export function Plan() {
         if (t.provisionId === id) {
           t.provisionId = undefined
           t.provisionRole = undefined
+          t.provisionAmount = undefined
+        }
+      }
+      return d
+    })
+  }
+  function editProvision(id: string, fields: Partial<Provision>) {
+    update((d) => {
+      const p = d.provisions.find((x) => x.id === id)
+      if (!p) return d
+      Object.assign(p, fields)
+      // A category change can invalidate which linked transactions are the
+      // real bill (drawdown) vs. money set aside for it (contribution) — any
+      // drawdown that no longer matches the new category is unlinked rather
+      // than left silently wrong; contributions are untouched.
+      if (fields.category) {
+        for (const t of d.transactions) {
+          if (t.provisionId === id && t.provisionRole === 'drawdown' && t.category !== p.category) {
+            t.provisionId = undefined
+            t.provisionRole = undefined
+            t.provisionAmount = undefined
+          }
         }
       }
       return d
@@ -267,15 +289,36 @@ export function Plan() {
         <div className="space-y-3 mb-4">
           {provisionStatuses.map((p) => (
             <div key={p.id} className="rounded-lg bg-canvas px-4 py-3 border border-line">
-              <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
-                <span className="flex items-center gap-2 min-w-0">
-                  <span className="font-medium truncate">{p.label}</span>
-                  <span className="pill bg-clay/10 text-clay shrink-0">{p.category}</span>
-                </span>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-sm text-muted tabular-nums">
-                    {fx(p.funded)} / {fx(p.targetAmount)}
-                  </span>
+              <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <input
+                    className="bg-transparent font-medium outline-none min-w-0 flex-1 focus:text-forest"
+                    defaultValue={p.label}
+                    onBlur={(e) => editProvision(p.id, { label: e.target.value.trim() || p.label })}
+                  />
+                  <select
+                    className="input py-1 w-auto text-xs shrink-0"
+                    value={p.category}
+                    onChange={(e) => editProvision(p.id, { category: e.target.value })}
+                  >
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm text-muted tabular-nums">{fx(p.funded)} /</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="bg-transparent text-right outline-none tabular-nums w-20 focus:text-forest text-sm"
+                    defaultValue={p.targetAmount}
+                    onBlur={(e) =>
+                      editProvision(p.id, { targetAmount: parseAmount(e.target.value) || p.targetAmount })
+                    }
+                  />
                   <button className="text-muted hover:text-clay" onClick={() => removeProvision(p.id)}>
                     <IconTrash width={16} height={16} />
                   </button>
@@ -287,13 +330,16 @@ export function Plan() {
                   style={{ width: `${p.pct}%` }}
                 />
               </div>
-              {(p.dueDate || p.suggestedMonthly) && (
-                <div className="text-xs text-muted mt-1.5">
-                  {p.dueDate && <>due {formatMonthLabel(p.dueDate, locale)}</>}
-                  {p.dueDate && p.suggestedMonthly ? ' · ' : ''}
-                  {p.suggestedMonthly ? <>≈{fx(p.suggestedMonthly)}/mo to stay on track</> : null}
-                </div>
-              )}
+              <div className="flex items-center gap-1.5 text-xs text-muted mt-1.5">
+                <span>due</span>
+                <input
+                  type="date"
+                  className="bg-transparent outline-none focus:text-forest"
+                  defaultValue={p.dueDate ?? ''}
+                  onChange={(e) => editProvision(p.id, { dueDate: e.target.value || undefined })}
+                />
+                {p.suggestedMonthly ? <span>· ≈{fx(p.suggestedMonthly)}/mo to stay on track</span> : null}
+              </div>
             </div>
           ))}
           {provisionStatuses.length === 0 && (

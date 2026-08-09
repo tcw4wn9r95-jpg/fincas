@@ -98,18 +98,25 @@ export function suggestProvisionAmount(t: Transaction, status: ProvisionStatus):
 }
 
 /**
- * This month's drawdown-role transaction totals (absolute), keyed by the
- * owning provision's category — how much of a category's actual spend was
- * already pre-funded, so the money-date view doesn't flag it as a shock.
+ * Drawdown-role transaction totals across a set of months (absolute), keyed
+ * by the owning provision's category — how much of a category's actual
+ * spend was already pre-funded, so the money-date view and the Sankey don't
+ * flag/draw it as fresh, unplanned spending.
  */
-export function provisionCoveredByCategory(data: AppData, month: string): Record<string, number> {
+export function provisionCoveredByCategoryRange(data: AppData, months: string[]): Record<string, number> {
+  const monthSet = new Set(months)
   const byId = new Map(data.provisions.map((p) => [p.id, p]))
   const covered: Record<string, number> = {}
   for (const t of data.transactions) {
-    if (t.month !== month || t.provisionRole !== 'drawdown' || !t.provisionId) continue
+    if (!monthSet.has(t.month) || t.provisionRole !== 'drawdown' || !t.provisionId) continue
     const p = byId.get(t.provisionId)
     if (!p) continue
     covered[p.category] = round2((covered[p.category] ?? 0) + provisionLinkedAmount(t))
   }
   return covered
+}
+
+/** Single-month convenience wrapper — see `provisionCoveredByCategoryRange`. */
+export function provisionCoveredByCategory(data: AppData, month: string): Record<string, number> {
+  return provisionCoveredByCategoryRange(data, [month])
 }

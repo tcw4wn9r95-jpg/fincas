@@ -12,6 +12,7 @@ import {
   actualsByCategoryRange,
 } from '../lib/forecast'
 import { buildSankey } from '../lib/sankey'
+import { provisionCoveredByCategoryRange } from '../lib/provisions'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
@@ -63,7 +64,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   )
   const yearSankey = useMemo(() => {
     const { income, expense } = actualsByCategoryRange(data, yearMonths)
-    return buildSankey(income, expense)
+    return buildSankey(income, expense, provisionCoveredByCategoryRange(data, yearMonths))
   }, [data, yearMonths])
   const scenario = activeScenario(data)
   const scenarioOverlay = useMemo(

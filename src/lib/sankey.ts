@@ -30,10 +30,19 @@ const EXPENSE_COLOR = '#c2724e' // clay — expense accent
 const SAVINGS_COLOR = '#c9a14a' // gold — highlight
 const SHORTFALL_COLOR = '#a24a34' // deeper clay — spending beyond income
 
-/** Build the income → hub → expenses/savings flow graph for a netted category breakdown. */
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * Build the income → hub → expenses/savings flow graph for a netted category
+ * breakdown. `provisionCovered` (category → amount) splits off the portion of
+ * a category's spend that was already set aside in a provision ahead of
+ * time — drawn in a distinct gold, the same family as Net savings, so it
+ * reads as money you'd already accounted for rather than a fresh hit.
+ */
 export function buildSankey(
   income: Record<string, number>,
   expense: Record<string, number>,
+  provisionCovered: Record<string, number> = {},
 ): SankeyGraph {
   const incomeCats = Object.entries(income)
     .filter(([, v]) => v > 0.5)
@@ -72,8 +81,22 @@ export function buildSankey(
   nodes.push({ id: 'hub', label: 'Income', value: hubValue, color: HUB_COLOR, column: 1 })
 
   for (const [cat, v] of expenseCats) {
-    nodes.push({ id: `out:${cat}`, label: cat, value: v, color: EXPENSE_COLOR, column: 2 })
-    links.push({ source: 'hub', target: `out:${cat}`, value: v, color: expenseFill(v) })
+    const covered = round2(Math.min(v, Math.max(0, provisionCovered[cat] ?? 0)))
+    const remainder = round2(v - covered)
+    if (covered > 0.5) {
+      nodes.push({
+        id: `out:${cat}:provisioned`,
+        label: `${cat} (provisioned)`,
+        value: covered,
+        color: SAVINGS_COLOR,
+        column: 2,
+      })
+      links.push({ source: 'hub', target: `out:${cat}:provisioned`, value: covered, color: 'rgba(201,161,74,0.5)' })
+    }
+    if (remainder > 0.5) {
+      nodes.push({ id: `out:${cat}`, label: cat, value: remainder, color: EXPENSE_COLOR, column: 2 })
+      links.push({ source: 'hub', target: `out:${cat}`, value: remainder, color: expenseFill(remainder) })
+    }
   }
   if (net > 0.5) {
     nodes.push({ id: 'savings', label: 'Net savings', value: net, color: SAVINGS_COLOR, column: 2 })
