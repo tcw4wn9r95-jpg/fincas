@@ -289,25 +289,33 @@ export function Plan() {
         <div className="space-y-3 mb-4">
           {provisionStatuses.map((p) => (
             <div key={p.id} className="rounded-lg bg-canvas px-4 py-3 border border-line">
-              <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <input
-                    className="bg-transparent font-medium outline-none min-w-0 flex-1 focus:text-forest"
-                    defaultValue={p.label}
-                    onBlur={(e) => editProvision(p.id, { label: e.target.value.trim() || p.label })}
-                  />
-                  <select
-                    className="input py-1 w-auto text-xs shrink-0"
-                    value={p.category}
-                    onChange={(e) => editProvision(p.id, { category: e.target.value })}
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div className="flex items-center justify-between gap-3 mb-1.5">
+                <input
+                  className="bg-transparent font-medium outline-none w-full min-w-0 focus:text-forest"
+                  defaultValue={p.label}
+                  placeholder="Untitled provision"
+                  onBlur={(e) => editProvision(p.id, { label: e.target.value.trim() || p.label })}
+                />
+                <button
+                  className="text-muted hover:text-clay shrink-0"
+                  onClick={() => removeProvision(p.id)}
+                  aria-label="Delete provision"
+                >
+                  <IconTrash width={16} height={16} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                <select
+                  className="input py-1 w-auto text-xs shrink-0"
+                  value={p.category}
+                  onChange={(e) => editProvision(p.id, { category: e.target.value })}
+                >
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-sm text-muted tabular-nums">{fx(p.funded)} /</span>
                   <input
@@ -319,9 +327,6 @@ export function Plan() {
                       editProvision(p.id, { targetAmount: parseAmount(e.target.value) || p.targetAmount })
                     }
                   />
-                  <button className="text-muted hover:text-clay" onClick={() => removeProvision(p.id)}>
-                    <IconTrash width={16} height={16} />
-                  </button>
                 </div>
               </div>
               <div className="h-2 rounded-full bg-line overflow-hidden">

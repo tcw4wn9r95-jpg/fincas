@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import {
   buildForecast,
@@ -11,13 +11,14 @@ import {
   monthsWithData,
   actualsByCategoryRange,
 } from '../lib/forecast'
-import { buildSankey } from '../lib/sankey'
+import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import { provisionCoveredByCategoryRange } from '../lib/provisions'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
 import { HistoryChart } from './HistoryChart'
 import { SankeyChart } from './SankeyChart'
+import { SankeyOverlay } from './SankeyOverlay'
 import { ScenarioBar } from './Scenarios'
 import { Logo, IconPlan, IconUpload } from './icons'
 
@@ -62,10 +63,15 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
     () => monthsWithData(data).filter((m) => m.slice(0, 4) === year),
     [data, year],
   )
-  const yearSankey = useMemo(() => {
+  const [sankeyOpen, setSankeyOpen] = useState(false)
+  const { yearSankey, yearSankeyInsights } = useMemo(() => {
     const { income, expense } = actualsByCategoryRange(data, yearMonths)
-    return buildSankey(income, expense, provisionCoveredByCategoryRange(data, yearMonths))
-  }, [data, yearMonths])
+    const covered = provisionCoveredByCategoryRange(data, yearMonths)
+    return {
+      yearSankey: buildSankey(income, expense, covered),
+      yearSankeyInsights: describeSankeyFlow(income, expense, covered, currency, locale),
+    }
+  }, [data, yearMonths, currency, locale])
   const scenario = activeScenario(data)
   const scenarioOverlay = useMemo(
     () =>
@@ -260,14 +266,25 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
       )}
 
       {yearSankey.nodes.length > 0 && (
-        <div className="card p-6">
+        <button className="card p-6 w-full text-left hover:shadow-lift transition" onClick={() => setSankeyOpen(true)}>
           <h2 className="text-xl mb-1">Where your money goes</h2>
           <p className="text-sm text-muted mb-4">
             Full year consolidated · {year} · {yearMonths.length}{' '}
-            {yearMonths.length === 1 ? 'month' : 'months'} of money dates
+            {yearMonths.length === 1 ? 'month' : 'months'} of money dates · tap for details
           </p>
           <SankeyChart graph={yearSankey} currency={currency} locale={locale} />
-        </div>
+        </button>
+      )}
+      {sankeyOpen && (
+        <SankeyOverlay
+          graph={yearSankey}
+          currency={currency}
+          locale={locale}
+          title="Where your money goes"
+          subtitle={`Full year consolidated · ${year} · ${yearMonths.length} ${yearMonths.length === 1 ? 'month' : 'months'} of money dates`}
+          insights={yearSankeyInsights}
+          onClose={() => setSankeyOpen(false)}
+        />
       )}
 
       <div className="card overflow-hidden">

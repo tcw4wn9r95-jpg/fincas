@@ -4,6 +4,9 @@
 // outran income). Kept independent of rendering so both the Money date and
 // Dashboard views can build the same shape from different month ranges.
 
+import { PROVISIONED_BRACKET } from './forecast'
+import { formatMoney } from './format'
+
 export interface SankeyNode {
   id: string
   label: string
@@ -69,8 +72,23 @@ export function buildSankey(
   }
 
   for (const [cat, v] of incomeCats) {
-    nodes.push({ id: `in:${cat}`, label: cat, value: v, color: INCOME_COLOR, column: 0 })
-    links.push({ source: `in:${cat}`, target: 'hub', value: v, color: 'rgba(111,174,147,0.5)' })
+    // The provisioned bracket gets the same gold as the provisioned expense
+    // slice it funds, so the diagram reads as one traceable flow: saved
+    // ahead of time, released this month, spent on the bill it was for.
+    const isProvisioned = cat === PROVISIONED_BRACKET
+    nodes.push({
+      id: `in:${cat}`,
+      label: cat,
+      value: v,
+      color: isProvisioned ? SAVINGS_COLOR : INCOME_COLOR,
+      column: 0,
+    })
+    links.push({
+      source: `in:${cat}`,
+      target: 'hub',
+      value: v,
+      color: isProvisioned ? 'rgba(201,161,74,0.5)' : 'rgba(111,174,147,0.5)',
+    })
   }
   if (net < -0.5) {
     nodes.push({ id: 'shortfall', label: 'Shortfall', value: -net, color: SHORTFALL_COLOR, column: 0 })
@@ -104,4 +122,61 @@ export function buildSankey(
   }
 
   return { nodes, links }
+}
+
+/**
+ * A short, deterministic (no AI call needed) written read of the same figures
+ * behind the diagram — the biggest flows, the savings rate, and anything
+ * already covered by a provision — for the Sankey's full-page detail view.
+ */
+export function describeSankeyFlow(
+  income: Record<string, number>,
+  expense: Record<string, number>,
+  provisionCovered: Record<string, number>,
+  currency: string,
+  locale: string,
+): string[] {
+  const fx = (n: number) => formatMoney(n, currency, locale, { round: true })
+  const incomeCats = Object.entries(income).filter(([, v]) => v > 0.5)
+  const expenseCats = Object.entries(expense)
+    .filter(([, v]) => v > 0.5)
+    .sort((a, b) => b[1] - a[1])
+  const totalIncome = incomeCats.reduce((s, [, v]) => s + v, 0)
+  const totalExpense = expenseCats.reduce((s, [, v]) => s + v, 0)
+  if (totalIncome <= 0.5 && totalExpense <= 0.5) return []
+
+  const net = totalIncome - totalExpense
+  const lines: string[] = []
+
+  if (totalIncome > 0.5) {
+    const rate = Math.round((net / totalIncome) * 100)
+    lines.push(
+      net >= 0
+        ? `${fx(totalIncome)} came in against ${fx(totalExpense)} spent — a ${rate}% savings rate.`
+        : `${fx(totalExpense)} went out against ${fx(totalIncome)} in — spending outpaced income by ${fx(-net)}.`,
+    )
+  } else if (totalExpense > 0.5) {
+    lines.push(`${fx(totalExpense)} went out with no income recorded for this period.`)
+  }
+
+  if (expenseCats.length > 0) {
+    const [topCat, topVal] = expenseCats[0]
+    const share = totalExpense > 0 ? Math.round((topVal / totalExpense) * 100) : 0
+    lines.push(`${topCat} was the biggest outflow at ${fx(topVal)} (${share}% of spending).`)
+  }
+  if (expenseCats.length > 1) {
+    const [cat2, val2] = expenseCats[1]
+    lines.push(`${cat2} followed at ${fx(val2)}.`)
+  }
+
+  const coveredEntries = Object.entries(provisionCovered).filter(([, v]) => v > 0.5)
+  const provisionedTotal = round2(coveredEntries.reduce((s, [, v]) => s + v, 0))
+  if (provisionedTotal > 0.5) {
+    const detail = coveredEntries.map(([cat, v]) => `${fx(v)} on ${cat}`).join(', ')
+    lines.push(
+      `${fx(provisionedTotal)} of spending (${detail}) was already provisioned for in earlier months, so it didn't land as a surprise.`,
+    )
+  }
+
+  return lines
 }

@@ -7,7 +7,7 @@ import type {
   Scenario,
 } from './types'
 import { currentMonth, monthRange, shortMonth, addMonths, uid } from './format'
-import { provisionCoveredByCategory } from './provisions'
+import { provisionCoveredByCategoryRange, allProvisionStatuses } from './provisions'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -122,6 +122,14 @@ export function startingBalance(data: AppData): number {
 export const NON_CASHFLOW = new Set(['Internal'])
 
 /**
+ * A synthetic income line: money released from a provision to cover a bill
+ * that landed this month. It was really earned/saved in earlier months, but
+ * counting it as this month's income keeps the net honest — a fully
+ * pre-funded bill shouldn't make the month look like it ran a deficit.
+ */
+export const PROVISIONED_BRACKET = 'Provisioned'
+
+/**
  * Actual money in/out per category across a set of months. Positives and
  * negatives inside the same category are netted first (a Health spend minus
  * its reimbursement shows as the net spend), then the net lands on the in or
@@ -145,6 +153,10 @@ export function actualsByCategoryRange(
     if (r > 0) income[cat] = r
     else if (r < 0) expense[cat] = -r
   }
+  const provisioned = round2(
+    Object.values(provisionCoveredByCategoryRange(data, months)).reduce((a, b) => a + b, 0),
+  )
+  if (provisioned > 0.5) income[PROVISIONED_BRACKET] = provisioned
   return { income, expense }
 }
 
@@ -468,6 +480,18 @@ export function computeReview(data: AppData, month: string): MonthReview {
     }
   }
 
+  // A bill covered by a provision was really paid for in earlier months —
+  // count what was drawn as this month's income too, so a big pre-funded
+  // bill doesn't make the month look like it ran a deficit.
+  const provisionCovered = provisionCoveredByCategoryRange(data, [month])
+  const totalProvisioned = round2(Object.values(provisionCovered).reduce((a, b) => a + b, 0))
+  if (totalProvisioned > 0.5) {
+    income = round2(income + totalProvisioned)
+    actualIncomeByCat[PROVISIONED_BRACKET] = round2(
+      (actualIncomeByCat[PROVISIONED_BRACKET] ?? 0) + totalProvisioned,
+    )
+  }
+
   // Planned figures from recurring items for this month.
   const plannedIncomeByCat: Record<string, number> = {}
   const recurringExpenseByCat: Record<string, number> = {}
@@ -511,7 +535,6 @@ export function computeReview(data: AppData, month: string): MonthReview {
     ...Object.keys(plannedExpenseByCat),
     ...Object.keys(actualExpenseByCat),
   ])
-  const covered = provisionCoveredByCategory(data, month)
   for (const cat of expenseCats) {
     const planned = plannedExpenseByCat[cat] ?? 0
     const actual = actualExpenseByCat[cat] ?? 0
@@ -521,7 +544,7 @@ export function computeReview(data: AppData, month: string): MonthReview {
       planned,
       actual,
       variance: actual - planned,
-      provisionCovered: covered[cat] ?? 0,
+      provisionCovered: provisionCovered[cat] ?? 0,
     })
   }
 
@@ -668,6 +691,21 @@ export function financialSummary(data: AppData): string {
         data.goals
           .map((g) => `${g.label} ${fx(g.saved)}/${fx(g.target)}`)
           .join(', '),
+    )
+  }
+
+  if (data.provisions.length) {
+    const statuses = allProvisionStatuses(data)
+    lines.push(
+      'Provisions (money set aside ahead of a known bill, e.g. quarterly taxes): ' +
+        statuses
+          .map(
+            (p) =>
+              `${p.label} [${p.category}] ${fx(p.funded)}/${fx(p.targetAmount)} funded` +
+              (p.dueDate ? `, due ${p.dueDate}` : '') +
+              (p.suggestedMonthly ? `, ≈${fx(p.suggestedMonthly)}/mo to stay on track` : ''),
+          )
+          .join('; '),
     )
   }
 

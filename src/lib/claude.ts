@@ -19,6 +19,7 @@ function systemPrompt(data: AppData, focusMonth?: string): string {
     'When they ask what to do about upcoming expenses, reason about their projected balance, recurring commitments, and goals — and give a concrete recommendation, not a survey of options.',
     'You are an informational assistant, not a licensed financial professional; note big caveats briefly when relevant, without hedging every sentence.',
     'If a figure is missing from the snapshot, say so rather than inventing it.',
+    'Format every answer in clean, simple markdown: short paragraphs, **bold** for key figures, and a bullet or numbered list when giving multiple points or steps. Never use tables, nested lists, or block quotes — keep the structure flat and easy to scan on a phone.',
     '',
     '--- FINANCIAL SNAPSHOT ---',
     financialSummary(data),

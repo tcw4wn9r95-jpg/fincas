@@ -7,11 +7,12 @@ import {
   itemAmountForMonth,
   spendSeriesByCategory,
   streak,
+  PROVISIONED_BRACKET,
 } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, parseAmount } from '../lib/format'
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
-import { buildSankey } from '../lib/sankey'
+import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import {
   allProvisionStatuses,
   provisionCoveredByCategory,
@@ -25,6 +26,7 @@ import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
 import { Sparkline } from './Sparkline'
 import { SankeyChart } from './SankeyChart'
+import { SankeyOverlay } from './SankeyOverlay'
 import { IconUpload, IconChat, IconTag, IconCheck, IconTrash } from './icons'
 
 function VarianceBar({ planned, actual }: { planned: number; actual: number }) {
@@ -89,10 +91,15 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
 
-  const sankeyGraph = useMemo(() => {
+  const [sankeyOpen, setSankeyOpen] = useState(false)
+  const { sankeyGraph, sankeyInsights } = useMemo(() => {
     const { income, expense } = actualsByCategory(data, activeMonth)
-    return buildSankey(income, expense, provisionCoveredByCategory(data, activeMonth))
-  }, [data, activeMonth])
+    const covered = provisionCoveredByCategory(data, activeMonth)
+    return {
+      sankeyGraph: buildSankey(income, expense, covered),
+      sankeyInsights: describeSankeyFlow(income, expense, covered, currency, locale),
+    }
+  }, [data, activeMonth, currency, locale])
 
   // This month's transactions grouped by category (both signs together, so a
   // category with spends and refunds shows them all when expanded).
@@ -300,6 +307,9 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       gap += Math.abs(actual - planned)
     }
     for (const [cat, actual] of Object.entries(income)) {
+      // The provisioned bracket is a synthetic accounting line, not a real
+      // plan category — never a genuine plan-vs-actual gap to close.
+      if (cat === PROVISIONED_BRACKET) continue
       const planned = data.recurring
         .filter((r) => r.flow === 'income' && r.category === cat)
         .reduce((s, r) => s + itemAmountForMonth(r, activeMonth), 0)
@@ -494,13 +504,16 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           </div>
 
           {sankeyGraph.nodes.length > 0 && (
-            <div className="card p-6">
+            <button
+              className="card p-6 w-full text-left hover:shadow-lift transition"
+              onClick={() => setSankeyOpen(true)}
+            >
               <h3 className="text-lg mb-1">Where it went</h3>
               <p className="text-sm text-muted mb-4">
-                Money in and where it went, {formatMonthLabel(activeMonth, locale)}
+                Money in and where it went, {formatMonthLabel(activeMonth, locale)} · tap for details
               </p>
               <SankeyChart graph={sankeyGraph} currency={currency} locale={locale} />
-            </div>
+            </button>
           )}
 
           {/* Close the loop: make the plan (and forecast) reflect what happened */}
@@ -672,9 +685,11 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                               <span
                                 className={classNames(
                                   'pill',
-                                  c.flow === 'income'
-                                    ? 'bg-forest-tint text-forest'
-                                    : 'bg-clay/10 text-clay',
+                                  c.category === PROVISIONED_BRACKET
+                                    ? 'bg-gold/15 text-gold'
+                                    : c.flow === 'income'
+                                      ? 'bg-forest-tint text-forest'
+                                      : 'bg-clay/10 text-clay',
                                 )}
                               >
                                 {c.category}
@@ -820,6 +835,17 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           aiBusy={aiBusy}
           aiError={aiError}
           onClose={() => setReconciling(false)}
+        />
+      )}
+      {sankeyOpen && (
+        <SankeyOverlay
+          graph={sankeyGraph}
+          currency={currency}
+          locale={locale}
+          title="Where it went"
+          subtitle={`Money in and where it went, ${formatMonthLabel(activeMonth, locale)}`}
+          insights={sankeyInsights}
+          onClose={() => setSankeyOpen(false)}
         />
       )}
     </div>
