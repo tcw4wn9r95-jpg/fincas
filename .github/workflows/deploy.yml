@@ -9,7 +9,7 @@ name: Build & publish
 
 on:
   push:
-    branches: [claude/financial-advisor-app-7q7k7e]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
