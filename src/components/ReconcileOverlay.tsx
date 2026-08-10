@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { CATEGORIES } from '../lib/categorize'
-import { formatMoney, formatMonthLabel, classNames, parseAmount } from '../lib/format'
-import { suggestProvisionAmount, type ProvisionStatus } from '../lib/provisions'
+import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
+import { type ProvisionStatus } from '../lib/provisions'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconCheck, IconSparkle } from './icons'
 import { Portal } from './Portal'
+import { ProvisionButton } from './ProvisionModal'
 
 /**
  * A Xero-style reconcile screen: go through a month's transactions, confirm the
@@ -22,8 +23,7 @@ export function ReconcileOverlay({
   onToggle,
   onConfirmAll,
   onAiCategorize,
-  onLink,
-  onLinkAmount,
+  onProvision,
   aiBusy,
   aiError,
   onClose,
@@ -37,8 +37,8 @@ export function ReconcileOverlay({
   onToggle: (id: string, reconciled: boolean) => void
   onConfirmAll: () => void
   onAiCategorize?: () => void
-  onLink: (id: string, provisionId: string | null, amount?: number) => void
-  onLinkAmount: (id: string, amount: number) => void
+  /** Opens the allocation pop-up for one transaction — owned by the parent so it stacks above this overlay. */
+  onProvision: (t: Transaction) => void
   aiBusy?: boolean
   aiError?: string
   onClose: () => void
@@ -230,40 +230,14 @@ export function ReconcileOverlay({
                     )}
                   </div>
                   {provisions.length > 0 && (
-                    <div className="flex items-center gap-2 mt-2">
-                      <select
-                        className="input py-1.5 text-xs flex-1 min-w-0"
-                        value={t.provisionId ?? ''}
-                        onChange={(e) => {
-                          const id = e.target.value || null
-                          const status = id ? provisions.find((p) => p.id === id) : undefined
-                          onLink(t.id, id, status ? suggestProvisionAmount(t, status) : undefined)
-                        }}
-                        title="Link to a provision"
-                      >
-                        <option value="">No provision</option>
-                        {provisions.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.label}
-                          </option>
-                        ))}
-                      </select>
-                      {t.provisionId && (
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          className="input py-1.5 w-24 text-xs text-right shrink-0"
-                          defaultValue={
-                            t.provisionAmount ??
-                            (() => {
-                              const status = provisions.find((p) => p.id === t.provisionId)
-                              return status ? suggestProvisionAmount(t, status) : Math.abs(t.amount)
-                            })()
-                          }
-                          onBlur={(e) => onLinkAmount(t.id, parseAmount(e.target.value) || 0)}
-                          title="Amount assigned to this provision"
-                        />
-                      )}
+                    <div className="mt-2">
+                      <ProvisionButton
+                        tx={t}
+                        provisions={provisions}
+                        currency={currency}
+                        locale={locale}
+                        onOpen={() => onProvision(t)}
+                      />
                     </div>
                   )}
                 </div>

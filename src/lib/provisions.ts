@@ -1,4 +1,4 @@
-import type { AppData, Provision, Transaction } from './types'
+import type { AppData, Provision, ProvisionAllocation, Transaction } from './types'
 
 // Kept free of `forecast.ts` imports (it will import from here) so the two
 // modules never form a cycle — hence the small local month-diff helper below
@@ -12,13 +12,50 @@ function monthsBetween(a: string, b: string): number {
 const round2 = (n: number) => Math.round(n * 100) / 100
 
 /**
- * How much of a linked transaction actually counts toward its provision —
- * the transaction rarely matches the provision exactly (a €500 transfer
- * where only €300 is really for the tax pot), so an explicit assigned
- * amount always wins; the full transaction amount is just the fallback.
+ * The single way to read a transaction's provision splits. Data saved before
+ * splitting existed carries one link in the legacy `provisionId` fields; it's
+ * surfaced here as a one-entry list so every caller sees the same shape and
+ * nothing needs migrating on load.
  */
-export function provisionLinkedAmount(t: Transaction): number {
-  return t.provisionAmount ?? Math.abs(t.amount)
+export function transactionAllocations(t: Transaction): ProvisionAllocation[] {
+  if (t.provisionAllocations) return t.provisionAllocations.filter((a) => a.provisionId && a.amount > 0)
+  if (!t.provisionId) return []
+  return [
+    {
+      provisionId: t.provisionId,
+      amount: t.provisionAmount ?? Math.abs(t.amount),
+      role: t.provisionRole ?? 'contribution',
+    },
+  ]
+}
+
+/** How much of a transaction is already spoken for across all its buckets. */
+export function allocatedTotal(t: Transaction): number {
+  return round2(transactionAllocations(t).reduce((s, a) => s + a.amount, 0))
+}
+
+/** What's still free to assign — the "500 left" of a €1,000 transfer split €500 to taxes. */
+export function unallocatedAmount(t: Transaction): number {
+  return round2(Math.max(0, Math.abs(t.amount) - allocatedTotal(t)))
+}
+
+/**
+ * Drop the matching allocations from a transaction, in place. Legacy
+ * single-link data is normalised through `transactionAllocations` first, so a
+ * pre-split transaction can't quietly survive its provision being deleted or
+ * recategorised.
+ */
+export function dropAllocations(
+  t: Transaction,
+  predicate: (a: ProvisionAllocation) => boolean,
+): void {
+  const current = transactionAllocations(t)
+  const kept = current.filter((a) => !predicate(a))
+  if (kept.length === current.length) return
+  t.provisionAllocations = kept.length ? kept : undefined
+  t.provisionId = undefined
+  t.provisionRole = undefined
+  t.provisionAmount = undefined
 }
 
 export interface ProvisionStatus {
@@ -43,9 +80,11 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
   let contributed = 0
   let drawn = 0
   for (const t of data.transactions) {
-    if (t.provisionId !== p.id) continue
-    if (t.provisionRole === 'contribution') contributed += provisionLinkedAmount(t)
-    else if (t.provisionRole === 'drawdown') drawn += provisionLinkedAmount(t)
+    for (const a of transactionAllocations(t)) {
+      if (a.provisionId !== p.id) continue
+      if (a.role === 'drawdown') drawn += a.amount
+      else contributed += a.amount
+    }
   }
   const balance = round2(contributed - drawn)
   const funded = Math.max(0, balance)
@@ -88,18 +127,25 @@ export function provisionRoleFor(category: string, provision: Pick<Provision, 'c
 }
 
 /**
- * The amount to pre-fill when linking a transaction to a provision. A
- * drawdown (the real bill) defaults to the transaction's own amount — that's
- * usually the exact bill. A contribution defaults to the provision's
- * suggested monthly set-aside (target remaining ÷ months until due), since
- * the transfer itself rarely matches that figure exactly.
+ * The amount to pre-fill when allocating a transaction to a provision. A
+ * drawdown (the real bill) defaults to the whole transaction — that's usually
+ * the exact bill. A contribution defaults to the provision's suggested monthly
+ * set-aside (target remaining ÷ months until due), since the transfer itself
+ * rarely matches that figure exactly. Either way it's capped by `available`
+ * (default: the transaction's full amount) so a suggestion can never overspend
+ * what's left to allocate.
  */
-export function suggestProvisionAmount(t: Transaction, status: ProvisionStatus): number {
+export function suggestProvisionAmount(
+  t: Transaction,
+  status: ProvisionStatus,
+  available = Math.abs(t.amount),
+): number {
   const role = provisionRoleFor(t.category, status)
-  if (role === 'drawdown') return round2(Math.abs(t.amount))
-  return status.suggestedMonthly && status.suggestedMonthly > 0
-    ? status.suggestedMonthly
-    : round2(Math.abs(t.amount))
+  const wanted =
+    role === 'contribution' && status.suggestedMonthly && status.suggestedMonthly > 0
+      ? status.suggestedMonthly
+      : Math.abs(t.amount)
+  return round2(Math.max(0, Math.min(wanted, available)))
 }
 
 /**
@@ -113,10 +159,13 @@ export function provisionCoveredByCategoryRange(data: AppData, months: string[])
   const byId = new Map(data.provisions.map((p) => [p.id, p]))
   const covered: Record<string, number> = {}
   for (const t of data.transactions) {
-    if (!monthSet.has(t.month) || t.provisionRole !== 'drawdown' || !t.provisionId) continue
-    const p = byId.get(t.provisionId)
-    if (!p) continue
-    covered[p.category] = round2((covered[p.category] ?? 0) + provisionLinkedAmount(t))
+    if (!monthSet.has(t.month)) continue
+    for (const a of transactionAllocations(t)) {
+      if (a.role !== 'drawdown') continue
+      const p = byId.get(a.provisionId)
+      if (!p) continue
+      covered[p.category] = round2((covered[p.category] ?? 0) + a.amount)
+    }
   }
   return covered
 }

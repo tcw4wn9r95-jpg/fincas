@@ -8,21 +8,20 @@ import {
   spendSeriesByCategory,
   streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, parseAmount } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey } from '../lib/format'
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import {
   allProvisionStatuses,
   provisionCoveredByCategory,
-  provisionRoleFor,
-  suggestProvisionAmount,
   type ProvisionStatus,
 } from '../lib/provisions'
-import type { Transaction } from '../lib/types'
+import type { ProvisionAllocation, Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
+import { ProvisionButton, ProvisionModal } from './ProvisionModal'
 import { Sparkline } from './Sparkline'
 import { SankeyChart } from './SankeyChart'
 import { SankeyOverlay } from './SankeyOverlay'
@@ -67,6 +66,9 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   // turned into a rule.
   const [openCat, setOpenCat] = useState<string | null>(null)
   const [teaching, setTeaching] = useState<Transaction | null>(null)
+  // The transaction whose provision split is open. Held here (not inside the
+  // reconcile overlay) so the pop-up stacks above whichever view opened it.
+  const [provisioning, setProvisioning] = useState<string | null>(null)
   const [reconciling, setReconciling] = useState(false)
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState('')
@@ -120,6 +122,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
     [data, activeMonth],
   )
   const reconciledCount = monthTxs.filter((t) => t.reconciled).length
+  // Resolved from the store by id, so the pop-up always edits live data.
+  const provisioningTx = provisioning
+    ? data.transactions.find((t) => t.id === provisioning) ?? null
+    : null
 
   // Reconciling one line reconciles every line that is the same recurring item
   // — same description AND amount — in this month and every other, with the same
@@ -206,54 +212,32 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
       for (const x of d.transactions) {
         if (txMatchKey(x.description, x.amount) === key) {
           x.category = category
-          // The category changed, so a prior provision link — whose role
-          // (contribution vs. drawdown) was set from the old category —
-          // can no longer be trusted; clear it rather than risk a silently
-          // wrong accrual. Re-linking afterwards is one click.
-          if (x.provisionId) {
-            x.provisionId = undefined
-            x.provisionRole = undefined
-            x.provisionAmount = undefined
-          }
+          // The category changed, so prior provision allocations — whose role
+          // (contribution vs. drawdown) was set from the old category — can no
+          // longer be trusted; clear them rather than risk a silently wrong
+          // accrual. Re-allocating afterwards is one click.
+          x.provisionAllocations = undefined
+          x.provisionId = undefined
+          x.provisionRole = undefined
+          x.provisionAmount = undefined
         }
       }
       return d
     })
   }
 
-  // Link (or unlink) a single transaction to a provision. Unlike category,
-  // this is instance-specific — it doesn't propagate to matching lines. The
-  // role is fixed at link time by comparing to the provision's own category:
-  // a match means this is the real bill (drawdown), anything else is money
-  // being set aside for it (contribution). `amount` is how much of this
-  // transaction actually counts toward the provision — the transaction
-  // itself rarely matches exactly, so callers pre-fill a suggestion
-  // (`suggestProvisionAmount`) rather than assuming the full amount.
-  function setTxProvision(id: string, provisionId: string | null, amount?: number) {
+  // Save one transaction's provision split. Unlike category, this is
+  // instance-specific — it doesn't propagate to matching lines. The legacy
+  // single-link fields are cleared alongside so the two never disagree about
+  // what this transaction funds.
+  function setTxAllocations(id: string, allocations: ProvisionAllocation[]) {
     update((d) => {
       const t = d.transactions.find((x) => x.id === id)
       if (!t) return d
-      if (!provisionId) {
-        t.provisionId = undefined
-        t.provisionRole = undefined
-        t.provisionAmount = undefined
-        return d
-      }
-      const p = d.provisions.find((x) => x.id === provisionId)
-      if (!p) return d
-      t.provisionId = provisionId
-      t.provisionRole = provisionRoleFor(t.category, p)
-      t.provisionAmount = amount !== undefined ? round2(amount) : undefined
-      return d
-    })
-  }
-
-  // Edit the assigned amount on an already-linked transaction, without
-  // touching which provision or role it has.
-  function setTxProvisionAmount(id: string, amount: number) {
-    update((d) => {
-      const t = d.transactions.find((x) => x.id === id)
-      if (t && t.provisionId) t.provisionAmount = round2(amount)
+      t.provisionAllocations = allocations.length ? allocations.map((a) => ({ ...a, amount: round2(a.amount) })) : undefined
+      t.provisionId = undefined
+      t.provisionRole = undefined
+      t.provisionAmount = undefined
       return d
     })
   }
@@ -731,8 +715,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                                 provisions={provisionStatuses}
                                 onSet={setTxCategory}
                                 onTeach={setTeaching}
-                                onLink={setTxProvision}
-                                onLinkAmount={setTxProvisionAmount}
+                                onProvision={(t) => setProvisioning(t.id)}
                               />
                             </td>
                           </tr>
@@ -778,8 +761,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
                               provisions={provisionStatuses}
                               onSet={setTxCategory}
                               onTeach={setTeaching}
-                              onLink={setTxProvision}
-                              onLinkAmount={setTxProvisionAmount}
+                              onProvision={(t) => setProvisioning(t.id)}
                             />
                           </td>
                         </tr>
@@ -830,11 +812,20 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           onToggle={setReconciled}
           onConfirmAll={reconcileAllSuggestions}
           onAiCategorize={hasApiKey(data) ? runAiCategorize : undefined}
-          onLink={setTxProvision}
-          onLinkAmount={setTxProvisionAmount}
+          onProvision={(t) => setProvisioning(t.id)}
           aiBusy={aiBusy}
           aiError={aiError}
           onClose={() => setReconciling(false)}
+        />
+      )}
+      {provisioningTx && (
+        <ProvisionModal
+          tx={provisioningTx}
+          provisions={provisionStatuses}
+          currency={currency}
+          locale={locale}
+          onSave={(allocations) => setTxAllocations(provisioningTx.id, allocations)}
+          onClose={() => setProvisioning(null)}
         />
       )}
       {sankeyOpen && (
@@ -860,8 +851,7 @@ function DrillList({
   provisions,
   onSet,
   onTeach,
-  onLink,
-  onLinkAmount,
+  onProvision,
 }: {
   txs: Transaction[]
   currency: string
@@ -869,8 +859,7 @@ function DrillList({
   provisions: ProvisionStatus[]
   onSet: (id: string, category: string) => void
   onTeach: (t: Transaction) => void
-  onLink: (id: string, provisionId: string | null, amount?: number) => void
-  onLinkAmount: (id: string, amount: number) => void
+  onProvision: (t: Transaction) => void
 }) {
   return (
     <div className="bg-canvas/40 px-6 py-2 divide-y divide-line/50">
@@ -901,43 +890,14 @@ function DrillList({
             ))}
           </select>
           {provisions.length > 0 && (
-            <>
-              <select
-                className="input py-1 w-32 shrink-0 text-xs"
-                value={t.provisionId ?? ''}
-                onChange={(e) => {
-                  const id = e.target.value || null
-                  const status = id ? provisions.find((p) => p.id === id) : undefined
-                  onLink(t.id, id, status ? suggestProvisionAmount(t, status) : undefined)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                title="Link to a provision"
-              >
-                <option value="">No provision</option>
-                {provisions.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-              {t.provisionId && (
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  className="input py-1 w-20 shrink-0 text-xs text-right"
-                  defaultValue={
-                    t.provisionAmount ??
-                    (() => {
-                      const status = provisions.find((p) => p.id === t.provisionId)
-                      return status ? suggestProvisionAmount(t, status) : Math.abs(t.amount)
-                    })()
-                  }
-                  onBlur={(e) => onLinkAmount(t.id, parseAmount(e.target.value) || 0)}
-                  onClick={(e) => e.stopPropagation()}
-                  title="Amount assigned to this provision"
-                />
-              )}
-            </>
+            <ProvisionButton
+              tx={t}
+              provisions={provisions}
+              currency={currency}
+              locale={locale}
+              onOpen={() => onProvision(t)}
+              compact
+            />
           )}
           <button
             className="text-muted hover:text-forest shrink-0"

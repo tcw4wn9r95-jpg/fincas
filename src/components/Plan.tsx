@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, parseAmount } from '../lib/format'
 import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
-import { allProvisionStatuses } from '../lib/provisions'
+import { allProvisionStatuses, dropAllocations } from '../lib/provisions'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
@@ -107,11 +107,7 @@ export function Plan() {
     update((d) => {
       d.provisions = d.provisions.filter((p) => p.id !== id)
       for (const t of d.transactions) {
-        if (t.provisionId === id) {
-          t.provisionId = undefined
-          t.provisionRole = undefined
-          t.provisionAmount = undefined
-        }
+        dropAllocations(t, (a) => a.provisionId === id)
       }
       return d
     })
@@ -127,11 +123,8 @@ export function Plan() {
       // than left silently wrong; contributions are untouched.
       if (fields.category) {
         for (const t of d.transactions) {
-          if (t.provisionId === id && t.provisionRole === 'drawdown' && t.category !== p.category) {
-            t.provisionId = undefined
-            t.provisionRole = undefined
-            t.provisionAmount = undefined
-          }
+          if (t.category === p.category) continue
+          dropAllocations(t, (a) => a.provisionId === id && a.role === 'drawdown')
         }
       }
       return d

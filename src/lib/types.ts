@@ -62,16 +62,36 @@ export interface Transaction {
   month: string
   /** Marked true once reviewed/confirmed in the reconcile flow. */
   reconciled?: boolean
-  /** Links this transaction to a provision it funds or draws down. */
-  provisionId?: string
-  /** Set once at link time and held fixed — see `provisionId`. */
-  provisionRole?: 'contribution' | 'drawdown'
   /**
-   * How much of this transaction counts toward the provision — not always
-   * the full transaction amount (e.g. a €500 transfer where only €300 is
-   * really earmarked for the tax pot). Defaults to the full amount when unset.
+   * How this transaction is split across provision buckets. One transaction
+   * can feed several pots (a €1,000 transfer: €500 to taxes, €300 to the
+   * car, €200 left unallocated), so this is a list, not a single link.
+   * Read it through `transactionAllocations()` — never directly — so the
+   * legacy single-link fields below still resolve.
    */
+  provisionAllocations?: ProvisionAllocation[]
+  /** @deprecated Pre-split single link, kept so old data still reads. See `provisionAllocations`. */
+  provisionId?: string
+  /** @deprecated See `provisionAllocations`. */
+  provisionRole?: 'contribution' | 'drawdown'
+  /** @deprecated See `provisionAllocations`. */
   provisionAmount?: number
+}
+
+/**
+ * One slice of a transaction earmarked for a provision bucket. `amount` is
+ * always positive and never exceeds the transaction's own absolute amount
+ * once summed across the list — the difference is what's still left to
+ * allocate.
+ */
+export interface ProvisionAllocation {
+  provisionId: string
+  amount: number
+  /**
+   * Fixed when the allocation is made, by comparing the transaction's
+   * category to the provision's own — see `provisionRoleFor`.
+   */
+  role: 'contribution' | 'drawdown'
 }
 
 export interface Goal {

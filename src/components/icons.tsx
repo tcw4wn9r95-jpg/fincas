@@ -163,6 +163,17 @@ export function IconWeek(p: IconProps) {
   )
 }
 
+/** A jar with a coin slot — money set aside ahead of a known bill. */
+export function IconProvision(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8Z" />
+      <path d="M5 5h14" />
+      <path d="M10 12h4" />
+    </svg>
+  )
+}
+
 export function Logo({ className = '' }: { className?: string }) {
   return (
     <svg viewBox="0 0 512 512" className={className} aria-hidden>
