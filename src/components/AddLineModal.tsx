@@ -7,7 +7,7 @@ import { Portal } from './Portal'
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
 
-const CADENCES: Array<{ value: Cadence; label: string }> = [
+export const CADENCES: Array<{ value: Cadence; label: string }> = [
   { value: 'monthly', label: 'Every month' },
   { value: 'weekly', label: 'Every week' },
   { value: 'biweekly', label: 'Every 2 weeks' },

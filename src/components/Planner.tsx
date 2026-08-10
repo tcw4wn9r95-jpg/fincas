@@ -1,40 +1,38 @@
 import { useState } from 'react'
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
-import { itemAmountForMonth, planMonths, startingBalance, planSection } from '../lib/forecast'
-import { formatMoney, shortMonth, classNames, parseAmount } from '../lib/format'
-import type { Flow, RecurringItem } from '../lib/types'
-import { IconPlus, IconTrash, IconEdit } from './icons'
-import { AddLineModal } from './AddLineModal'
+import { itemAmountForMonth, planMonths, planSection } from '../lib/forecast'
+import { formatMoney, formatMonthLabel, classNames, parseAmount } from '../lib/format'
+import type { Cadence, Flow, RecurringItem } from '../lib/types'
+import { IconPlus, IconTrash, IconEdit, IconClose, IconMoneyDate } from './icons'
+import { AddLineModal, CADENCES } from './AddLineModal'
 import { EditLineModal } from './EditLineModal'
 
-// A spreadsheet-style editor: rows are plan lines, columns are months. Every
-// cell is editable, and lines are grouped into sections (Fixed / Provisions /
-// Variable …) with live subtotals — mirroring the original spreadsheet.
+// One row per recurring line, grouped into sections (Fixed / Provisions /
+// Variable …) with a live subtotal. The default amount + cadence covers the
+// common case; overriding a single month is a deliberate, secondary action
+// that leaves a visible, removable chip — nothing is hidden in an off-screen
+// column the way a full month-by-month grid would hide it.
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
 const SECTION_ORDER = ['Fixed monthly', 'Provisions', 'Variable']
-
 const sectionOf = planSection
 
-type DisplayRow =
-  | { kind: 'section'; label: string }
-  | { kind: 'item'; item: RecurringItem }
-  | { kind: 'total'; label: string; values: number[]; tone: TotalTone; strong?: boolean }
+const CADENCE_LABEL = new Map(CADENCES.map((c) => [c.value, c.label]))
 
-type TotalTone = 'income' | 'expense' | 'net' | 'balance' | 'sub'
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
 
 export function Planner() {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const months = planMonths(data)
+  const now = months[0]
   const [adding, setAdding] = useState<Flow | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [overrideOpenId, setOverrideOpenId] = useState<string | null>(null)
   const editingItem = data.recurring.find((r) => r.id === editingId) ?? null
-  // Grid cells are uncontrolled (defaultValue), so a bulk edit that rewrites
-  // many months needs the rows to remount to show the new numbers. Bumping this
-  // after a modal edit does that, without disturbing single-cell editing.
-  const [rev, setRev] = useState(0)
 
   function onAdd(item: RecurringItem) {
     update((d) => {
@@ -42,19 +40,6 @@ export function Planner() {
       return d
     })
     setAdding(null)
-  }
-
-  const income = data.recurring.filter((r) => r.flow === 'income')
-  const expense = data.recurring.filter((r) => r.flow === 'expense')
-
-  function commitCell(id: string, month: string, raw: string) {
-    const value = raw.trim() === '' ? 0 : parseAmount(raw)
-    if (Number.isNaN(value)) return
-    update((d) => {
-      const it = d.recurring.find((r) => r.id === id)
-      if (it) it.monthly = { ...(it.monthly ?? {}), [month]: value }
-      return d
-    })
   }
   function commitField(id: string, fields: Partial<RecurringItem>) {
     update((d) => {
@@ -68,9 +53,10 @@ export function Planner() {
       d.recurring = d.recurring.filter((r) => r.id !== id)
       return d
     })
+    if (overrideOpenId === id) setOverrideOpenId(null)
   }
   // Push one amount change across a span of months at once — the bulk edit the
-  // grid alone can't do. Writes precise per-month values so the forecast updates.
+  // list alone can't do. Writes precise per-month values so the forecast updates.
   function applyBulk(id: string, mode: 'set' | 'scale', value: number, from?: string, to?: string) {
     update((d) => {
       const it = d.recurring.find((r) => r.id === id)
@@ -87,11 +73,27 @@ export function Planner() {
       return d
     })
   }
+  function setOverride(id: string, month: string, value: number) {
+    update((d) => {
+      const it = d.recurring.find((r) => r.id === id)
+      if (it) it.monthly = { ...(it.monthly ?? {}), [month]: value }
+      return d
+    })
+  }
+  function clearOverride(id: string, month: string) {
+    update((d) => {
+      const it = d.recurring.find((r) => r.id === id)
+      if (it?.monthly) {
+        const next = { ...it.monthly }
+        delete next[month]
+        it.monthly = next
+      }
+      return d
+    })
+  }
 
-  const sum = (items: RecurringItem[], m: string) =>
-    items.reduce((s, it) => s + itemAmountForMonth(it, m), 0)
-
-  const incomeTotals = months.map((m) => sum(income, m))
+  const income = data.recurring.filter((r) => r.flow === 'income')
+  const expense = data.recurring.filter((r) => r.flow === 'expense')
 
   // Group expense lines into sections.
   const groups = new Map<string, RecurringItem[]>()
@@ -106,48 +108,31 @@ export function Planner() {
   ]
   if (groups.has('Variable') && !ordered.includes('Variable')) ordered.push('Variable')
 
-  const committed = ordered.filter((s) => s !== 'Variable')
-  const committedTotals = months.map((m) =>
-    committed.reduce((s, sec) => s + sum(groups.get(sec)!, m), 0),
-  )
-  const expenseTotals = months.map((m) => sum(expense, m))
-  const nets = months.map((_, i) => incomeTotals[i] - expenseTotals[i])
-  let running = startingBalance(data)
-  const balances = nets.map((n) => (running += n))
-
-  // Build the ordered list of display rows.
-  const rows: DisplayRow[] = [{ kind: 'section', label: 'Income' }]
-  income.forEach((item) => rows.push({ kind: 'item', item }))
-  rows.push({ kind: 'total', label: 'Total income', values: incomeTotals, tone: 'income', strong: true })
-
-  for (const sec of ordered) {
-    if (sec === 'Variable' && committed.length) {
-      const afterFixed = months.map((_, i) => incomeTotals[i] - committedTotals[i])
-      rows.push({ kind: 'total', label: 'After fixed costs', values: afterFixed, tone: 'net' })
-    }
-    rows.push({ kind: 'section', label: sec })
-    groups.get(sec)!.forEach((item) => rows.push({ kind: 'item', item }))
-    rows.push({
-      kind: 'total',
-      label: `${sec} subtotal`,
-      values: months.map((m) => sum(groups.get(sec)!, m)),
-      tone: 'sub',
-    })
-  }
-
-  rows.push({ kind: 'total', label: 'Total expenses', values: expenseTotals, tone: 'expense', strong: true })
-  rows.push({ kind: 'total', label: 'Net', values: nets, tone: 'net', strong: true })
-  rows.push({ kind: 'total', label: 'Projected balance', values: balances, tone: 'balance', strong: true })
-
+  const sumNow = (items: RecurringItem[]) => items.reduce((s, it) => s + itemAmountForMonth(it, now), 0)
+  const incomeNow = sumNow(income)
+  const expenseNow = sumNow(expense)
+  const netNow = incomeNow - expenseNow
   const fx = (n: number) => formatMoney(n, currency, locale)
-  const colW = 86
+
+  const rowProps = {
+    months,
+    locale,
+    fx,
+    overrideOpenId,
+    setOverrideOpenId,
+    onField: commitField,
+    onOverride: setOverride,
+    onClearOverride: clearOverride,
+    onEdit: setEditingId,
+    onRemove: removeRow,
+  }
 
   if (data.recurring.length === 0) {
     return (
       <div className="card p-6">
         <h3 className="text-lg">Monthly planner</h3>
         <p className="text-sm text-muted mb-4">
-          A spreadsheet-style view of your plan — every month is editable.
+          One line per recurring cost or income — override a single month only when you need to.
         </p>
         <div className="flex gap-2">
           <button className="btn-primary" onClick={() => setAdding('income')}>
@@ -157,28 +142,21 @@ export function Planner() {
             <IconPlus width={16} height={16} /> Expense line
           </button>
         </div>
-        {adding && (
-          <AddLineModal
-            flow={adding}
-            locale={locale}
-            onClose={() => setAdding(null)}
-            onAdd={onAdd}
-          />
-        )}
+        {adding && <AddLineModal flow={adding} locale={locale} onClose={() => setAdding(null)} onAdd={onAdd} />}
       </div>
     )
   }
 
   return (
-    <div className="card overflow-hidden" key={data.updatedAt}>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-6 pt-5 pb-3">
+    <div className="card p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-lg">Monthly planner</h3>
           <p className="text-sm text-muted">
-            Edit any cell — values feed the forecast. Scroll sideways for more months.
+            One line per recurring cost or income — override a single month only when you need to.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           <button className="btn-ghost text-xs" onClick={() => setAdding('income')}>
             <IconPlus width={14} height={14} /> Income
           </button>
@@ -188,78 +166,38 @@ export function Planner() {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="text-sm border-separate border-spacing-0">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-20 bg-paper text-left font-medium text-muted px-3 py-2 border-b border-line min-w-[150px] sm:min-w-[220px]">
-                Line
-              </th>
-              {months.map((m, i) => (
-                <th
-                  key={m}
-                  className={classNames(
-                    'px-2 py-2 text-right font-medium border-b border-line whitespace-nowrap',
-                    i === 0 ? 'text-forest' : 'text-muted',
-                  )}
-                  style={{ minWidth: colW }}
-                >
-                  {shortMonth(m, locale)} {m.slice(2, 4)}
-                  {i === 0 && <div className="text-[10px] font-normal">now</div>}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, i) => {
-              if (row.kind === 'section')
-                return <SectionRow key={`s${i}`} label={row.label} span={months.length + 1} />
-              if (row.kind === 'item')
-                return (
-                  <PlanRow
-                    key={`${row.item.id}:${rev}`}
-                    item={row.item}
-                    months={months}
-                    colW={colW}
-                    onCell={commitCell}
-                    onField={commitField}
-                    onRemove={removeRow}
-                    onEdit={() => setEditingId(row.item.id)}
-                  />
-                )
-              return (
-                <TotalRow
-                  key={`t${i}`}
-                  label={row.label}
-                  values={row.values}
-                  fx={fx}
-                  tone={row.tone}
-                  strong={row.strong}
-                />
-              )
-            })}
-          </tbody>
-        </table>
+      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm mt-4 mb-5 pb-4 border-b border-line">
+        <span className="text-muted">
+          Income <span className="text-ink font-medium tabular-nums">{fx(incomeNow)}</span>/mo
+        </span>
+        <span className="text-muted">
+          Expenses <span className="text-ink font-medium tabular-nums">{fx(expenseNow)}</span>/mo
+        </span>
+        <span className="text-muted">
+          Net{' '}
+          <span className={classNames('font-medium tabular-nums', netNow >= 0 ? 'text-forest' : 'text-clay')}>
+            {fx(netNow)}
+          </span>
+          /mo
+        </span>
+        <span className="text-xs text-muted">as of {formatMonthLabel(now + '-01', locale)}</span>
       </div>
 
-      {adding && (
-        <AddLineModal
-          flow={adding}
-          locale={locale}
-          onClose={() => setAdding(null)}
-          onAdd={onAdd}
-        />
-      )}
+      <div className="space-y-6">
+        {income.length > 0 && <PlanSection title="Income" items={income} sumNow={sumNow} {...rowProps} />}
+        {ordered.map((sec) => (
+          <PlanSection key={sec} title={sec} items={groups.get(sec)!} sumNow={sumNow} {...rowProps} />
+        ))}
+      </div>
+
+      {adding && <AddLineModal flow={adding} locale={locale} onClose={() => setAdding(null)} onAdd={onAdd} />}
       {editingItem && (
         <EditLineModal
           item={editingItem}
           months={months}
           currency={currency}
           locale={locale}
-          onClose={() => {
-            setEditingId(null)
-            setRev((r) => r + 1) // remount rows so bulk/field changes show
-          }}
+          onClose={() => setEditingId(null)}
           onField={(fields) => commitField(editingItem.id, fields)}
           onBulk={(mode, value, from, to) => applyBulk(editingItem.id, mode, value, from, to)}
           onRemove={() => removeRow(editingItem.id)}
@@ -269,134 +207,197 @@ export function Planner() {
   )
 }
 
-function SectionRow({ label, span }: { label: string; span: number }) {
+interface RowProps {
+  months: string[]
+  locale: string
+  fx: (n: number) => string
+  overrideOpenId: string | null
+  setOverrideOpenId: (id: string | null) => void
+  onField: (id: string, fields: Partial<RecurringItem>) => void
+  onOverride: (id: string, month: string, value: number) => void
+  onClearOverride: (id: string, month: string) => void
+  onEdit: (id: string) => void
+  onRemove: (id: string) => void
+}
+
+function PlanSection({
+  title,
+  items,
+  sumNow,
+  months,
+  ...rest
+}: RowProps & { title: string; items: RecurringItem[]; sumNow: (items: RecurringItem[]) => number }) {
+  if (items.length === 0) return null
   return (
-    <tr>
-      <td
-        colSpan={span}
-        className="sticky left-0 bg-forest-tint/50 text-forest text-xs font-semibold uppercase tracking-wide px-3 py-1.5 border-b border-line"
-      >
-        {label}
-      </td>
-    </tr>
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-forest">{title}</h4>
+        <span className="text-xs text-muted tabular-nums">{rest.fx(sumNow(items))}/mo</span>
+      </div>
+      <div className="space-y-2">
+        {items.map((item) => (
+          <PlanLineRow key={item.id} item={item} months={months} {...rest} />
+        ))}
+      </div>
+    </div>
   )
 }
 
-function PlanRow({
+function PlanLineRow({
   item,
   months,
-  colW,
-  onCell,
+  locale,
+  fx,
+  overrideOpenId,
+  setOverrideOpenId,
   onField,
-  onRemove,
+  onOverride,
+  onClearOverride,
   onEdit,
-}: {
-  item: RecurringItem
-  months: string[]
-  colW: number
-  onCell: (id: string, month: string, raw: string) => void
-  onField: (id: string, fields: Partial<RecurringItem>) => void
-  onRemove: (id: string) => void
-  onEdit: () => void
-}) {
+  onRemove,
+}: RowProps & { item: RecurringItem }) {
+  const overrides = Object.entries(item.monthly ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const overrideOpen = overrideOpenId === item.id
+  const [overrideMonth, setOverrideMonth] = useState(months[0] ?? '')
+  const [overrideAmount, setOverrideAmount] = useState('')
+
+  function saveOverride() {
+    const v = parseAmount(overrideAmount)
+    if (!overrideMonth || Number.isNaN(v)) return
+    onOverride(item.id, overrideMonth, Math.abs(v))
+    setOverrideAmount('')
+    setOverrideOpenId(null)
+  }
+
   return (
-    <tr className="group hover:bg-canvas/60">
-      <td className="sticky left-0 z-10 bg-paper group-hover:bg-canvas/60 px-3 py-1.5 border-b border-line/60 align-middle">
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0">
+    <div className="rounded-lg border border-line bg-canvas/50 px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <input
+          className="bg-transparent text-sm font-medium outline-none min-w-0 flex-1 focus:text-forest"
+          defaultValue={item.label}
+          onBlur={(e) => onField(item.id, { label: e.target.value.trim() || item.label })}
+        />
+        {item.flow === 'expense' && (
+          <select
+            className="bg-transparent text-[11px] text-muted outline-none cursor-pointer hover:text-forest shrink-0"
+            defaultValue={item.category}
+            onChange={(e) => onField(item.id, { category: e.target.value })}
+          >
+            {expenseCats.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        )}
+        <div className="flex items-center gap-1 shrink-0">
+          <input
+            type="text"
+            inputMode="decimal"
+            className="bg-transparent text-right text-sm tabular-nums outline-none w-20 focus:text-forest"
+            defaultValue={item.amount}
+            onBlur={(e) => {
+              const v = parseAmount(e.target.value)
+              if (!Number.isNaN(v) && v >= 0) onField(item.id, { amount: v })
+            }}
+          />
+          <select
+            className="bg-transparent text-xs text-muted outline-none cursor-pointer hover:text-forest"
+            defaultValue={item.cadence}
+            onChange={(e) => onField(item.id, { cadence: e.target.value as Cadence })}
+          >
+            {CADENCES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
           <button
-            className="text-muted hover:text-forest transition shrink-0"
-            onClick={onEdit}
-            aria-label="Edit line — change across months"
-            title="Edit line — change across months"
+            className={classNames('transition', overrideOpen ? 'text-forest' : 'text-muted hover:text-forest')}
+            onClick={() => setOverrideOpenId(overrideOpen ? null : item.id)}
+            title="Override a single month"
+            aria-label="Override a single month"
+          >
+            <IconMoneyDate width={15} height={15} />
+          </button>
+          <button
+            className="text-muted hover:text-forest"
+            onClick={() => onEdit(item.id)}
+            title="Rename, change dates, or edit a range of months"
+            aria-label="Edit line"
           >
             <IconEdit width={14} height={14} />
           </button>
           <button
-            className="text-muted hover:text-clay opacity-0 group-hover:opacity-100 transition shrink-0"
+            className="text-muted hover:text-clay"
             onClick={() => onRemove(item.id)}
-            aria-label="Remove line"
+            aria-label="Delete line"
           >
             <IconTrash width={14} height={14} />
           </button>
-          <input
-            className="bg-transparent text-sm font-medium outline-none w-24 sm:w-28 focus:text-forest"
-            defaultValue={item.label}
-            onBlur={(e) => onField(item.id, { label: e.target.value.trim() || item.label })}
-          />
-          <select
-            className="bg-transparent text-[11px] text-muted outline-none cursor-pointer hover:text-forest max-w-[88px]"
-            defaultValue={item.category}
-            onChange={(e) => onField(item.id, { category: e.target.value })}
-          >
-            {item.flow === 'income' ? (
-              <option value="Income">Income</option>
-            ) : (
-              expenseCats.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))
-            )}
-          </select>
         </div>
-      </td>
-      {months.map((m) => (
-        <td key={m} className="border-b border-line/60 p-0" style={{ minWidth: colW }}>
-          <input
-            type="text"
-            inputMode="decimal"
-            defaultValue={round2(itemAmountForMonth(item, m))}
-            onBlur={(e) => onCell(item.id, m, e.target.value)}
-            className="w-full bg-transparent text-right text-sm px-2 py-1.5 outline-none tabular-nums text-ink focus:bg-forest-tint/40 focus:text-forest"
-          />
-        </td>
-      ))}
-    </tr>
-  )
-}
+      </div>
 
-function TotalRow({
-  label,
-  values,
-  fx,
-  tone,
-  strong,
-}: {
-  label: string
-  values: number[]
-  fx: (n: number) => string
-  tone: TotalTone
-  strong?: boolean
-}) {
-  return (
-    <tr className={classNames(strong && 'border-t-2 border-line')}>
-      <td
-        className={classNames(
-          'sticky left-0 bg-paper px-3 py-1.5 border-b border-line text-xs uppercase tracking-wide',
-          strong ? 'font-semibold text-ink' : tone === 'sub' ? 'font-medium text-ink/70' : 'font-medium text-muted',
-        )}
-      >
-        {label}
-      </td>
-      {values.map((v, i) => (
-        <td
-          key={i}
-          className={classNames(
-            'px-2 py-1.5 text-right border-b border-line tabular-nums whitespace-nowrap',
-            tone === 'income' && 'text-forest',
-            tone === 'expense' && 'text-clay',
-            tone === 'sub' && 'text-ink/70',
-            tone === 'net' && (v >= 0 ? 'text-forest font-medium' : 'text-clay font-medium'),
-            tone === 'balance' && (v >= 0 ? 'text-ink font-medium' : 'text-clay font-medium'),
+      {(item.cadence !== 'monthly' || overrides.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">
+          {item.cadence !== 'monthly' && (
+            <span className="text-muted">
+              {CADENCE_LABEL.get(item.cadence)?.toLowerCase()} · ~{fx(round2(itemAmountForMonth(item, item.startDate.slice(0, 7))))}/mo equivalent
+            </span>
           )}
-        >
-          {fx(v)}
-        </td>
-      ))}
-    </tr>
-  )
-}
+          {overrides.map(([m, v]) => (
+            <span key={m} className="pill bg-gold/10 text-ink inline-flex items-center gap-1">
+              {formatMonthLabel(m + '-01', locale)}: {fx(v)}
+              <button
+                className="text-muted hover:text-clay"
+                onClick={() => onClearOverride(item.id, m)}
+                aria-label={`Remove override for ${formatMonthLabel(m + '-01', locale)}`}
+              >
+                <IconClose width={10} height={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100
+      {overrideOpen && (
+        <div className="flex flex-wrap items-end gap-2 mt-2.5 pt-2.5 border-t border-line/60">
+          <div>
+            <label className="text-[11px] text-muted block mb-0.5">Month</label>
+            <select
+              className="input py-1 text-xs w-auto"
+              value={overrideMonth}
+              onChange={(e) => setOverrideMonth(e.target.value)}
+            >
+              {months.map((m) => (
+                <option key={m} value={m}>
+                  {formatMonthLabel(m + '-01', locale)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-[11px] text-muted block mb-0.5">Amount that month</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              className="input py-1 text-xs w-24 tabular-nums"
+              placeholder={String(round2(itemAmountForMonth(item, overrideMonth)))}
+              value={overrideAmount}
+              onChange={(e) => setOverrideAmount(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <button className="btn-primary text-xs py-1.5 px-3" onClick={saveOverride}>
+            Save
+          </button>
+          <button className="btn-ghost text-xs py-1.5 px-3" onClick={() => setOverrideOpenId(null)}>
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
