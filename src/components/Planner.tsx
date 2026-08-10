@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
-import { itemAmountForMonth, planMonths, planSection } from '../lib/forecast'
+import { itemAmountForMonth, itemBaseAmountForMonth, planMonths, planSection } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, classNames, parseAmount } from '../lib/format'
 import type { Cadence, Flow, RecurringItem } from '../lib/types'
 import { IconPlus, IconTrash, IconEdit, IconClose, IconMoneyDate } from './icons'
@@ -256,7 +256,26 @@ function PlanLineRow({
   onEdit,
   onRemove,
 }: RowProps & { item: RecurringItem }) {
-  const overrides = Object.entries(item.monthly ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  // Only months that genuinely differ from what the cadence implies are worth
+  // showing. A plan edited in the old grid stores an explicit value for every
+  // month, but one that just restates "€1,850 every month" is not an override
+  // — listing those buried the real exceptions in noise.
+  const stored = item.monthly ?? {}
+  const exceptions = months
+    .filter((m) => Object.prototype.hasOwnProperty.call(stored, m))
+    .filter((m) => {
+      const v = stored[m]
+      return (
+        typeof v === 'number' &&
+        !Number.isNaN(v) &&
+        Math.abs(v - itemBaseAmountForMonth(item, m)) > 0.005
+      )
+    })
+  const MAX_CHIPS = 4
+  const [showAllExceptions, setShowAllExceptions] = useState(false)
+  const shownExceptions = showAllExceptions ? exceptions : exceptions.slice(0, MAX_CHIPS)
+  const hiddenExceptions = exceptions.length - shownExceptions.length
+
   const overrideOpen = overrideOpenId === item.id
   const [overrideMonth, setOverrideMonth] = useState(months[0] ?? '')
   const [overrideAmount, setOverrideAmount] = useState('')
@@ -340,16 +359,16 @@ function PlanLineRow({
         </div>
       </div>
 
-      {(item.cadence !== 'monthly' || overrides.length > 0) && (
+      {(item.cadence !== 'monthly' || exceptions.length > 0) && (
         <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">
           {item.cadence !== 'monthly' && (
             <span className="text-muted">
-              {CADENCE_LABEL.get(item.cadence)?.toLowerCase()} · ~{fx(round2(itemAmountForMonth(item, item.startDate.slice(0, 7))))}/mo equivalent
+              {CADENCE_LABEL.get(item.cadence)?.toLowerCase()} · ~{fx(round2(itemBaseAmountForMonth(item, item.startDate.slice(0, 7))))} when it lands
             </span>
           )}
-          {overrides.map(([m, v]) => (
+          {shownExceptions.map((m) => (
             <span key={m} className="pill bg-gold/10 text-ink inline-flex items-center gap-1">
-              {formatMonthLabel(m + '-01', locale)}: {fx(v)}
+              {formatMonthLabel(m + '-01', locale)}: {fx(stored[m])}
               <button
                 className="text-muted hover:text-clay"
                 onClick={() => onClearOverride(item.id, m)}
@@ -359,6 +378,16 @@ function PlanLineRow({
               </button>
             </span>
           ))}
+          {hiddenExceptions > 0 && (
+            <button className="text-muted hover:text-forest underline" onClick={() => setShowAllExceptions(true)}>
+              +{hiddenExceptions} more
+            </button>
+          )}
+          {showAllExceptions && exceptions.length > MAX_CHIPS && (
+            <button className="text-muted hover:text-forest underline" onClick={() => setShowAllExceptions(false)}>
+              Show less
+            </button>
+          )}
         </div>
       )}
 

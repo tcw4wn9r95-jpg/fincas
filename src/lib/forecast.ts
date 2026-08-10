@@ -45,13 +45,13 @@ export function variablePlanForMonth(data: AppData, month: string): number {
     .reduce((s, it) => s + itemAmountForMonth(it, month), 0)
 }
 
-/** How much a recurring item contributes during a given YYYY-MM. */
-export function itemAmountForMonth(item: RecurringItem, month: string): number {
-  // An explicit per-month value always wins — this is what makes the plan precise.
-  if (item.monthly && Object.prototype.hasOwnProperty.call(item.monthly, month)) {
-    const v = item.monthly[month]
-    if (typeof v === 'number' && !Number.isNaN(v)) return v
-  }
+/**
+ * What a line's cadence and base amount alone imply for a month, ignoring any
+ * explicit per-month value. Lets the planner tell a genuine override apart
+ * from a stored value that merely restates the cadence — editing a cell in the
+ * old grid wrote one of those for every month, so most are redundant.
+ */
+export function itemBaseAmountForMonth(item: RecurringItem, month: string): number {
   const startMonth = item.startDate.slice(0, 7)
   if (month < startMonth) return 0
   if (item.endDate && month >= item.endDate.slice(0, 7)) return 0
@@ -73,6 +73,16 @@ export function itemAmountForMonth(item: RecurringItem, month: string): number {
     default:
       return 0
   }
+}
+
+/** How much a recurring item contributes during a given YYYY-MM. */
+export function itemAmountForMonth(item: RecurringItem, month: string): number {
+  // An explicit per-month value always wins — this is what makes the plan precise.
+  if (item.monthly && Object.prototype.hasOwnProperty.call(item.monthly, month)) {
+    const v = item.monthly[month]
+    if (typeof v === 'number' && !Number.isNaN(v)) return v
+  }
+  return itemBaseAmountForMonth(item, month)
 }
 
 export function totalBalance(data: AppData): number {
