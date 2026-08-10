@@ -1,6 +1,17 @@
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+
+// Stamped into the bundle at build time so Settings can show exactly which
+// build is running. In CI these come from the deploy workflow's environment,
+// so the "deployed" time is the moment the live bundle was produced.
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
+const buildInfo = {
+  __APP_VERSION__: JSON.stringify(pkg.version ?? '0.0.0'),
+  __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  __COMMIT_SHA__: JSON.stringify((process.env.GITHUB_SHA ?? '').slice(0, 7) || 'local'),
+}
 
 // Relative base ('./') makes the build portable: it works when served from a
 // sub-path (a CDN preview like raw.githack.com, or GitHub Pages project path
@@ -9,6 +20,7 @@ const base = process.env.FINCAS_BASE ?? './'
 
 export default defineConfig({
   base,
+  define: buildInfo,
   plugins: [
     react(),
     VitePWA({

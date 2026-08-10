@@ -2,17 +2,17 @@ import { useState } from 'react'
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
 import { itemAmountForMonth, itemBaseAmountForMonth, planMonths, planSection } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, classNames, parseAmount } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, parseAmount } from '../lib/format'
 import type { Cadence, Flow, RecurringItem } from '../lib/types'
-import { IconPlus, IconTrash, IconEdit, IconClose, IconMoneyDate } from './icons'
+import { IconPlus, IconTrash, IconEdit, IconMoneyDate } from './icons'
 import { AddLineModal, CADENCES } from './AddLineModal'
 import { EditLineModal } from './EditLineModal'
 
 // One row per recurring line, grouped into sections (Fixed / Provisions /
-// Variable …) with a live subtotal. The default amount + cadence covers the
-// common case; overriding a single month is a deliberate, secondary action
-// that leaves a visible, removable chip — nothing is hidden in an off-screen
-// column the way a full month-by-month grid would hide it.
+// Variable …) with a live subtotal. The amount + cadence covers the common
+// case; a line whose months differ says so in one line of text and opens an
+// inline month-by-month schedule on demand — so the precision of the old grid
+// is still there, but for one line at a time instead of all of them at once.
 
 const expenseCats = CATEGORIES.filter((c) => c !== 'Income')
 const SECTION_ORDER = ['Fixed monthly', 'Provisions', 'Variable']
@@ -31,7 +31,7 @@ export function Planner() {
   const now = months[0]
   const [adding, setAdding] = useState<Flow | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [overrideOpenId, setOverrideOpenId] = useState<string | null>(null)
+  const [scheduleOpenId, setScheduleOpenId] = useState<string | null>(null)
   const editingItem = data.recurring.find((r) => r.id === editingId) ?? null
 
   function onAdd(item: RecurringItem) {
@@ -53,7 +53,7 @@ export function Planner() {
       d.recurring = d.recurring.filter((r) => r.id !== id)
       return d
     })
-    if (overrideOpenId === id) setOverrideOpenId(null)
+    if (scheduleOpenId === id) setScheduleOpenId(null)
   }
   // Push one amount change across a span of months at once — the bulk edit the
   // list alone can't do. Writes precise per-month values so the forecast updates.
@@ -92,6 +92,18 @@ export function Planner() {
     })
   }
 
+  function resetSchedule(id: string, scope: string[]) {
+    update((d) => {
+      const it = d.recurring.find((r) => r.id === id)
+      if (it?.monthly) {
+        const next = { ...it.monthly }
+        for (const m of scope) delete next[m]
+        it.monthly = next
+      }
+      return d
+    })
+  }
+
   const income = data.recurring.filter((r) => r.flow === 'income')
   const expense = data.recurring.filter((r) => r.flow === 'expense')
 
@@ -118,11 +130,12 @@ export function Planner() {
     months,
     locale,
     fx,
-    overrideOpenId,
-    setOverrideOpenId,
+    scheduleOpenId,
+    setScheduleOpenId,
     onField: commitField,
     onOverride: setOverride,
     onClearOverride: clearOverride,
+    onResetSchedule: resetSchedule,
     onEdit: setEditingId,
     onRemove: removeRow,
   }
@@ -211,10 +224,11 @@ interface RowProps {
   months: string[]
   locale: string
   fx: (n: number) => string
-  overrideOpenId: string | null
-  setOverrideOpenId: (id: string | null) => void
+  scheduleOpenId: string | null
+  setScheduleOpenId: (id: string | null) => void
   onField: (id: string, fields: Partial<RecurringItem>) => void
   onOverride: (id: string, month: string, value: number) => void
+  onResetSchedule: (id: string, scope: string[]) => void
   onClearOverride: (id: string, month: string) => void
   onEdit: (id: string) => void
   onRemove: (id: string) => void
@@ -248,44 +262,39 @@ function PlanLineRow({
   months,
   locale,
   fx,
-  overrideOpenId,
-  setOverrideOpenId,
+  scheduleOpenId,
+  setScheduleOpenId,
   onField,
   onOverride,
   onClearOverride,
+  onResetSchedule,
   onEdit,
   onRemove,
 }: RowProps & { item: RecurringItem }) {
-  // Only months that genuinely differ from what the cadence implies are worth
-  // showing. A plan edited in the old grid stores an explicit value for every
-  // month, but one that just restates "€1,850 every month" is not an override
-  // — listing those buried the real exceptions in noise.
+  // A month counts as "set differently" only when its stored value differs from
+  // what the cadence and base amount imply. A plan edited in the old grid stores
+  // a value for every month, but one that merely restates "1,850 every month"
+  // is not a change worth surfacing.
   const stored = item.monthly ?? {}
-  const exceptions = months
-    .filter((m) => Object.prototype.hasOwnProperty.call(stored, m))
-    .filter((m) => {
-      const v = stored[m]
-      return (
-        typeof v === 'number' &&
-        !Number.isNaN(v) &&
-        Math.abs(v - itemBaseAmountForMonth(item, m)) > 0.005
-      )
-    })
-  const MAX_CHIPS = 4
-  const [showAllExceptions, setShowAllExceptions] = useState(false)
-  const shownExceptions = showAllExceptions ? exceptions : exceptions.slice(0, MAX_CHIPS)
-  const hiddenExceptions = exceptions.length - shownExceptions.length
+  const isException = (m: string) => {
+    const v = stored[m]
+    return (
+      Object.prototype.hasOwnProperty.call(stored, m) &&
+      typeof v === 'number' &&
+      !Number.isNaN(v) &&
+      Math.abs(v - itemBaseAmountForMonth(item, m)) > 0.005
+    )
+  }
+  const exceptions = months.filter(isException)
+  const open = scheduleOpenId === item.id
 
-  const overrideOpen = overrideOpenId === item.id
-  const [overrideMonth, setOverrideMonth] = useState(months[0] ?? '')
-  const [overrideAmount, setOverrideAmount] = useState('')
-
-  function saveOverride() {
-    const v = parseAmount(overrideAmount)
-    if (!overrideMonth || Number.isNaN(v)) return
-    onOverride(item.id, overrideMonth, Math.abs(v))
-    setOverrideAmount('')
-    setOverrideOpenId(null)
+  function commitMonth(m: string, raw: string) {
+    const v = parseAmount(raw)
+    if (Number.isNaN(v)) return
+    // Typing the line's normal amount back in clears the override, so the
+    // schedule never fills up with values that say nothing.
+    if (Math.abs(v - itemBaseAmountForMonth(item, m)) <= 0.005) onClearOverride(item.id, m)
+    else onOverride(item.id, m, v)
   }
 
   return (
@@ -334,17 +343,18 @@ function PlanLineRow({
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
           <button
-            className={classNames('transition', overrideOpen ? 'text-forest' : 'text-muted hover:text-forest')}
-            onClick={() => setOverrideOpenId(overrideOpen ? null : item.id)}
-            title="Override a single month"
-            aria-label="Override a single month"
+            className={classNames('transition', open ? 'text-forest' : 'text-muted hover:text-forest')}
+            onClick={() => setScheduleOpenId(open ? null : item.id)}
+            title="Month-by-month schedule"
+            aria-label="Month-by-month schedule"
+            aria-expanded={open}
           >
             <IconMoneyDate width={15} height={15} />
           </button>
           <button
             className="text-muted hover:text-forest"
             onClick={() => onEdit(item.id)}
-            title="Rename, change dates, or edit a range of months"
+            title="Rename, recategorise, or change a range of months"
             aria-label="Edit line"
           >
             <IconEdit width={14} height={14} />
@@ -359,72 +369,64 @@ function PlanLineRow({
         </div>
       </div>
 
-      {(item.cadence !== 'monthly' || exceptions.length > 0) && (
-        <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">
+      {!open && (item.cadence !== 'monthly' || exceptions.length > 0) && (
+        <div className="mt-1.5 text-[11px] text-muted">
           {item.cadence !== 'monthly' && (
-            <span className="text-muted">
-              {CADENCE_LABEL.get(item.cadence)?.toLowerCase()} · ~{fx(round2(itemBaseAmountForMonth(item, item.startDate.slice(0, 7))))} when it lands
+            <span>
+              {CADENCE_LABEL.get(item.cadence)?.toLowerCase()} · ~
+              {fx(round2(itemBaseAmountForMonth(item, item.startDate.slice(0, 7))))} when it lands
             </span>
           )}
-          {shownExceptions.map((m) => (
-            <span key={m} className="pill bg-gold/10 text-ink inline-flex items-center gap-1">
-              {formatMonthLabel(m + '-01', locale)}: {fx(stored[m])}
-              <button
-                className="text-muted hover:text-clay"
-                onClick={() => onClearOverride(item.id, m)}
-                aria-label={`Remove override for ${formatMonthLabel(m + '-01', locale)}`}
-              >
-                <IconClose width={10} height={10} />
-              </button>
-            </span>
-          ))}
-          {hiddenExceptions > 0 && (
-            <button className="text-muted hover:text-forest underline" onClick={() => setShowAllExceptions(true)}>
-              +{hiddenExceptions} more
-            </button>
-          )}
-          {showAllExceptions && exceptions.length > MAX_CHIPS && (
-            <button className="text-muted hover:text-forest underline" onClick={() => setShowAllExceptions(false)}>
-              Show less
+          {item.cadence !== 'monthly' && exceptions.length > 0 && <span> · </span>}
+          {exceptions.length > 0 && (
+            <button className="underline hover:text-forest" onClick={() => setScheduleOpenId(item.id)}>
+              {exceptions.length} {exceptions.length === 1 ? 'month is' : 'months are'} set differently
             </button>
           )}
         </div>
       )}
 
-      {overrideOpen && (
-        <div className="flex flex-wrap items-end gap-2 mt-2.5 pt-2.5 border-t border-line/60">
-          <div>
-            <label className="text-[11px] text-muted block mb-0.5">Month</label>
-            <select
-              className="input py-1 text-xs w-auto"
-              value={overrideMonth}
-              onChange={(e) => setOverrideMonth(e.target.value)}
-            >
-              {months.map((m) => (
-                <option key={m} value={m}>
-                  {formatMonthLabel(m + '-01', locale)}
-                </option>
-              ))}
-            </select>
+      {open && (
+        <div className="mt-2.5 pt-2.5 border-t border-line/60">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+            <span className="text-[11px] text-muted">
+              Edit any month. Typing the line&rsquo;s normal amount clears that month again.
+            </span>
+            {exceptions.length > 0 && (
+              <button
+                className="text-[11px] text-muted hover:text-clay underline"
+                onClick={() => onResetSchedule(item.id, months)}
+              >
+                Reset all months
+              </button>
+            )}
           </div>
-          <div>
-            <label className="text-[11px] text-muted block mb-0.5">Amount that month</label>
-            <input
-              type="text"
-              inputMode="decimal"
-              className="input py-1 text-xs w-24 tabular-nums"
-              placeholder={String(round2(itemAmountForMonth(item, overrideMonth)))}
-              value={overrideAmount}
-              onChange={(e) => setOverrideAmount(e.target.value)}
-              autoFocus
-            />
+          <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-1.5">
+            {months.map((m) => {
+              const effective = round2(itemAmountForMonth(item, m))
+              const differs = isException(m)
+              return (
+                <label
+                  key={`${m}:${effective}`}
+                  className={classNames(
+                    'rounded-md border px-2 py-1 cursor-text transition',
+                    differs ? 'border-gold/60 bg-gold/10' : 'border-line bg-paper',
+                  )}
+                >
+                  <span className="block text-[10px] text-muted">
+                    {shortMonth(m, locale)} {m.slice(2, 4)}
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="w-full bg-transparent text-right text-xs tabular-nums outline-none focus:text-forest"
+                    defaultValue={effective}
+                    onBlur={(e) => commitMonth(m, e.target.value)}
+                  />
+                </label>
+              )
+            })}
           </div>
-          <button className="btn-primary text-xs py-1.5 px-3" onClick={saveOverride}>
-            Save
-          </button>
-          <button className="btn-ghost text-xs py-1.5 px-3" onClick={() => setOverrideOpenId(null)}>
-            Cancel
-          </button>
         </div>
       )}
     </div>

@@ -318,8 +318,62 @@ export function Settings() {
         )}
       </div>
 
+      <BuildInfo locale={data.settings.locale} />
+
       <p className="text-xs text-muted text-center pt-2">
         CasaresSan Finances keeps your financial life private and on-device.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Which build is actually running. The stamps are injected at build time, so
+ * on the live site the timestamp is the moment the deployed bundle was built —
+ * handy for telling "the fix is live" apart from "my phone cached the old app".
+ */
+function BuildInfo({ locale }: { locale: string }) {
+  const [checking, setChecking] = useState(false)
+  const built = new Date(__BUILD_TIME__)
+  const builtLabel = Number.isNaN(built.getTime())
+    ? __BUILD_TIME__
+    : built.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })
+
+  async function checkForUpdate() {
+    setChecking(true)
+    try {
+      const regs = (await navigator.serviceWorker?.getRegistrations?.()) ?? []
+      await Promise.all(regs.map((r) => r.update()))
+    } catch {
+      /* no service worker (dev, or unsupported) — a plain reload still refreshes */
+    }
+    window.location.reload()
+  }
+
+  return (
+    <div className="card p-6">
+      <h3 className="text-lg">Version</h3>
+      <p className="text-sm text-muted mb-4">Which build of the app you're running right now.</p>
+      <dl className="text-sm space-y-1.5">
+        <div className="flex justify-between gap-4">
+          <dt className="text-muted">Version</dt>
+          <dd className="tabular-nums">{__APP_VERSION__}</dd>
+        </div>
+        <div className="flex justify-between gap-4">
+          <dt className="text-muted">Deployed</dt>
+          <dd className="tabular-nums text-right">{builtLabel}</dd>
+        </div>
+        <div className="flex justify-between gap-4">
+          <dt className="text-muted">Build</dt>
+          <dd className="font-mono text-xs">{__COMMIT_SHA__}</dd>
+        </div>
+      </dl>
+      <button className="btn-ghost mt-4" onClick={checkForUpdate} disabled={checking}>
+        {checking ? 'Checking…' : 'Check for updates'}
+      </button>
+      <p className="text-xs text-muted mt-2">
+        Installed to your home screen, the app caches itself to work offline. If a change you expect
+        is missing, this fetches the newest build and reloads.
       </p>
     </div>
   )
