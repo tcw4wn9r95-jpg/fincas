@@ -142,6 +142,12 @@ export interface AppData {
   goals: Goal[]
   /** Sinking funds for known upcoming expenses — see `Provision`. */
   provisions: Provision[]
+  /**
+   * The catch-all pot for money that isn't earmarked for any named bill.
+   * Only the target lives here — the balance is derived from transaction
+   * allocations, exactly like a provision (`emergencyFundStatus`).
+   */
+  emergencyFund?: { targetAmount: number }
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */

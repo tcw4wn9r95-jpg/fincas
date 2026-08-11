@@ -4,10 +4,13 @@ import {
   provisionRoleFor,
   suggestProvisionAmount,
   transactionAllocations,
+  unallocatedAmount,
+  EMERGENCY_FUND_ID,
+  EMERGENCY_FUND_LABEL,
+  type EmergencyFundStatus,
   type ProvisionStatus,
 } from '../lib/provisions'
 import type { ProvisionAllocation, Transaction } from '../lib/types'
-import { unallocatedAmount } from '../lib/provisions'
 import { IconClose, IconProvision } from './icons'
 import { Portal } from './Portal'
 
@@ -33,7 +36,10 @@ export function ProvisionButton({
   onOpen: () => void
   compact?: boolean
 }) {
-  const labels = new Map(provisions.map((p) => [p.id, p.label]))
+  const labels = new Map<string, string>([
+    ...provisions.map((p) => [p.id, p.label] as const),
+    [EMERGENCY_FUND_ID, EMERGENCY_FUND_LABEL],
+  ])
   const allocs = transactionAllocations(tx).filter((a) => labels.has(a.provisionId))
   const left = unallocatedAmount(tx)
   const fx = (n: number) => formatMoney(n, currency, locale)
@@ -85,6 +91,7 @@ export function ProvisionModal({
   locale,
   onSave,
   onClose,
+  emergency,
 }: {
   tx: Transaction
   provisions: ProvisionStatus[]
@@ -92,6 +99,7 @@ export function ProvisionModal({
   locale: string
   onSave: (allocations: ProvisionAllocation[]) => void
   onClose: () => void
+  emergency: EmergencyFundStatus
 }) {
   const total = round2(Math.abs(tx.amount))
 
@@ -101,16 +109,24 @@ export function ProvisionModal({
     for (const a of transactionAllocations(tx)) initial[a.provisionId] = String(a.amount)
     return initial
   })
+  // The emergency fund has no category to compare against, so unlike a
+  // provision its direction can't be inferred — the user says which way it goes.
+  const [emergencyRole, setEmergencyRole] = useState<'contribution' | 'drawdown'>(
+    () =>
+      transactionAllocations(tx).find((a) => a.provisionId === EMERGENCY_FUND_ID)?.role ??
+      'contribution',
+  )
 
+  const rowIds = useMemo(() => [...provisions.map((p) => p.id), EMERGENCY_FUND_ID], [provisions])
   const allocated = useMemo(
     () =>
       round2(
-        provisions.reduce((s, p) => {
-          const n = parseAmount(amounts[p.id] ?? '')
+        rowIds.reduce((s, id) => {
+          const n = parseAmount(amounts[id] ?? '')
           return s + (Number.isFinite(n) ? Math.max(0, n) : 0)
         }, 0),
       ),
-    [amounts, provisions],
+    [amounts, rowIds],
   )
   const remaining = round2(total - allocated)
   const over = remaining < -0.005
@@ -140,6 +156,8 @@ export function ProvisionModal({
       if (amount <= 0) continue
       next.push({ provisionId: p.id, amount, role: provisionRoleFor(tx.category, p) })
     }
+    const toFund = round2(Math.max(0, parseAmount(amounts[EMERGENCY_FUND_ID] ?? '') || 0))
+    if (toFund > 0) next.push({ provisionId: EMERGENCY_FUND_ID, amount: toFund, role: emergencyRole })
     onSave(next)
     onClose()
   }
@@ -195,8 +213,8 @@ export function ProvisionModal({
 
           <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-2.5">
             {provisions.length === 0 && (
-              <p className="text-center text-muted py-8">
-                No provisions yet — create one in your plan first.
+              <p className="text-center text-muted text-sm py-4">
+                No provisions yet — add one in your plan, or send this to the emergency fund.
               </p>
             )}
             {provisions.map((p) => {
@@ -278,6 +296,90 @@ export function ProvisionModal({
                 </div>
               )
             })}
+
+            {/* The catch-all, pinned below the named pots: anything not earmarked
+                for a specific bill belongs here rather than nowhere. */}
+            {(() => {
+              const raw = amounts[EMERGENCY_FUND_ID] ?? ''
+              const active = Math.max(0, parseAmount(raw) || 0) > 0
+              return (
+                <div
+                  className={classNames(
+                    'rounded-xl border p-3.5 transition border-dashed',
+                    active ? 'border-forest/50 bg-forest-tint/20' : 'border-line',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{EMERGENCY_FUND_LABEL}</div>
+                      <div className="text-xs text-muted">
+                        {fx(emergency.balance)}
+                        {emergency.targetAmount > 0 ? ` of ${fx(emergency.targetAmount)}` : ''} saved
+                        {' · '}for whatever isn't earmarked
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 p-0.5 bg-canvas rounded-full border border-line shrink-0">
+                      {(['contribution', 'drawdown'] as const).map((r) => (
+                        <button
+                          key={r}
+                          onClick={() => setEmergencyRole(r)}
+                          className={classNames(
+                            'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                            emergencyRole === r ? 'bg-forest text-paper' : 'text-muted hover:text-ink',
+                          )}
+                          title={
+                            r === 'contribution'
+                              ? 'Money going into the fund'
+                              : 'Money coming out of the fund to cover this'
+                          }
+                        >
+                          {r === 'contribution' ? 'Pay in' : 'Take out'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {emergency.targetAmount > 0 && (
+                    <div className="mt-2 h-1 rounded-full bg-line overflow-hidden">
+                      <div
+                        className="h-full bg-forest/40 rounded-full"
+                        style={{ width: `${emergency.pct}%` }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 mt-3">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="input py-1.5 flex-1 min-w-0 text-right tabular-nums"
+                      placeholder="0.00"
+                      value={raw}
+                      onChange={(e) => setAmount(EMERGENCY_FUND_ID, e.target.value)}
+                      aria-label={`Amount for ${EMERGENCY_FUND_LABEL}`}
+                    />
+                    <button
+                      className="btn-subtle text-xs shrink-0"
+                      onClick={() => useRest(EMERGENCY_FUND_ID)}
+                      disabled={remaining <= 0.005}
+                      title="Sweep everything still unallocated into the emergency fund"
+                    >
+                      Sweep the rest
+                    </button>
+                    {active && (
+                      <button
+                        className="btn-subtle p-1.5 text-muted hover:text-clay shrink-0"
+                        onClick={() => setAmount(EMERGENCY_FUND_ID, '')}
+                        aria-label={`Clear ${EMERGENCY_FUND_LABEL}`}
+                        title="Clear"
+                      >
+                        <IconClose width={14} height={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
 
           <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-line">

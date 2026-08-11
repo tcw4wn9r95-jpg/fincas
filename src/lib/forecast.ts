@@ -7,7 +7,7 @@ import type {
   Scenario,
 } from './types'
 import { currentMonth, monthRange, shortMonth, addMonths, uid } from './format'
-import { provisionCoveredByCategoryRange, allProvisionStatuses } from './provisions'
+import { provisionCoveredByCategoryRange, allProvisionStatuses, emergencyFundStatus } from './provisions'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -725,6 +725,14 @@ export function financialSummary(data: AppData): string {
               (p.suggestedMonthly ? `, ≈${fx(p.suggestedMonthly)}/mo to stay on track` : ''),
           )
           .join('; '),
+    )
+  }
+
+  const emergency = emergencyFundStatus(data)
+  if (emergency.balance > 0.5 || emergency.targetAmount > 0) {
+    lines.push(
+      `Emergency fund (catch-all pot for money not earmarked for a named bill): ${fx(emergency.balance)}` +
+        (emergency.targetAmount > 0 ? ` of ${fx(emergency.targetAmount)} target` : ' saved, no target set'),
     )
   }
 

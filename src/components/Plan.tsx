@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, parseAmount } from '../lib/format'
 import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
-import { allProvisionStatuses, dropAllocations } from '../lib/provisions'
+import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
@@ -112,6 +112,17 @@ export function Plan() {
       return d
     })
   }
+  // ── Emergency fund ──
+  // Only the target is stored; the balance is whatever transactions have been
+  // allocated to it, so it can't drift from what actually happened.
+  const emergency = useMemo(() => emergencyFundStatus(data), [data])
+  function setEmergencyTarget(targetAmount: number) {
+    update((d) => {
+      d.emergencyFund = { targetAmount: Math.max(0, targetAmount) }
+      return d
+    })
+  }
+
   function editProvision(id: string, fields: Partial<Provision>) {
     update((d) => {
       const p = d.provisions.find((x) => x.id === id)
@@ -384,6 +395,66 @@ export function Plan() {
           <button className="btn-primary" onClick={addProvision}>
             <IconPlus width={16} height={16} /> Add
           </button>
+        </div>
+      </Section>
+
+      <Section
+        title="Emergency fund"
+        desc="The catch-all pot. When you provision a transaction, whatever isn't earmarked for a named bill can be swept in here — so spare cash lands somewhere deliberate instead of disappearing."
+      >
+        <div className="rounded-lg bg-canvas px-4 py-3 border border-line">
+          <div className="flex items-end justify-between gap-3 mb-2">
+            <div>
+              <div className="label">Saved</div>
+              <div className="stat-value tabular-nums">{fx(emergency.balance)}</div>
+            </div>
+            <div className="text-right">
+              <label className="label" htmlFor="emergency-target">
+                Target
+              </label>
+              <input
+                id="emergency-target"
+                type="text"
+                inputMode="decimal"
+                className="bg-transparent text-right outline-none tabular-nums w-28 focus:text-forest"
+                placeholder="0"
+                defaultValue={emergency.targetAmount || ''}
+                onBlur={(e) => setEmergencyTarget(parseAmount(e.target.value) || 0)}
+              />
+            </div>
+          </div>
+          {emergency.targetAmount > 0 && (
+            <>
+              <div className="h-2 rounded-full bg-line overflow-hidden">
+                <div
+                  className={classNames(
+                    'h-full rounded-full',
+                    emergency.pct >= 100 ? 'bg-forest' : 'bg-sage',
+                  )}
+                  style={{ width: `${emergency.pct}%` }}
+                />
+              </div>
+              <div className="text-xs text-muted mt-1.5">
+                {emergency.pct}% of target
+                {emergency.balance < emergency.targetAmount
+                  ? ` · ${fx(emergency.targetAmount - emergency.balance)} to go`
+                  : ' · fully funded'}
+              </div>
+            </>
+          )}
+          {emergency.targetAmount === 0 && (
+            <p className="text-xs text-muted">
+              Set a target to track progress — the balance builds up either way.
+            </p>
+          )}
+          <div className="text-xs text-muted mt-2 tabular-nums">
+            {fx(emergency.contributed)} paid in · {fx(emergency.drawn)} taken out
+          </div>
+          {emergency.overdrawn > 0.5 && (
+            <div className="text-xs text-clay mt-1">
+              Taken out {fx(emergency.overdrawn)} more than ever paid in — that came from elsewhere.
+            </div>
+          )}
         </div>
       </Section>
     </div>

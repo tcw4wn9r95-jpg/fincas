@@ -229,17 +229,15 @@ export function ReconcileOverlay({
                       </button>
                     )}
                   </div>
-                  {provisions.length > 0 && (
-                    <div className="mt-2">
-                      <ProvisionButton
-                        tx={t}
-                        provisions={provisions}
-                        currency={currency}
-                        locale={locale}
-                        onOpen={() => onProvision(t)}
-                      />
-                    </div>
-                  )}
+                  <div className="mt-2">
+                    <ProvisionButton
+                      tx={t}
+                      provisions={provisions}
+                      currency={currency}
+                      locale={locale}
+                      onOpen={() => onProvision(t)}
+                    />
+                  </div>
                 </div>
               )
             })}

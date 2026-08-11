@@ -58,6 +58,51 @@ export function dropAllocations(
   t.provisionAmount = undefined
 }
 
+/**
+ * The emergency fund is addressed like a provision in the allocation list,
+ * under this reserved id, so one transaction can be split between named
+ * provisions and the catch-all pot without a second mechanism. It is
+ * deliberately *not* a `Provision`: it has no category and no due date, so it
+ * never appears in the provisions list or the category-coverage maps by name.
+ */
+export const EMERGENCY_FUND_ID = 'emergency-fund'
+export const EMERGENCY_FUND_LABEL = 'Emergency fund'
+
+export interface EmergencyFundStatus {
+  targetAmount: number
+  /** Paid in minus taken out, floored at 0 for the progress bar. */
+  balance: number
+  contributed: number
+  drawn: number
+  pct: number
+  /** Taken out more than was ever paid in — the difference came from elsewhere. */
+  overdrawn: number
+}
+
+/** The emergency fund's balance, derived live from tagged transactions. */
+export function emergencyFundStatus(data: AppData): EmergencyFundStatus {
+  let contributed = 0
+  let drawn = 0
+  for (const t of data.transactions) {
+    for (const a of transactionAllocations(t)) {
+      if (a.provisionId !== EMERGENCY_FUND_ID) continue
+      if (a.role === 'drawdown') drawn += a.amount
+      else contributed += a.amount
+    }
+  }
+  const net = round2(contributed - drawn)
+  const targetAmount = data.emergencyFund?.targetAmount ?? 0
+  const balance = Math.max(0, net)
+  return {
+    targetAmount,
+    balance,
+    contributed: round2(contributed),
+    drawn: round2(drawn),
+    pct: targetAmount > 0 ? Math.min(100, Math.round((balance / targetAmount) * 100)) : 0,
+    overdrawn: Math.max(0, -net),
+  }
+}
+
 export interface ProvisionStatus {
   id: string
   label: string
@@ -162,9 +207,12 @@ export function provisionCoveredByCategoryRange(data: AppData, months: string[])
     if (!monthSet.has(t.month)) continue
     for (const a of transactionAllocations(t)) {
       if (a.role !== 'drawdown') continue
-      const p = byId.get(a.provisionId)
-      if (!p) continue
-      covered[p.category] = round2((covered[p.category] ?? 0) + a.amount)
+      // The emergency fund has no category of its own — money taken out of it
+      // covers whatever this transaction was, so it counts against that.
+      const category =
+        a.provisionId === EMERGENCY_FUND_ID ? t.category : byId.get(a.provisionId)?.category
+      if (!category) continue
+      covered[category] = round2((covered[category] ?? 0) + a.amount)
     }
   }
   return covered

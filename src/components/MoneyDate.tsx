@@ -14,7 +14,10 @@ import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import {
   allProvisionStatuses,
+  dropAllocations,
+  emergencyFundStatus,
   provisionCoveredByCategory,
+  EMERGENCY_FUND_ID,
   type ProvisionStatus,
 } from '../lib/provisions'
 import type { ProvisionAllocation, Transaction } from '../lib/types'
@@ -90,6 +93,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
+  const emergency = useMemo(() => emergencyFundStatus(data), [data])
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
 
   const [sankeyOpen, setSankeyOpen] = useState(false)
@@ -214,12 +218,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
           x.category = category
           // The category changed, so prior provision allocations — whose role
           // (contribution vs. drawdown) was set from the old category — can no
-          // longer be trusted; clear them rather than risk a silently wrong
-          // accrual. Re-allocating afterwards is one click.
-          x.provisionAllocations = undefined
-          x.provisionId = undefined
-          x.provisionRole = undefined
-          x.provisionAmount = undefined
+          // longer be trusted; drop them rather than risk a silently wrong
+          // accrual. Re-allocating afterwards is one click. The emergency fund
+          // survives: its direction is chosen by hand, not read off the category.
+          dropAllocations(x, (a) => a.provisionId !== EMERGENCY_FUND_ID)
         }
       }
       return d
@@ -822,6 +824,7 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
         <ProvisionModal
           tx={provisioningTx}
           provisions={provisionStatuses}
+          emergency={emergency}
           currency={currency}
           locale={locale}
           onSave={(allocations) => setTxAllocations(provisioningTx.id, allocations)}
@@ -889,16 +892,14 @@ function DrillList({
               </option>
             ))}
           </select>
-          {provisions.length > 0 && (
-            <ProvisionButton
-              tx={t}
-              provisions={provisions}
-              currency={currency}
-              locale={locale}
-              onOpen={() => onProvision(t)}
-              compact
-            />
-          )}
+          <ProvisionButton
+            tx={t}
+            provisions={provisions}
+            currency={currency}
+            locale={locale}
+            onOpen={() => onProvision(t)}
+            compact
+          />
           <button
             className="text-muted hover:text-forest shrink-0"
             onClick={(e) => {

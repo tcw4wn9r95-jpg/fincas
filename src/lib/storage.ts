@@ -22,6 +22,7 @@ export function emptyData(): AppData {
     transactions: [],
     goals: [],
     provisions: [],
+    emergencyFund: { targetAmount: 0 },
     categoryBudgets: {},
     updatedAt: new Date().toISOString(),
   }
