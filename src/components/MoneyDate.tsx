@@ -135,11 +135,11 @@ export function MoneyDate({
 
   const [sankeyOpen, setSankeyOpen] = useState(false)
   const { sankeyGraph, sankeyInsights } = useMemo(() => {
-    const { income, expense } = actualsByCategory(data, activeMonth)
+    const { income, expense, setAside } = actualsByCategory(data, activeMonth, { splitSavings: true })
     const covered = provisionCoveredByCategory(data, activeMonth)
     return {
-      sankeyGraph: buildSankey(income, expense, covered),
-      sankeyInsights: describeSankeyFlow(income, expense, covered, currency, locale),
+      sankeyGraph: buildSankey(income, expense, covered, setAside),
+      sankeyInsights: describeSankeyFlow(income, expense, covered, currency, locale, setAside),
     }
   }, [data, activeMonth, currency, locale])
 
@@ -487,7 +487,7 @@ export function MoneyDate({
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <div className="card p-5">
               <div className="label">Money in</div>
               <div className="stat-value text-forest">{fx(review.income)}</div>
@@ -502,8 +502,19 @@ export function MoneyDate({
                 planned {fx(review.plannedExpenses)}
               </div>
             </div>
+            {/* Kept, not spent — a provision transfer is a different kind of
+                event from a grocery run, and reads wrong lumped in with one. */}
             <div className="card p-5">
-              <div className="label">Net</div>
+              <div className="label">Set aside</div>
+              <div className="stat-value text-gold">{fx(review.setAside)}</div>
+              <div className="text-sm text-muted mt-1">
+                {review.plannedSetAside > 0
+                  ? `planned ${fx(review.plannedSetAside)}`
+                  : 'into provisions & savings'}
+              </div>
+            </div>
+            <div className="card p-5">
+              <div className="label">Left over</div>
               <div
                 className={classNames(
                   'stat-value',

@@ -65,11 +65,13 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   )
   const [sankeyOpen, setSankeyOpen] = useState(false)
   const { yearSankey, yearSankeyInsights } = useMemo(() => {
-    const { income, expense } = actualsByCategoryRange(data, yearMonths)
+    const { income, expense, setAside } = actualsByCategoryRange(data, yearMonths, {
+      splitSavings: true,
+    })
     const covered = provisionCoveredByCategoryRange(data, yearMonths)
     return {
-      yearSankey: buildSankey(income, expense, covered),
-      yearSankeyInsights: describeSankeyFlow(income, expense, covered, currency, locale),
+      yearSankey: buildSankey(income, expense, covered, setAside),
+      yearSankeyInsights: describeSankeyFlow(income, expense, covered, currency, locale, setAside),
     }
   }, [data, yearMonths, currency, locale])
   const scenario = activeScenario(data)

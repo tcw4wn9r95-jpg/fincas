@@ -45,6 +45,8 @@ export function buildSankey(
   income: Record<string, number>,
   expense: Record<string, number>,
   provisionCovered: Record<string, number> = {},
+  /** Money deliberately kept, drawn apart from what merely wasn't spent. */
+  setAside = 0,
 ): SankeyGraph {
   const incomeCats = Object.entries(income)
     .filter(([, v]) => v > 0.5)
@@ -117,9 +119,17 @@ export function buildSankey(
       links.push({ source: 'hub', target: `out:${cat}`, value: remainder, color: expenseFill(remainder) })
     }
   }
-  if (net > 0.5) {
-    nodes.push({ id: 'savings', label: 'Net savings', value: net, color: SAVINGS_COLOR, column: 2 })
-    links.push({ source: 'hub', target: 'savings', value: net, color: 'rgba(201,161,74,0.55)' })
+  // What was put away on purpose reads differently from what happened to be
+  // left at the end, so the two leave the hub as separate flows.
+  const kept = round2(Math.max(0, Math.min(setAside, Math.max(0, net))))
+  const leftOver = round2(Math.max(0, net) - kept)
+  if (kept > 0.5) {
+    nodes.push({ id: 'set-aside', label: 'Set aside', value: kept, color: SAVINGS_COLOR, column: 2 })
+    links.push({ source: 'hub', target: 'set-aside', value: kept, color: 'rgba(201,161,74,0.55)' })
+  }
+  if (leftOver > 0.5) {
+    nodes.push({ id: 'savings', label: 'Left over', value: leftOver, color: SAVINGS_COLOR, column: 2 })
+    links.push({ source: 'hub', target: 'savings', value: leftOver, color: 'rgba(201,161,74,0.4)' })
   }
 
   return { nodes, links }
@@ -136,6 +146,7 @@ export function describeSankeyFlow(
   provisionCovered: Record<string, number>,
   currency: string,
   locale: string,
+  setAside = 0,
 ): string[] {
   const fx = (n: number) => formatMoney(n, currency, locale, { round: true })
   const incomeCats = Object.entries(income).filter(([, v]) => v > 0.5)
@@ -153,7 +164,12 @@ export function describeSankeyFlow(
 
   if (totalIncome > 0.5 && net >= 0) {
     const rate = Math.round((net / totalIncome) * 100)
-    lines.push(`${fx(totalIncome)} came in against ${fx(totalExpense)} spent — a ${rate}% savings rate.`)
+    lines.push(
+      `${fx(totalIncome)} came in against ${fx(totalExpense)} spent — a ${rate}% savings rate.` +
+        (setAside > 0.5
+          ? ` ${fx(Math.min(setAside, net))} of that was deliberately set aside into provisions and savings, not merely unspent.`
+          : ''),
+    )
   } else if (net < -0.5) {
     const deficit = -net
     const fromProvisions = Math.min(deficit, provisionedTotal)

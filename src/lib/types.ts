@@ -295,10 +295,15 @@ export interface CategoryActual {
 export interface MonthReview {
   month: string
   income: number
+  /** Spending only — money put into provisions or savings is not in here. */
   expenses: number
+  /** Money kept: paid into provisions, the emergency fund, or plain savings. */
+  setAside: number
+  /** income − expenses − setAside: the cash the month actually left behind. */
   net: number
   plannedIncome: number
   plannedExpenses: number
+  plannedSetAside: number
   plannedNet: number
   categories: CategoryActual[]
   transactionCount: number

@@ -7,10 +7,15 @@ import type {
   Scenario,
 } from './types'
 import { currentMonth, monthRange, shortMonth, addMonths, uid, todayISO } from './format'
-import { provisionCoveredByCategoryRange, allProvisionStatuses, emergencyFundStatus } from './provisions'
+import {
+  provisionCoveredByCategoryRange,
+  allProvisionStatuses,
+  emergencyFundStatus,
+  setAsideAmount,
+} from './provisions'
 import { allEventStatuses, eventSummaryLine } from './events'
 import { fundingPlan } from './funding'
-import { NON_CASHFLOW } from './categorize'
+import { NON_CASHFLOW, SAVINGS_CATEGORY } from './categorize'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -156,13 +161,19 @@ export const PROVISIONED_BRACKET = 'Provisioned'
 export function actualsByCategoryRange(
   data: AppData,
   months: string[],
-): { income: Record<string, number>; expense: Record<string, number> } {
+  opts: { splitSavings?: boolean } = {},
+): { income: Record<string, number>; expense: Record<string, number>; setAside: number } {
   const monthSet = new Set(months)
   const net: Record<string, number> = {}
+  let setAside = 0
   for (const t of data.transactions) {
     if (!monthSet.has(t.month)) continue
     if (NON_CASHFLOW.has(t.category)) continue
-    net[t.category] = (net[t.category] ?? 0) + t.amount
+    const aside = setAsideAmount(t)
+    setAside += aside
+    // Off the category only when the caller is reporting savings separately.
+    // Plan-matching still wants a Savings line to compare against its budget.
+    net[t.category] = (net[t.category] ?? 0) + t.amount + (opts.splitSavings ? aside : 0)
   }
   const income: Record<string, number> = {}
   const expense: Record<string, number> = {}
@@ -171,15 +182,16 @@ export function actualsByCategoryRange(
     if (r > 0) income[cat] = r
     else if (r < 0) expense[cat] = -r
   }
-  return { income, expense }
+  return { income, expense, setAside: round2(setAside) }
 }
 
 /** Actual money in/out per category for a single month — see `actualsByCategoryRange`. */
 export function actualsByCategory(
   data: AppData,
   month: string,
-): { income: Record<string, number>; expense: Record<string, number> } {
-  return actualsByCategoryRange(data, [month])
+  opts: { splitSavings?: boolean } = {},
+): { income: Record<string, number>; expense: Record<string, number>; setAside: number } {
+  return actualsByCategoryRange(data, [month], opts)
 }
 
 /** The latest month the plan reaches — explicit monthly values or a finite end date. */
@@ -466,6 +478,7 @@ export function computeReview(data: AppData, month: string): MonthReview {
 
   let income = 0
   let expenses = 0
+  let setAside = 0
   let excludedIn = 0
   let excludedOut = 0
   const actualIncomeByCat: Record<string, number> = {}
@@ -481,8 +494,13 @@ export function computeReview(data: AppData, month: string): MonthReview {
       else excludedOut += Math.abs(t.amount)
       continue
     }
-    netByCat[t.category] = (netByCat[t.category] ?? 0) + t.amount
+    // Money put into a pot is kept, not spent — it comes off this category
+    // before anything is called an expense, and lands on its own line.
+    const aside = setAsideAmount(t)
+    setAside += aside
+    netByCat[t.category] = (netByCat[t.category] ?? 0) + t.amount + aside
   }
+  setAside = round2(setAside)
   for (const [cat, n] of Object.entries(netByCat)) {
     const net = round2(n)
     if (net > 0) {
@@ -522,6 +540,10 @@ export function computeReview(data: AppData, month: string): MonthReview {
   for (const [cat, budget] of Object.entries(data.categoryBudgets)) {
     if (!(cat in plannedExpenseByCat)) plannedExpenseByCat[cat] = budget
   }
+  // Planned savings leaves the expense side too, so "spent vs planned" compares
+  // spending with spending.
+  const plannedSetAside = plannedExpenseByCat[SAVINGS_CATEGORY] ?? 0
+  delete plannedExpenseByCat[SAVINGS_CATEGORY]
 
   const plannedIncome = Object.values(plannedIncomeByCat).reduce((a, b) => a + b, 0)
   const plannedExpenses = Object.values(plannedExpenseByCat).reduce((a, b) => a + b, 0)
@@ -568,10 +590,15 @@ export function computeReview(data: AppData, month: string): MonthReview {
     month,
     income,
     expenses,
-    net: income - expenses,
+    setAside,
+    // Cash left at the end: what came in, less what was spent, less what was
+    // kept. Moving savings off the expense line changes how the month reads,
+    // not what it left behind — this figure is the same either way.
+    net: round2(income - expenses - setAside),
     plannedIncome,
     plannedExpenses,
-    plannedNet: plannedIncome - plannedExpenses,
+    plannedSetAside,
+    plannedNet: plannedIncome - plannedExpenses - plannedSetAside,
     categories,
     transactionCount: txs.length,
     excludedIn,
@@ -591,8 +618,10 @@ export function monthReviewText(data: AppData, month: string): string {
   const lines: string[] = []
   lines.push(
     `Money date for ${month}: money in ${fx(r.income)} (planned ${fx(r.plannedIncome)}), ` +
-      `money out ${fx(r.expenses)} (planned ${fx(r.plannedExpenses)}), ` +
-      `net ${fx(r.net)} (planned ${fx(r.plannedNet)}).`,
+      `spending ${fx(r.expenses)} (planned ${fx(r.plannedExpenses)}), ` +
+      `set aside into provisions and savings ${fx(r.setAside)} (planned ${fx(r.plannedSetAside)}), ` +
+      `left over ${fx(r.net)} (planned ${fx(r.plannedNet)}). ` +
+      'Money set aside is reported on its own line, not as spending — it was kept, not consumed.',
   )
   if (r.provisionedIncome > 0.5) {
     lines.push(

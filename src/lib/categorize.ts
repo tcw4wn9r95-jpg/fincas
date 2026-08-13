@@ -36,6 +36,14 @@ export const CATEGORIES = [
  */
 export const NON_CASHFLOW = new Set<string>(['Internal'])
 
+/**
+ * Money kept rather than spent. Reported on its own line instead of inside
+ * expenses — putting €500 into a provision is not the same kind of event as
+ * spending €500, and lumping them together makes a thrifty month look
+ * expensive.
+ */
+export const SAVINGS_CATEGORY = 'Savings'
+
 // Rules are tried in order — first match wins, so more specific / higher-priority
 // categories come first. Alongside the US/UK merchants, these cover the Spanish
 // & European merchants a Revolut export tends to carry (the app's home turf).
