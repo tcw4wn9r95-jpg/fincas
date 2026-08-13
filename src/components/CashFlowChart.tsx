@@ -20,6 +20,11 @@ interface Props {
   locale: string
   /** Optional what-if overlay: a second balance line drawn against the baseline. */
   scenario?: { name: string; points: ForecastPoint[] }
+  /**
+   * Off when no account records a balance: the flows are still real, but a
+   * balance line would be projected from zero and read as fact.
+   */
+  showBalance?: boolean
 }
 
 // Series colors validated against the paper surface (#fbf9f4):
@@ -42,7 +47,13 @@ function SubtotalTooltip({
   currency,
   locale,
   scenarioName,
-}: TooltipProps<number, string> & { currency: string; locale: string; scenarioName?: string }) {
+  showBalance = true,
+}: TooltipProps<number, string> & {
+  currency: string
+  locale: string
+  scenarioName?: string
+  showBalance?: boolean
+}) {
   if (!active || !payload?.length) return null
   const p = payload[0].payload as ChartPoint
   const fx = (n: number) => formatMoney(n, currency, locale)
@@ -54,7 +65,9 @@ function SubtotalTooltip({
     { label: 'Total expenses', value: -p.expenses, strong: true, top: true },
     ...(p.setAside > 0.5 ? [{ label: 'Set aside', value: -p.setAside }] : []),
     { label: 'Net', value: p.net, strong: true },
-    { label: 'End balance', value: p.balance, color: COLOR.balance, strong: true, top: true },
+    ...(showBalance
+      ? [{ label: 'End balance', value: p.balance, color: COLOR.balance, strong: true, top: true }]
+      : []),
   ]
   if (typeof p.scenarioBalance === 'number') {
     rows.push({
@@ -105,7 +118,7 @@ function SubtotalTooltip({
   )
 }
 
-export function CashFlowChart({ points, currency, locale, scenario }: Props) {
+export function CashFlowChart({ points, currency, locale, scenario, showBalance = true }: Props) {
   const fxc = (n: number) => formatMoney(n, currency, locale, { compact: true })
 
   // Merge the scenario's balance onto each month so it draws as one series.
@@ -122,7 +135,14 @@ export function CashFlowChart({ points, currency, locale, scenario }: Props) {
         <YAxis tickFormatter={fxc} tickLine={false} axisLine={false} width={52} />
         <Tooltip
           cursor={{ fill: 'rgba(31,61,52,0.06)' }}
-          content={<SubtotalTooltip currency={currency} locale={locale} scenarioName={scenario?.name} />}
+          content={
+            <SubtotalTooltip
+              currency={currency}
+              locale={locale}
+              scenarioName={scenario?.name}
+              showBalance={showBalance}
+            />
+          }
         />
         <Legend
           verticalAlign="top"
@@ -159,16 +179,18 @@ export function CashFlowChart({ points, currency, locale, scenario }: Props) {
           strokeDasharray="5 4"
           dot={false}
         />
-        <Line
-          type="monotone"
-          dataKey="balance"
-          name={scenario ? 'Balance · baseline' : 'Projected balance'}
-          stroke={COLOR.balance}
-          strokeWidth={2.5}
-          dot={false}
-          activeDot={{ r: 5, fill: COLOR.balance, stroke: '#fbf9f4', strokeWidth: 2 }}
-        />
-        {scenario && (
+        {showBalance && (
+          <Line
+            type="monotone"
+            dataKey="balance"
+            name={scenario ? 'Balance · baseline' : 'Projected balance'}
+            stroke={COLOR.balance}
+            strokeWidth={2.5}
+            dot={false}
+            activeDot={{ r: 5, fill: COLOR.balance, stroke: '#fbf9f4', strokeWidth: 2 }}
+          />
+        )}
+        {showBalance && scenario && (
           <Line
             type="monotone"
             dataKey="scenarioBalance"

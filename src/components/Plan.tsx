@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
-import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
+import { startingBalance, totalBalance, anchorMonth, trackedAccountName } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
+import { dataChecks, type DataCheck } from '../lib/consistency'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
@@ -76,6 +77,30 @@ function FundingRow({
   )
 }
 
+const CHECK_TONE: Record<DataCheck['level'], { dot: string; label: string }> = {
+  blocker: { dot: 'bg-clay', label: 'stops the numbers working' },
+  warn: { dot: 'bg-gold', label: 'worth fixing' },
+  info: { dot: 'bg-sage', label: 'have a look' },
+}
+
+/** One thing that doesn't add up, and where to go about it. */
+function CheckRow({ check }: { check: DataCheck }) {
+  const tone = CHECK_TONE[check.level]
+  return (
+    <div className="flex gap-3 rounded-lg border border-line bg-canvas px-4 py-3">
+      <span
+        className={classNames('mt-1.5 h-2 w-2 shrink-0 rounded-full', tone.dot)}
+        title={tone.label}
+      />
+      <div className="min-w-0">
+        <div className="font-medium">{check.title}</div>
+        <p className="text-sm text-muted">{check.detail}</p>
+        {check.fix && <p className="text-sm text-forest mt-0.5">{check.fix}</p>}
+      </div>
+    </div>
+  )
+}
+
 export function Plan() {
   const { data, update } = useData()
   const { currency, locale } = data.settings
@@ -96,6 +121,19 @@ export function Plan() {
       return d
     })
     setAcct({ name: '', balance: '' })
+  }
+  /**
+   * Create the account that follows the current-account statements, before any
+   * statement has been imported. Months imported before this existed left no
+   * balance behind, so without this the only way to get one is to wait for next
+   * month's statement.
+   */
+  function addTrackedAccount() {
+    update((d) => {
+      if (d.accounts.some((a) => a.tracked)) return d
+      d.accounts.push({ id: uid(), name: trackedAccountName, balance: 0, asOf: '', tracked: true })
+      return d
+    })
   }
   function removeAccount(id: string) {
     update((d) => {
@@ -169,6 +207,9 @@ export function Plan() {
     [data, fundingMonth],
   )
 
+  // ── Does the data hold together? ──
+  const checks = useMemo(() => dataChecks(data), [data])
+
   // ── Do the pots add up? ──
   const pots = useMemo(() => potsCheck(data), [data])
   function setProvisionAccount(id: string) {
@@ -216,6 +257,24 @@ export function Plan() {
           Starting balances, your full monthly plan, and goals — all editable
         </p>
       </div>
+
+      <Section
+        title="Does this add up?"
+        desc="Everything here is worked out from what you've imported, so it can be perfectly consistent and still be wrong. This is the check on the inputs themselves."
+      >
+        {checks.length === 0 ? (
+          <p className="text-sm text-muted">
+            Nothing looks off: a balance to project from, every allocation
+            pointing somewhere real, and no gaps in the months you've imported.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {checks.map((c) => (
+              <CheckRow key={c.id} check={c} />
+            ))}
+          </div>
+        )}
+      </Section>
 
       <Section
         title="Accounts"
@@ -270,9 +329,24 @@ export function Plan() {
             )
           })}
           {data.accounts.length === 0 && (
-            <p className="text-sm text-muted">No accounts yet — add your starting balance below.</p>
+            <p className="text-sm text-muted">
+              No accounts yet. Until there is one, nothing records what you hold,
+              so the forecast can only show what comes in and goes out.
+            </p>
           )}
         </div>
+        {!data.accounts.some((a) => a.tracked) && (
+          <div className="rounded-lg border border-line bg-canvas px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted max-w-lg">
+              Let {trackedAccountName} keep itself current: it takes the closing
+              balance off every current-account statement you import, so you
+              never type it.
+            </p>
+            <button className="btn-subtle shrink-0" onClick={addTrackedAccount}>
+              <IconPlus width={16} height={16} /> Track {trackedAccountName}
+            </button>
+          </div>
+        )}
         {data.accounts.length > 0 && anchorMonth(data) < currentMonth() && (
           <div className="rounded-lg bg-forest-tint/50 border border-line px-4 py-2.5 mb-4 flex items-center justify-between text-sm">
             <span className="text-muted">

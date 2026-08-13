@@ -181,7 +181,7 @@ export function Insights({ goToSettings }: { goToSettings: () => void }) {
             ok={investment.monthsCovered !== null && investment.monthsCovered >= investment.emergencyFundLow}
             label={
               investment.monthsCovered === null
-                ? "Emergency fund — not enough spending history yet to estimate"
+                ? 'Emergency fund — needs a recorded balance and some spending history to estimate'
                 : `Emergency fund: ${investment.monthsCovered} ${investment.monthsCovered === 1 ? 'month' : 'months'} of expenses saved (aim for ${investment.emergencyFundLow}–${investment.emergencyFundHigh})`
             }
           />

@@ -1,0 +1,442 @@
+// A benchmark of the money logic, run against the real library modules.
+//
+//   node scripts/bench.mjs
+//
+// Every figure this app shows is derived, and the derivations lean on each
+// other: the money date's net feeds the carry-over sweep, the ledger's balance
+// leans on the same month flows as the plan page, a provision drawdown has to
+// leave the totals in one place and stay in the category table in another. This
+// asserts those relationships end to end, on scenarios shaped like the real
+// workflow, so a change that quietly breaks one of them fails here rather than
+// in a month's numbers.
+//
+// Months are built relative to the current month, so the run means the same
+// thing in August as in March.
+
+import { createServer } from 'vite'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const server = await createServer({
+  root,
+  server: { middlewareMode: true },
+  appType: 'custom',
+  logLevel: 'error',
+})
+const F = await server.ssrLoadModule('/src/lib/forecast.ts')
+const P = await server.ssrLoadModule('/src/lib/provisions.ts')
+const U = await server.ssrLoadModule('/src/lib/funding.ts')
+const C = await server.ssrLoadModule('/src/lib/consistency.ts')
+const fmt = await server.ssrLoadModule('/src/lib/format.ts')
+
+const NOW = fmt.currentMonth()
+/** The month `n` months from this one — the whole bench is relative to today. */
+const M = (n) => fmt.addMonths(NOW, n)
+/** The last day of month `n` — where a statement's closing balance lands. */
+const endOf = (n) => {
+  const [y, m] = M(n).split('-').map(Number)
+  return `${M(n)}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+}
+
+let fails = 0
+let checks = 0
+const eq = (label, got, want, tol = 0.005) => {
+  checks++
+  const ok = typeof want === 'number' ? Math.abs(got - want) <= tol : got === want
+  if (!ok) {
+    fails++
+    console.log(`  ✗ ${label}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`)
+  } else console.log(`  ✓ ${label} = ${JSON.stringify(got)}`)
+}
+const ok = (label, cond, detail = '') => {
+  checks++
+  if (cond) console.log(`  ✓ ${label}`)
+  else {
+    fails++
+    console.log(`  ✗ ${label}${detail ? `: ${detail}` : ''}`)
+  }
+}
+
+const base = (over = {}) => ({
+  version: 1,
+  settings: { apiKey: '', model: 'm', currency: 'EUR', locale: 'en-GB' },
+  accounts: [],
+  recurring: [],
+  transactions: [],
+  goals: [],
+  provisions: [],
+  categoryBudgets: {},
+  emergencyFund: { targetAmount: 0 },
+  events: [],
+  updatedAt: '',
+  ...over,
+})
+const tx = (o) => ({
+  id: Math.random().toString(36).slice(2),
+  source: 'csv',
+  reconciled: true,
+  ...o,
+  month: o.date.slice(0, 7),
+})
+const line = (o) => ({ cadence: 'monthly', startDate: '2020-01-01', ...o })
+
+console.log('\n── A. A plain month, no pots ──')
+{
+  const d = base({
+    transactions: [
+      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-02`, description: 'Rent', amount: -1800, category: 'Housing' }),
+      tx({ date: `${M(-1)}-05`, description: 'Food', amount: -200, category: 'Food' }),
+    ],
+  })
+  const r = F.computeReview(d, M(-1))
+  eq('income', r.income, 3000)
+  eq('expenses', r.expenses, 2000)
+  eq('setAside', r.setAside, 0)
+  eq('net', r.net, 1000)
+  eq('cards tie (in − out − aside = net)', r.income - r.expenses - r.setAside, r.net)
+  eq('carry-over left to sweep', U.monthCarryover(d, M(-1), r.net).left, 1000)
+}
+
+console.log('\n── B. Money set aside stays money ──')
+{
+  const d = base({
+    provisions: [
+      { id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, dueDate: `${M(3)}-20`, createdAt: '2020-01-01' },
+    ],
+    transactions: [
+      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-02`, description: 'Rent', amount: -1800, category: 'Housing' }),
+      tx({ date: `${M(-1)}-05`, description: 'Food', amount: -200, category: 'Food' }),
+      tx({
+        date: `${M(-1)}-08`,
+        description: 'To flexible',
+        amount: -400,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'p1', amount: 400, role: 'contribution' }],
+      }),
+    ],
+  })
+  const r = F.computeReview(d, M(-1))
+  eq('expenses exclude what was set aside', r.expenses, 2000)
+  eq('setAside', r.setAside, 400)
+  eq('net', r.net, 600)
+  eq('netBeforeSetAside', r.netBeforeSetAside, 1000)
+  eq('pot funded', P.provisionStatus(d, d.provisions[0]).funded, 400)
+}
+
+console.log('\n── C. A provisioned bill lands ──')
+{
+  const d = base({
+    provisions: [
+      { id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, dueDate: `${M(-1)}-20`, createdAt: '2020-01-01' },
+    ],
+    transactions: [
+      tx({
+        date: `${M(-3)}-05`,
+        description: 'Fund pot',
+        amount: -3600,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'p1', amount: 3600, role: 'contribution' }],
+      }),
+      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-02`, description: 'Rent', amount: -1800, category: 'Housing' }),
+      tx({ date: `${M(-1)}-05`, description: 'Food', amount: -200, category: 'Food' }),
+      tx({ date: `${M(-1)}-19`, description: 'From flexible', amount: 3600, category: 'Internal' }),
+      tx({
+        date: `${M(-1)}-20`,
+        description: 'Tax bill',
+        amount: -3600,
+        category: 'Taxes',
+        provisionAllocations: [{ provisionId: 'p1', amount: 3600, role: 'drawdown' }],
+      }),
+    ],
+  })
+  const r = F.computeReview(d, M(-1))
+  eq('expenses (ordinary only)', r.expenses, 2000)
+  eq('provisionedSpend', r.provisionedSpend, 3600)
+  eq('net matches what the account really did', r.net, 1000)
+  eq('cards tie', r.income - r.expenses - r.setAside, r.net)
+  eq('the Taxes row still shows the bill', r.categories.find((c) => c.category === 'Taxes')?.actual, 3600)
+  eq('pot drained', P.provisionStatus(d, d.provisions[0]).funded, 0)
+}
+
+console.log('\n── D. Over a full cycle, each euro is charged once ──')
+{
+  const txs = []
+  for (const n of [-4, -3, -2]) {
+    txs.push(tx({ date: `${M(n)}-01`, description: 'Salary', amount: 3000, category: 'Income' }))
+    txs.push(
+      tx({
+        date: `${M(n)}-08`,
+        description: 'To flexible',
+        amount: -1200,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'p1', amount: 1200, role: 'contribution' }],
+      }),
+    )
+  }
+  txs.push(tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }))
+  txs.push(tx({ date: `${M(-1)}-19`, description: 'From flexible', amount: 3600, category: 'Internal' }))
+  txs.push(
+    tx({
+      date: `${M(-1)}-20`,
+      description: 'Tax bill',
+      amount: -3600,
+      category: 'Taxes',
+      provisionAllocations: [{ provisionId: 'p1', amount: 3600, role: 'drawdown' }],
+    }),
+  )
+  const d = base({
+    provisions: [
+      { id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, dueDate: `${M(-1)}-20`, createdAt: '2020-01-01' },
+    ],
+    transactions: txs,
+  })
+  const rs = [-4, -3, -2, -1].map((n) => F.computeReview(d, M(n)))
+  eq('set aside across the four months', rs.reduce((s, r) => s + r.setAside, 0), 3600)
+  eq('ordinary spending across them', rs.reduce((s, r) => s + r.expenses, 0), 0)
+  eq('the tax is charged exactly once', rs.reduce((s, r) => s + r.setAside + r.expenses, 0), 3600)
+  eq('sum of nets = income − what was charged', rs.reduce((s, r) => s + r.net, 0), 12000 - 3600)
+  eq('the month the bill lands is not sunk by it', rs[3].net, 3000)
+}
+
+console.log('\n── E. The forecast: provisioning must not drain it ──')
+{
+  const d = base({
+    accounts: [
+      { id: 'a1', name: 'Revolut', balance: 5000, asOf: `${NOW}-05` },
+      { id: 'a2', name: 'Flexible', balance: 1000, asOf: `${NOW}-05` },
+    ],
+    recurring: [
+      line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' }),
+      line({ id: 'r2', label: 'Rent', amount: 1800, flow: 'expense', category: 'Housing' }),
+      line({ id: 'r3', label: 'Tax provisioning', amount: 500, flow: 'expense', category: 'Taxes', group: 'Provisions' }),
+    ],
+  })
+  const f = F.buildForecast(d, 3)
+  eq('total balance', F.totalBalance(d), 6000)
+  eq('planned expenses exclude provisioning', f[0].expenses, 1800)
+  eq('planned set aside', f[0].setAside, 500)
+  eq('net = the change in money held', f[0].net, 1200)
+  eq('balance grows by net', f[1].balance - f[0].balance, 1200)
+  eq('a balance dated this month is not rolled', F.startingBalance(d), 6000)
+}
+
+console.log('\n── F. No balance anywhere ──')
+{
+  const d = base({
+    recurring: [line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' })],
+    transactions: [tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' })],
+  })
+  eq('no anchor to project from', F.hasBalanceAnchor(d), false)
+  eq('totalBalance', F.totalBalance(d), 0)
+  const c = C.dataChecks(d)
+  ok(
+    'the data check calls it out as a blocker',
+    c.some((x) => x.id === 'no-accounts' && x.level === 'blocker'),
+    JSON.stringify(c.map((x) => x.id)),
+  )
+  // An account that exists but has never been given a figure is still no anchor.
+  const tracked = base({ ...d, accounts: [{ id: 'a1', name: 'S-Bank', balance: 0, asOf: '', tracked: true }] })
+  eq('a tracked account awaiting its first statement is not an anchor', F.hasBalanceAnchor(tracked), false)
+}
+
+console.log("\n── G. A statement's closing balance is the next month's opening one ──")
+{
+  const plan = [
+    line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' }),
+    line({ id: 'r2', label: 'Rent', amount: 2000, flow: 'expense', category: 'Housing' }),
+  ]
+  const lastMonth = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-1), tracked: true }],
+    recurring: plan,
+  })
+  eq('anchor is the month after the statement', F.anchorMonth(lastMonth), NOW)
+  eq('last month’s closing balance opens this month untouched', F.startingBalance(lastMonth), 8000)
+
+  const threeBack = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-3), tracked: true }],
+    recurring: plan,
+  })
+  eq('a three-month-old statement rolls two months of plan', F.startingBalance(threeBack), 8000 + 2000)
+
+  // The same statement, but those two months have since been imported: the roll
+  // uses what really happened rather than the plan.
+  const withActuals = base({
+    ...threeBack,
+    transactions: [
+      tx({ date: `${M(-2)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-2)}-02`, description: 'Rent', amount: -2000, category: 'Housing' }),
+      tx({ date: `${M(-2)}-09`, description: 'Blowout', amount: -900, category: 'Food' }),
+    ],
+  })
+  eq('an imported month rolls on its real figures', F.startingBalance(withActuals), 8000 + 100 + 1000)
+
+  const applied = base({ recurring: plan })
+  F.applyStatementBalance(applied, { closingBalance: 8623.46, asOf: endOf(-1) })
+  eq('an import creates the tracked account', applied.accounts.length, 1)
+  eq('… and sets it to the closing figure', applied.accounts[0].balance, 8623.46)
+  F.applyStatementBalance(applied, { closingBalance: 100, asOf: endOf(-4) })
+  eq('an older statement cannot rewind it', applied.accounts[0].balance, 8623.46)
+}
+
+console.log('\n── H. The ledger runs continuously through today ──')
+{
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-1), tracked: true }],
+    recurring: [
+      line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' }),
+      line({ id: 'r2', label: 'Rent', amount: 2000, flow: 'expense', category: 'Housing' }),
+      line({ id: 'r3', label: 'Provisioning', amount: 300, flow: 'expense', category: 'Savings' }),
+    ],
+    transactions: [
+      tx({ date: `${M(-2)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-2)}-02`, description: 'Rent', amount: -2000, category: 'Housing' }),
+      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-02`, description: 'Rent', amount: -2000, category: 'Housing' }),
+    ],
+  })
+  const led = F.buildLedger(d)
+  const now = led.find((p) => p.month === NOW)
+  const start = F.startingBalance(d)
+  eq('the ledger reaches back to the first imported month', led[0].month, M(-2))
+  eq('past months are marked as actual', led[0].actual, true)
+  eq('this month is the plan again', now.actual, false)
+  eq('this month ends at the anchored balance plus its net', now.balance, start + now.net)
+  let continuous = true
+  for (let i = 1; i < led.length; i++) {
+    if (Math.abs(led[i].balance - (led[i - 1].balance + led[i].net)) > 0.005) continuous = false
+  }
+  ok('every row is the one before it plus that month’s net', continuous)
+  eq('provisioning does not drain the projection', now.expenses, 2000)
+  eq('… it is reported alongside', now.setAside, 300)
+}
+
+console.log('\n── I. The track record agrees with the money dates ──')
+{
+  const d = base({
+    recurring: [
+      line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' }),
+      line({ id: 'r2', label: 'Rent', amount: 2000, flow: 'expense', category: 'Housing' }),
+    ],
+    transactions: [
+      tx({ date: `${M(-2)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-2)}-02`, description: 'Rent', amount: -2000, category: 'Housing' }),
+      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-02`, description: 'Rent', amount: -2000, category: 'Housing' }),
+      tx({ date: `${M(-1)}-11`, description: 'Transfer out', amount: -500, category: 'Internal' }),
+    ],
+  })
+  const h = F.computeHistory(d)
+  eq('a month per import, oldest first', h.map((p) => p.month).join(','), `${M(-2)},${M(-1)}`)
+  eq('actual net matches the money date', h[1].actualNet, F.computeReview(d, M(-1)).net)
+  eq('internal transfers stay out of it', h[1].actualNet, 1000)
+  eq('planned net comes from the plan', h[1].plannedNet, 1000)
+  eq('the cumulative track adds up', h[1].cumulativeActual, h[0].actualNet + h[1].actualNet)
+}
+
+console.log('\n── J. What to move into savings, and whether it is really there ──')
+{
+  const d = base({
+    accounts: [{ id: 'flex', name: 'Flexible', balance: 1500, asOf: endOf(-1) }],
+    provisionAccountId: 'flex',
+    provisions: [
+      // Due in three months: a third of what's left, this month.
+      { id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, dueDate: `${M(3)}-20`, createdAt: '2020-01-01' },
+      // Date already gone: it stops asking rather than running a catch-up tab.
+      { id: 'p2', label: 'Old MOT', category: 'Transport', targetAmount: 400, dueDate: `${M(-2)}-10`, createdAt: '2020-01-01' },
+      // Never given a date: it can't be paced, so it is listed apart.
+      { id: 'p3', label: 'Someday', category: 'Other', targetAmount: 900, createdAt: '2020-01-01' },
+    ],
+    transactions: [
+      tx({
+        date: `${M(-1)}-08`,
+        description: 'To flexible',
+        amount: -600,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'p1', amount: 600, role: 'contribution' }],
+      }),
+    ],
+  })
+  const plan = U.fundingPlan(d, M(1), `${NOW}-15`)
+  eq('one line to pace', plan.lines.length, 1)
+  eq('… and it is the tax bill', plan.lines[0].id, 'p1')
+  eq('spread over the months left', plan.total, 1500)
+  eq('the passed date has lapsed, not accumulated', plan.lapsed.map((l) => l.id).join(','), 'p2')
+  eq('the undated one is listed apart', plan.undated.map((l) => l.id).join(','), 'p3')
+  ok('nothing lapsed or undated is in the total', plan.total === 1500)
+
+  const pots = U.potsCheck(d)
+  eq('the pots hold', pots.total, 600)
+  eq('the account holding them', pots.accountName, 'Flexible')
+  eq('… has 900 nobody has claimed', pots.difference, 900)
+}
+
+console.log('\n── K. The data check finds what quietly makes the numbers lie ──')
+{
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-3), tracked: true }],
+    recurring: [line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' })],
+    provisions: [{ id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, createdAt: '2020-01-01' }],
+    transactions: [
+      // Two months back and one month back, with the month between missing.
+      tx({ date: `${M(-3)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-03`, description: 'Coffee', amount: -4, category: 'Food' }),
+      tx({ date: `${M(-1)}-03`, description: 'Coffee', amount: -4, category: 'Food' }),
+      tx({ date: `${M(-1)}-04`, description: 'Unsure', amount: -50, category: 'Other', reconciled: false }),
+      tx({
+        date: `${M(-1)}-08`,
+        description: 'Over-split',
+        amount: -100,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'p1', amount: 150, role: 'contribution' }],
+      }),
+      tx({
+        date: `${M(-1)}-09`,
+        description: 'Ghost pot',
+        amount: -100,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'gone', amount: 100, role: 'contribution' }],
+      }),
+      tx({
+        date: `${M(-1)}-10`,
+        description: 'Pot paid a bill it never had',
+        amount: -500,
+        category: 'Taxes',
+        provisionAllocations: [{ provisionId: 'p1', amount: 500, role: 'drawdown' }],
+      }),
+    ],
+  })
+  const ids = C.dataChecks(d).map((c) => c.id)
+  for (const want of [
+    'stale-balance',
+    'over-allocated',
+    'orphan-allocations',
+    'overdrawn-pots',
+    'month-gap',
+    'unreconciled-past',
+    'duplicates',
+  ]) {
+    ok(`finds ${want}`, ids.includes(want), `saw ${ids.join(', ')}`)
+  }
+  ok('does not cry about a missing account when there is one', !ids.includes('no-accounts'))
+
+  const clean = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-1), tracked: true }],
+    recurring: [line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' })],
+    transactions: [
+      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
+      tx({ date: `${M(-1)}-02`, description: 'Rent', amount: -2000, category: 'Housing' }),
+    ],
+  })
+  eq('a tidy file reports nothing', C.dataChecks(clean).length, 0)
+}
+
+console.log(
+  `\n${fails === 0 ? `ALL ${checks} CHECKS PASSED` : `${fails} of ${checks} CHECKS FAILED`}`,
+)
+await server.close()
+process.exit(fails === 0 ? 0 : 1)

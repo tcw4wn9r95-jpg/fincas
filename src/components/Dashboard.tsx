@@ -10,8 +10,10 @@ import {
   computeHistory,
   monthsWithData,
   actualsByCategoryRange,
+  hasBalanceAnchor,
 } from '../lib/forecast'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
+import { dataChecks, checksLevel } from '../lib/consistency'
 import { provisionCoveredByCategoryRange } from '../lib/provisions'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
@@ -85,6 +87,14 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
         : undefined,
     [data, scenario],
   )
+  // With nothing recorded, every balance below would be measured from zero. The
+  // flows are still real, so they stay; the balance line goes, rather than
+  // drawing a projection off a starting point nobody ever gave us.
+  const anchored = hasBalanceAnchor(data)
+  // Anything that makes these figures untrustworthy is worth saying here, where
+  // the figures are, rather than only on the page that fixes it.
+  const checks = useMemo(() => dataChecks(data), [data])
+  const serious = checks.filter((c) => c.level !== 'info')
   const balance = startingBalance(data)
   const thisMonth = forecast[0]
   // Whole numbers at a glance; cents live in the planner where precision matters.
@@ -170,7 +180,19 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   return (
     <div className="space-y-6 animate-fade-up">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="Total balance" value={fx(balance)} sub={`${data.accounts.length} ${data.accounts.length === 1 ? 'account' : 'accounts'}`} />
+        {anchored ? (
+          <Stat
+            label="Total balance"
+            value={fx(balance)}
+            sub={`${data.accounts.length} ${data.accounts.length === 1 ? 'account' : 'accounts'}`}
+          />
+        ) : (
+          <button className="card p-5 text-left hover:shadow-lift transition" onClick={() => goTo('plan')}>
+            <div className="label">Total balance</div>
+            <div className="stat-value text-muted">—</div>
+            <div className="mt-1 text-sm text-forest">Add an account to see it</div>
+          </button>
+        )}
         <Stat
           label="This month net"
           value={fx(thisMonth?.net ?? 0, { signed: true })}
@@ -191,16 +213,42 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
         />
       </div>
 
+      {serious.length > 0 && (
+        <button
+          className="card w-full p-4 text-left flex items-start gap-3 hover:shadow-lift transition"
+          onClick={() => goTo('plan')}
+        >
+          <span
+            className={classNames(
+              'mt-1.5 h-2 w-2 shrink-0 rounded-full',
+              checksLevel(serious) === 'blocker' ? 'bg-clay' : 'bg-gold',
+            )}
+          />
+          <span className="min-w-0">
+            <span className="block font-medium">
+              {serious.length === 1
+                ? serious[0].title
+                : `${serious.length} things don't add up yet`}
+            </span>
+            <span className="block text-sm text-muted">
+              {serious.length === 1 ? serious[0].detail : serious.map((c) => c.title).join(' · ')}
+            </span>
+            <span className="block text-sm text-forest mt-0.5">See the check in Plan</span>
+          </span>
+        </button>
+      )}
+
       <div className="card p-6">
         <div className="flex items-baseline justify-between mb-4">
           <div>
             <h2 className="text-xl">Cash-flow forecast</h2>
             <p className="text-sm text-muted">
-              Income, fixed vs variable expenses, and projected balance · next{' '}
-              {forecast.length} months
+              Income, fixed vs variable expenses
+              {anchored ? ', and projected balance' : ' — no balance recorded to project from'} ·
+              next {forecast.length} months
             </p>
           </div>
-          {lowest && lowest.balance < balance && (
+          {anchored && lowest && lowest.balance < balance && (
             <div className="text-right">
               <div className="label">Projected low</div>
               <div
@@ -221,6 +269,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           currency={currency}
           locale={locale}
           scenario={scenarioOverlay}
+          showBalance={anchored}
         />
       </div>
 
@@ -295,6 +344,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           <p className="text-sm text-muted">
             Month by month — <span className="text-forest">actual</span> from your money dates,
             then projected
+            {!anchored && ' · the last column runs from zero, not from a real balance'}
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -306,7 +356,9 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
                 <th className="px-4 py-2.5 font-medium text-right">Fixed</th>
                 <th className="px-4 py-2.5 font-medium text-right">Variable</th>
                 <th className="px-4 py-2.5 font-medium text-right">Net</th>
-                <th className="px-6 py-2.5 font-medium text-right">Balance</th>
+                <th className="px-6 py-2.5 font-medium text-right">
+                  {anchored ? 'Balance' : 'Running'}
+                </th>
               </tr>
             </thead>
             <tbody>

@@ -139,43 +139,57 @@ export function applyStatementBalance(
 }
 
 /**
- * The month the recorded balances are anchored to (the latest `asOf` month).
- * An account balance is treated as the balance at the *start* of this month.
+ * Whether there is any recorded balance to project from. With no account there
+ * is no starting point, and a balance line drawn from zero is a guess wearing
+ * the clothes of a fact — callers use this to show the flows alone, and to ask
+ * for an account rather than inventing one.
+ */
+export function hasBalanceAnchor(data: AppData): boolean {
+  // A tracked account still waiting for its first statement holds no figure and
+  // no date — it is a promise of a balance, not one.
+  return data.accounts.some((a) => !!a.asOf)
+}
+
+/**
+ * The first month the recorded balances do *not* already account for.
+ *
+ * A balance is true as of its own date, so everything up to and including that
+ * month is already inside it: a statement's closing figure for February is
+ * February's ending balance, which is exactly March's opening one. Rolling the
+ * plan over February as well — as this used to — would count that month twice
+ * and hand the forecast a starting point a whole month out.
+ *
+ * A figure dated in the current month is simply "what's there now": there is
+ * nothing left to roll, so the anchor never runs past the current month.
  */
 export function anchorMonth(data: AppData): string {
-  let m = ''
+  const now = currentMonth()
+  let latest = ''
   for (const a of data.accounts) {
     // A tracked account's date is the statement's, which moves as months are
     // imported; a manual one's is whenever it was last typed.
     const am = (a.asOf || '').slice(0, 7)
-    if (am && am > m) m = am
+    if (am && am > latest) latest = am
   }
-  return m || currentMonth()
+  if (!latest) return now
+  const next = addMonths(latest, 1)
+  return next > now ? now : next
 }
 
 /**
- * Self-anchoring balance: the known balance rolled forward (or back) through
- * the plan to the start of the current month. This keeps the forecast's
- * starting point current as real months pass, with no need to re-import.
- * Once a past month's plan has been matched to actuals, that roll uses the
- * real figures — so the forecast tracks reality.
+ * Self-anchoring balance: the known balance rolled forward to the start of the
+ * current month, so the forecast's starting point stays current as real months
+ * pass with no need to re-import. Months that have been imported roll on their
+ * real figures; months that haven't roll on the plan.
  */
 export function startingBalance(data: AppData): number {
   const now = currentMonth()
-  const anchor = anchorMonth(data)
+  const withData = new Set(monthsWithData(data))
   let bal = totalBalance(data)
-  let m = anchor
-  while (m < now) {
-    const { income, expenses } = plannedFlowsForMonth(data, m)
-    bal += income - expenses
-    m = addMonths(m, 1)
+  for (let m = anchorMonth(data); m < now; m = addMonths(m, 1)) {
+    bal += monthFlows(data, m, withData, now).net
   }
-  while (m > now) {
-    m = addMonths(m, -1)
-    const { income, expenses } = plannedFlowsForMonth(data, m)
-    bal -= income - expenses
-  }
-  return bal
+  return round2(bal)
 }
 
 // Defined with the categories themselves (and re-exported here, where most
@@ -328,6 +342,35 @@ export interface LedgerPoint extends ForecastPoint {
 }
 
 /**
+ * One month's flows as the balance sees them: the real figures once the month
+ * has been imported, the plan otherwise.
+ *
+ * Money set aside is kept out of `expenses` on both sides — it stays inside the
+ * accounts this balance covers. A bill a provision paid for is left in, because
+ * that money really did leave.
+ *
+ * Both the roll-forward in `startingBalance` and the ledger read months through
+ * here, so the balance the plan page quotes and the one the ledger draws are the
+ * same number by construction rather than by two implementations agreeing.
+ */
+function monthFlows(data: AppData, month: string, withData: Set<string>, now: string) {
+  if (month < now && withData.has(month)) {
+    const { income, expense, setAside } = actualsByCategory(data, month, { splitSavings: true })
+    const inc = Object.values(income).reduce((a, b) => a + b, 0)
+    let fixed = 0
+    let variable = 0
+    for (const [cat, amt] of Object.entries(expense)) {
+      if (expenseCategoryIsVariable(cat)) variable += amt
+      else fixed += amt
+    }
+    const expenses = fixed + variable
+    return { month, income: inc, fixed, variable, expenses, setAside, net: inc - expenses, actual: true }
+  }
+  const { income, fixed, variable, expenses, setAside } = plannedFlowsForMonth(data, month)
+  return { month, income, fixed, variable, expenses, setAside, net: income - expenses, actual: false }
+}
+
+/**
  * A month-by-month ledger from the earliest money-dated month through the end of
  * the forecast: past months use real imported figures, current and future months
  * use the plan. Balances roll continuously so the actual past flows straight into
@@ -349,25 +392,7 @@ export function buildLedger(data: AppData): LedgerPoint[] {
   for (let m = start; m <= lastMonth; m = addMonths(m, 1)) months.push(m)
 
   // Per-month figures: real actuals for past months that have data, else the plan.
-  const rows = months.map((month) => {
-    if (month < now && withData.has(month)) {
-      // Savings split out for the same reason as the plan side: it stays in the
-      // accounts this balance line covers. A bill a provision paid for is left
-      // in, because that money really did leave.
-      const { income, expense, setAside } = actualsByCategory(data, month, { splitSavings: true })
-      const inc = Object.values(income).reduce((a, b) => a + b, 0)
-      let fixed = 0
-      let variable = 0
-      for (const [cat, amt] of Object.entries(expense)) {
-        if (expenseCategoryIsVariable(cat)) variable += amt
-        else fixed += amt
-      }
-      const expenses = fixed + variable
-      return { month, income: inc, fixed, variable, expenses, setAside, net: inc - expenses, actual: true }
-    }
-    const { income, fixed, variable, expenses, setAside } = plannedFlowsForMonth(data, month)
-    return { month, income, fixed, variable, expenses, setAside, net: income - expenses, actual: false }
-  })
+  const rows = months.map((month) => monthFlows(data, month, withData, now))
 
   // Anchor: startingBalance is the balance at the start of `now`. Roll back over
   // the shown past months so the running total lands exactly there.
@@ -759,10 +784,19 @@ export function financialSummary(data: AppData): string {
 
   const lines: string[] = []
   lines.push(`Base currency: ${currency}`)
-  lines.push(`Total balance across accounts: ${fx(totalBalance(data))}`)
-  if (data.accounts.length) {
+  if (hasBalanceAnchor(data)) {
+    lines.push(`Total balance across accounts: ${fx(totalBalance(data))}`)
     lines.push(
-      'Accounts: ' + data.accounts.map((a) => `${a.name} ${fx(a.balance)}`).join(', '),
+      'Accounts: ' +
+        data.accounts
+          .map((a) => (a.asOf ? `${a.name} ${fx(a.balance)} as of ${a.asOf}` : `${a.name} (no balance yet)`))
+          .join(', '),
+    )
+  } else {
+    // Saying "€0" here would have the assistant advise against a balance that
+    // was never recorded, rather than on flows alone.
+    lines.push(
+      'No account balance has been recorded, so there is no starting point: talk about income, spending and what is set aside, not about a balance or a runway.',
     )
   }
 
@@ -783,8 +817,11 @@ export function financialSummary(data: AppData): string {
 
   const forecast = buildForecast(data, 6)
   lines.push(
-    'Next 6 months projected end-of-month balance: ' +
-      forecast.map((f) => `${f.label} ${fx(f.balance)} (net ${fx(f.net)})`).join('; '),
+    hasBalanceAnchor(data)
+      ? 'Next 6 months projected end-of-month balance: ' +
+          forecast.map((f) => `${f.label} ${fx(f.balance)} (net ${fx(f.net)})`).join('; ')
+      : 'Next 6 months planned net (no balance to project from): ' +
+          forecast.map((f) => `${f.label} ${fx(f.net)}`).join('; '),
   )
 
   const months = monthsWithData(data)

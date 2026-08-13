@@ -1,5 +1,12 @@
 import type { AppData } from './types'
-import { monthsWithData, computeReview, spendSeriesByCategory, streak, totalBalance } from './forecast'
+import {
+  monthsWithData,
+  computeReview,
+  spendSeriesByCategory,
+  streak,
+  totalBalance,
+  hasBalanceAnchor,
+} from './forecast'
 
 export interface CatTrend {
   category: string
@@ -133,7 +140,12 @@ export function deriveInsights(data: AppData): Insights | null {
     .sort((a, b) => b.avgActual - b.avgPlanned - (a.avgActual - a.avgPlanned))
     .slice(0, 4)
 
-  const monthsCovered = avgSpend > 0 ? Math.round((totalBalance(data) / avgSpend) * 10) / 10 : null
+  // No recorded balance means no cover to measure — reporting "0 months" would
+  // read as an empty account rather than a missing figure.
+  const monthsCovered =
+    avgSpend > 0 && hasBalanceAnchor(data)
+      ? Math.round((totalBalance(data) / avgSpend) * 10) / 10
+      : null
   const debtPlanLines = data.recurring.filter((r) => r.flow === 'expense' && r.category === 'Loans').length
   const investment: InvestmentChecklist = {
     monthsCovered,
