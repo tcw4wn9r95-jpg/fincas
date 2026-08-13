@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
-import { startingBalance, totalBalance, anchorMonth, accountBalance } from '../lib/forecast'
+import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
@@ -223,7 +223,7 @@ export function Plan() {
       >
         <div className="space-y-2 mb-4">
           {data.accounts.map((a) => {
-            const live = accountBalance(data, a)
+            const awaiting = a.tracked && !a.asOf
             return (
               <div
                 key={a.id}
@@ -236,20 +236,20 @@ export function Plan() {
                     onBlur={(e) => editAccount(a.id, { name: e.target.value.trim() || a.name })}
                   />
                   <div className="text-[11px] text-muted">
-                    {live.from === 'statement'
-                      ? `from your statement, ${live.asOf}`
-                      : live.from === 'awaiting'
-                        ? 'waiting for a statement with a balance column'
-                        : `as of ${formatMonthLabel(a.asOf, locale)}`}
+                    {a.tracked
+                      ? awaiting
+                        ? 'waiting for its first current-account statement'
+                        : `closing balance from your statement, ${a.asOf}`
+                      : `as of ${formatMonthLabel(a.asOf, locale)}`}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   {a.tracked ? (
                     <span
                       className="text-right tabular-nums w-32 shrink-0"
-                      title="Read from your statements — import a month and it updates itself"
+                      title="Written by your statements — import a month and it moves itself"
                     >
-                      {live.from === 'awaiting' ? '—' : fx(live.balance)}
+                      {awaiting ? '—' : fx(a.balance)}
                     </span>
                   ) : (
                     <input

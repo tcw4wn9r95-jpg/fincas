@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
-import { parseFile } from '../lib/parse'
-import { syncTrackedAccounts } from '../lib/forecast'
+import { parseFile, type StatementSummary } from '../lib/parse'
+import { applyStatementBalance, trackedAccountName } from '../lib/forecast'
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey } from '../lib/format'
 import type { Transaction } from '../lib/types'
@@ -68,6 +68,12 @@ export function ImportModal({
   const fileRef = useRef<HTMLInputElement>(null)
   const [rows, setRows] = useState<Transaction[]>([])
   const [warnings, setWarnings] = useState<string[]>([])
+  // Only a current-account statement states a balance we're willing to trust —
+  // see `readStatementSummary`. Held so Save can move the account with it.
+  const [statement, setStatement] = useState<StatementSummary | null>(null)
+  const [applyBalance, setApplyBalance] = useState(true)
+  const trackedAccount = data.accounts.find((a) => a.tracked)
+  const fx = (n: number) => formatMoney(n, currency, locale)
   const [busy, setBusy] = useState(false)
   const [files, setFiles] = useState<string[]>([])
   const [teaching, setTeaching] = useState<Transaction | null>(null)
@@ -129,12 +135,18 @@ export function ImportModal({
     const added: Transaction[] = []
     const warns: string[] = []
     const names: string[] = []
+    let foundStatement: StatementSummary | null = null
     let skipped = 0
     for (const file of picked) {
       names.push(file.name)
       try {
         const res = await parseFile(file)
         for (const w of res.warnings) warns.push(`${file.name}: ${w}`)
+        // Last statement wins when several are dropped at once: its closing
+        // balance is the most recent word on the account.
+        if (res.statement && (!foundStatement || res.statement.asOf >= foundStatement.asOf)) {
+          foundStatement = res.statement
+        }
         for (const t of res.transactions) {
           // Check against the pre-existing set only — not rows added earlier in
           // THIS batch — so two genuinely identical charges in one statement are
@@ -154,6 +166,10 @@ export function ImportModal({
       } catch (err) {
         warns.push(`${file.name}: ${err instanceof Error ? err.message : 'could not be read'}`)
       }
+    }
+    if (foundStatement) {
+      setStatement(foundStatement)
+      setApplyBalance(true)
     }
     if (skipped) warns.unshift(`Skipped ${skipped} row${skipped === 1 ? '' : 's'} already staged.`)
     if (!added.length && !warns.length) warns.push('No new transactions found in that file.')
@@ -239,13 +255,13 @@ export function ImportModal({
       const monthsCovered = new Set(rows.map((r) => r.month))
       update((d) => {
         d.transactions = [...d.transactions.filter((t) => !monthsCovered.has(t.month)), ...rows]
-        syncTrackedAccounts(d)
+        if (statement && applyBalance) applyStatementBalance(d, statement)
         return d
       })
     } else {
       update((d) => {
         d.transactions = [...d.transactions, ...rows]
-        syncTrackedAccounts(d)
+        if (statement && applyBalance) applyStatementBalance(d, statement)
         return d
       })
     }
@@ -439,6 +455,32 @@ export function ImportModal({
                 </div>
               </div>
             </>
+          )}
+
+          {statement && (
+            <label className="mt-4 flex items-start gap-3 rounded-lg border border-forest/30 bg-forest-tint/30 px-4 py-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={applyBalance}
+                onChange={(e) => setApplyBalance(e.target.checked)}
+              />
+              <span className="text-sm">
+                <span className="font-medium">
+                  Set {trackedAccount?.name ?? trackedAccountName} to{' '}
+                  {fx(statement.closingBalance)}
+                </span>
+                <span className="block text-xs text-muted mt-0.5">
+                  The closing balance this statement states, as of {statement.asOf}.
+                  {statement.complete === true &&
+                    ` Its opening balance plus these rows lands on it exactly, so nothing was missed.`}
+                  {statement.complete === false &&
+                    ` Careful: opening plus these rows comes to ${fx(
+                      (statement.openingBalance ?? 0) + statement.rowsTotal,
+                    )}, not ${fx(statement.closingBalance)} — some rows may not have been read.`}
+                </span>
+              </span>
+            </label>
           )}
 
           {warnings.length > 0 && (

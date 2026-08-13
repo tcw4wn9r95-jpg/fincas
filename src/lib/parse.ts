@@ -10,6 +10,26 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker
 export interface ParsedResult {
   transactions: Transaction[]
   warnings: string[]
+  /** Only set for a current-account statement that states its own balances. */
+  statement?: StatementSummary
+}
+
+/**
+ * The header and footer figures a current-account statement prints around its
+ * rows. Two jobs: the closing balance is the bank's own word for what the
+ * account holds, and opening + rows = closing is a check that every row was
+ * actually read — statement parsing is best-effort, and this turns "probably
+ * fine" into something provable.
+ */
+export interface StatementSummary {
+  closingBalance: number
+  openingBalance?: number
+  /** End of the statement period. */
+  asOf: string
+  /** Sum of the parsed rows. */
+  rowsTotal: number
+  /** openingBalance + rowsTotal lands on closingBalance (within a cent). */
+  complete?: boolean
 }
 
 function cleanAmount(raw: string): number | null {
@@ -106,10 +126,6 @@ const DESC_KEYS = /(description|memo|details|narrative|payee|name|concepto|refer
 const AMOUNT_KEYS = /^(amount|importe|value|monto)$/i
 const DEBIT_KEYS = /(debit|withdraw|paid out|cargo|expense)/i
 const CREDIT_KEYS = /(credit|deposit|paid in|received|abono|income)/i
-// Most statements carry a running balance. It is the bank's own figure for what
-// the account held after the row, which beats anything derived from the
-// transactions — no opening balance to guess, no drift.
-const BALANCE_KEYS = /^(balance|saldo|running balance|balance after|closing balance)$/i
 
 function pickField(fields: string[], re: RegExp): string | undefined {
   return fields.find((f) => re.test(f.trim()))
@@ -133,7 +149,6 @@ export function parseCSV(text: string): ParsedResult {
   const amountF = pickField(fields, AMOUNT_KEYS) ?? pickField(fields, /amount/i)
   const debitF = pickField(fields, DEBIT_KEYS)
   const creditF = pickField(fields, CREDIT_KEYS)
-  const balanceF = pickField(fields, BALANCE_KEYS) ?? pickField(fields, /balance|saldo/i)
 
   if (!amountF && !debitF && !creditF) {
     warnings.push('No amount/debit/credit column found — amounts may be wrong.')
@@ -158,8 +173,6 @@ export function parseCSV(text: string): ParsedResult {
     }
     if (amount == null) continue
 
-    const balanceAfter = balanceF ? cleanAmount(row[balanceF]) : null
-
     out.push({
       id: uid(),
       date,
@@ -168,7 +181,6 @@ export function parseCSV(text: string): ParsedResult {
       category: categorize(description, amount),
       source: 'csv',
       month: date.slice(0, 7),
-      ...(balanceAfter != null ? { balanceAfter } : {}),
     })
   }
 
@@ -191,6 +203,59 @@ const LINE_DATE = /(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\
 // decimal places are required so bare years/reference numbers aren't mistaken
 // for amounts.
 const LINE_AMOUNT = /[-+(]?\s?[$€£]?\s?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\)?\s*(?:[-+]|CR|DR)?\s*$/i
+
+// A statement's own summary figures. The current-account marker is required
+// before any of it is trusted: a credit-card statement says "New Balance" too,
+// and that number is a debt, not money in an account.
+const STMT_CURRENT = /current account|compte courant|girokonto|cuenta corriente|checking account/i
+const STMT_CLOSING = /(new balance|closing balance|nouveau solde|neuer saldo|saldo final)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
+const STMT_OPENING = /(old balance|opening balance|previous balance|ancien solde|alter saldo|saldo anterior)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
+const STMT_PERIOD = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*[-–—]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/
+const STMT_DATE = /\bdate\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/i
+
+/**
+ * Pull the balances a current-account statement states about itself. Returns
+ * nothing at all for anything else — a Revolut export or a card statement must
+ * never move a bank account's balance.
+ */
+function readStatementSummary(
+  lines: string[],
+  transactions: Transaction[],
+  dayFirst: boolean,
+): StatementSummary | undefined {
+  const text = lines.join('\n')
+  if (!STMT_CURRENT.test(text)) return undefined
+  const closingRaw = text.match(STMT_CLOSING)?.[2]
+  const closingBalance = closingRaw ? cleanAmount(closingRaw) : null
+  if (closingBalance == null) return undefined
+
+  const openingRaw = text.match(STMT_OPENING)?.[2]
+  const openingBalance = openingRaw ? cleanAmount(openingRaw) ?? undefined : undefined
+
+  // Prefer the period's end date, then the statement's own date, then the last
+  // row — in that order, because that is how precisely each states the day the
+  // closing balance belongs to.
+  const period = text.match(STMT_PERIOD)?.[2]
+  const stated = text.match(STMT_DATE)?.[1]
+  const asOf =
+    (period && normalizeDate(period, dayFirst)) ||
+    (stated && normalizeDate(stated, dayFirst)) ||
+    transactions.map((t) => t.date).sort().pop() ||
+    ''
+  if (!asOf) return undefined
+
+  const rowsTotal = Math.round(transactions.reduce((s, t) => s + t.amount, 0) * 100) / 100
+  return {
+    closingBalance,
+    openingBalance,
+    asOf,
+    rowsTotal,
+    complete:
+      openingBalance == null
+        ? undefined
+        : Math.abs(openingBalance + rowsTotal - closingBalance) < 0.011,
+  }
+}
 
 export async function parsePDFFile(file: File): Promise<ParsedResult> {
   const warnings: string[] = []
@@ -258,16 +323,22 @@ export async function parsePDFFile(file: File): Promise<ParsedResult> {
     })
   }
 
+  const statement = readStatementSummary(lines, out, dayFirst)
+
   if (!out.length) {
     warnings.push(
       'No transactions detected. Some PDF statements are scanned images with no text layer — try exporting a CSV from your bank instead.',
     )
-  } else {
+  } else if (statement?.complete) {
+    // The statement's own arithmetic agrees, so every row was read. No need to
+    // ask the user to double-check what the bank has already confirmed.
     warnings.push(
-      'PDF parsing is best-effort. Please review the rows and signs before saving.',
+      'Every row checks out: the opening balance plus these rows lands exactly on the statement’s closing balance.',
     )
+  } else {
+    warnings.push('PDF parsing is best-effort. Please review the rows and signs before saving.')
   }
-  return { transactions: out, warnings }
+  return { transactions: out, warnings, statement }
 }
 
 export async function parseFile(file: File): Promise<ParsedResult> {

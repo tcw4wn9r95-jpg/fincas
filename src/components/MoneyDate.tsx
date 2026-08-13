@@ -7,7 +7,6 @@ import {
   itemAmountForMonth,
   spendSeriesByCategory,
   streak,
-  syncTrackedAccounts,
 } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, todayISO } from '../lib/format'
 import { eventsInMonth } from '../lib/events'
@@ -245,9 +244,6 @@ export function MoneyDate({
       return
     update((d) => {
       d.transactions = d.transactions.filter((t) => t.month !== activeMonth)
-      // Dropping the newest month rolls a tracked balance back to the statement
-      // before it, rather than leaving it stranded on a month you deleted.
-      syncTrackedAccounts(d)
       return d
     })
   }

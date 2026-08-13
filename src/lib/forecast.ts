@@ -1,8 +1,6 @@
 import type {
-  Account,
   AppData,
   RecurringItem,
-  Transaction,
   ForecastPoint,
   MonthReview,
   CategoryActual,
@@ -107,68 +105,37 @@ export function itemAmountForMonth(item: RecurringItem, month: string): number {
   return itemBaseAmountForMonth(item, month)
 }
 
-/**
- * What an account holds, and how we know.
- *
- * A tracked account reads the running balance off the latest imported
- * statement row that carried one — the bank's own closing figure, so it needs
- * no opening balance and can't drift. Until such a row exists it falls back to
- * whatever was stored, and says so, rather than showing a confident zero.
- */
-export function accountBalance(
-  data: AppData,
-  account: Account,
-): { balance: number; asOf: string; from: 'statement' | 'manual' | 'awaiting' } {
-  if (!account.tracked) return { balance: account.balance, asOf: account.asOf, from: 'manual' }
-  let latest: Transaction | undefined
-  for (const t of data.transactions) {
-    if (t.balanceAfter == null) continue
-    // Ties on the same day fall to the row imported last, which is the order
-    // the statement listed them in.
-    if (!latest || t.date >= latest.date) latest = t
-  }
-  if (!latest || latest.balanceAfter == null) {
-    return { balance: account.balance, asOf: account.asOf, from: 'awaiting' }
-  }
-  return { balance: latest.balanceAfter, asOf: latest.date, from: 'statement' }
-}
-
 export function totalBalance(data: AppData): number {
-  return data.accounts.reduce((sum, a) => sum + accountBalance(data, a).balance, 0)
+  return data.accounts.reduce((sum, a) => sum + a.balance, 0)
 }
 
-/** The account created to follow the statements, when there isn't one already. */
-export const TRACKED_ACCOUNT_NAME = 'S-Bank'
+/** The account created to follow the current-account statements. */
+export const trackedAccountName = 'S-Bank'
 
 /**
- * Keep tracked accounts in step with the transactions now on file. Called after
- * an import or a month deletion — the two moments the statements change.
+ * Move the tracked account onto the balance a statement just stated, creating
+ * it the first time — the account nobody wants to maintain by hand shouldn't
+ * have to be set up by hand either.
  *
- * It also creates the tracked account the first time a statement arrives
- * carrying a running balance, so the account nobody wants to maintain by hand
- * never has to be set up by hand either. Renaming or deleting it afterwards
- * works like any other account.
+ * Only ever called with a summary from a current-account statement: a Revolut
+ * export or a card statement carries balance-shaped numbers that mean something
+ * else entirely, and `readStatementSummary` refuses to return them.
+ *
+ * An older statement can't move a newer figure backwards, so re-importing an
+ * old month to fix a category doesn't rewind the balance.
  */
-export function syncTrackedAccounts(d: AppData): void {
-  if (!d.transactions.some((t) => t.balanceAfter != null)) return
-  if (!d.accounts.some((a) => a.tracked)) {
-    d.accounts.push({
-      id: uid(),
-      name: TRACKED_ACCOUNT_NAME,
-      balance: 0,
-      asOf: todayISO(),
-      tracked: true,
-    })
+export function applyStatementBalance(
+  d: AppData,
+  statement: { closingBalance: number; asOf: string },
+): void {
+  let account = d.accounts.find((a) => a.tracked)
+  if (!account) {
+    account = { id: uid(), name: trackedAccountName, balance: 0, asOf: '', tracked: true }
+    d.accounts.push(account)
   }
-  // The stored figure is only a cache — `accountBalance` is the authority — but
-  // it is what a backup file carries, so it should not go stale.
-  for (const a of d.accounts) {
-    if (!a.tracked) continue
-    const live = accountBalance(d, a)
-    if (live.from !== 'statement') continue
-    a.balance = live.balance
-    a.asOf = live.asOf
-  }
+  if (account.asOf && account.asOf > statement.asOf) return
+  account.balance = statement.closingBalance
+  account.asOf = statement.asOf
 }
 
 /**
@@ -178,9 +145,9 @@ export function syncTrackedAccounts(d: AppData): void {
 export function anchorMonth(data: AppData): string {
   let m = ''
   for (const a of data.accounts) {
-    // A tracked account's date comes from the statement it was read off, which
-    // is the one that moves as months are imported.
-    const am = (accountBalance(data, a).asOf || '').slice(0, 7)
+    // A tracked account's date is the statement's, which moves as months are
+    // imported; a manual one's is whenever it was last typed.
+    const am = (a.asOf || '').slice(0, 7)
     if (am && am > m) m = am
   }
   return m || currentMonth()
