@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { useData } from '../store'
 import { askClaude, hasApiKey } from '../lib/claude'
 import type { ChatMessage } from '../lib/types'
@@ -17,12 +18,16 @@ const SUGGESTIONS = [
 export function Chat({
   goToSettings,
   seed,
+  messages,
+  setMessages,
 }: {
   goToSettings: () => void
   seed?: { month?: string; prompt?: string; nonce: number } | null
+  /** Held by the app, not here, so the thread survives leaving the tab. */
+  messages: ChatMessage[]
+  setMessages: Dispatch<SetStateAction<ChatMessage[]>>
 }) {
   const { data } = useData()
-  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState('')
@@ -93,6 +98,18 @@ export function Chat({
       <div className="mb-4">
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="text-2xl">Assistant</h2>
+          {messages.length > 0 && !streaming && (
+            <button
+              className="btn-subtle text-xs"
+              onClick={() => {
+                setMessages([])
+                setFocusMonth(undefined)
+                setError('')
+              }}
+            >
+              New chat
+            </button>
+          )}
           {focusMonth && (
             <span className="pill bg-forest-tint text-forest">
               Reviewing {formatMonthLabel(focusMonth + '-01', data.settings.locale)}

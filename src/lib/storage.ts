@@ -1,4 +1,4 @@
-import type { AppData, Settings } from './types'
+import type { AppData, ChatMessage, Settings } from './types'
 import { todayISO, uid, currentMonth, addMonths } from './format'
 
 const STORAGE_KEY = 'fincas.data.v1'
@@ -52,6 +52,37 @@ export function saveData(data: AppData): void {
 
 export function clearData(): void {
   localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(CHAT_KEY)
+}
+
+// ── Assistant transcript ──────────────────────────────────────────
+// Kept under its own key rather than inside `AppData`: the conversation is
+// worth surviving a tab switch or a reload, but it isn't financial data and
+// has no business riding along in a backup file.
+
+const CHAT_KEY = 'fincas.chat.v1'
+
+export function loadChat(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(CHAT_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (m): m is ChatMessage =>
+        !!m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string',
+    )
+  } catch {
+    return []
+  }
+}
+
+export function saveChat(messages: ChatMessage[]): void {
+  try {
+    localStorage.setItem(CHAT_KEY, JSON.stringify(messages))
+  } catch {
+    /* a full quota shouldn't take the assistant down — the transcript is not precious */
+  }
 }
 
 // ── Backup / restore (the "Google Drive or device" path) ─────────────

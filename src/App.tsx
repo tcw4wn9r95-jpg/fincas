@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Splash } from './components/Splash'
 import { Dashboard } from './components/Dashboard'
 import { MoneyDate } from './components/MoneyDate'
@@ -21,6 +21,8 @@ import {
   IconMore,
 } from './components/icons'
 import { classNames } from './lib/format'
+import { loadChat, saveChat } from './lib/storage'
+import type { ChatMessage } from './lib/types'
 
 type Tab =
   | 'overview'
@@ -67,6 +69,21 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
 export function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [moreOpen, setMoreOpen] = useState(false)
+  // The assistant thread lives here rather than inside Chat, so switching tabs
+  // (which unmounts it) no longer throws the conversation away. Persisted under
+  // its own key so a reload keeps it too.
+  const [chat, setChat] = useState<ChatMessage[]>(() => loadChat())
+  useEffect(() => {
+    saveChat(chat)
+  }, [chat])
+
+  // Land at the top of a screen you've just opened. Without this the window
+  // keeps the scroll offset from wherever you were, so arriving halfway down —
+  // or at the very bottom of a long page — is the norm rather than the
+  // exception.
+  useEffect(() => {
+    window.scrollTo({ top: 0 })
+  }, [tab])
   // Context the user asked to discuss — hands the Assistant a month or a
   // ready-made prompt (e.g. a weekly check-in recap).
   const [assistantSeed, setAssistantSeed] = useState<AssistantSeed | null>(null)
@@ -158,7 +175,12 @@ export function App() {
             {tab === 'events' && <Events />}
             {tab === 'insights' && <Insights goToSettings={() => go('settings')} />}
             {tab === 'assistant' && (
-              <Chat goToSettings={() => go('settings')} seed={assistantSeed} />
+              <Chat
+                goToSettings={() => go('settings')}
+                seed={assistantSeed}
+                messages={chat}
+                setMessages={setChat}
+              />
             )}
             {tab === 'plan' && <Plan />}
             {tab === 'settings' && <Settings />}

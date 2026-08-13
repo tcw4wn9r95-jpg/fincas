@@ -41,6 +41,18 @@ export function planSection(item: RecurringItem): string {
   return 'Variable'
 }
 
+/**
+ * A plan line that puts money aside rather than spending it: the planner's
+ * Provisions section, and plain savings. These are compared against what was
+ * actually set aside, never against spending.
+ */
+export function isPlannedSetAside(item: RecurringItem): boolean {
+  return (
+    item.flow === 'expense' &&
+    (item.category === SAVINGS_CATEGORY || planSection(item) === 'Provisions')
+  )
+}
+
 /** Variable = the "Variable" section (everything after Imprevistos); else fixed. */
 export function isVariableExpense(item: RecurringItem): boolean {
   return item.flow === 'expense' && planSection(item) === 'Variable'
@@ -528,27 +540,34 @@ export function computeReview(data: AppData, month: string): MonthReview {
   // Planned figures from recurring items for this month.
   const plannedIncomeByCat: Record<string, number> = {}
   const recurringExpenseByCat: Record<string, number> = {}
+  let plannedSetAside = 0
   for (const item of data.recurring) {
     if (NON_CASHFLOW.has(item.category)) continue
     const amt = itemAmountForMonth(item, month)
     if (amt === 0) continue
     if (item.flow === 'income') {
       plannedIncomeByCat[item.category] = (plannedIncomeByCat[item.category] ?? 0) + amt
-    } else {
-      recurringExpenseByCat[item.category] = (recurringExpenseByCat[item.category] ?? 0) + amt
+      continue
     }
+    // A provisioning line is money the plan puts aside each month, not money it
+    // spends: the bill it builds toward lands once, and by then the cost has
+    // already been planned for month by month. Counting it as planned spending
+    // would compare a monthly set-aside against a one-off payment.
+    if (isPlannedSetAside(item)) {
+      plannedSetAside += amt
+      continue
+    }
+    recurringExpenseByCat[item.category] = (recurringExpenseByCat[item.category] ?? 0) + amt
   }
 
   // Planned expense per category: the precise per-line plan for this month wins;
   // a flat budget only fills in categories that have no plan lines.
   const plannedExpenseByCat: Record<string, number> = { ...recurringExpenseByCat }
   for (const [cat, budget] of Object.entries(data.categoryBudgets)) {
-    if (!(cat in plannedExpenseByCat)) plannedExpenseByCat[cat] = budget
+    if (cat in plannedExpenseByCat) continue
+    if (cat === SAVINGS_CATEGORY || PROVISION_CATS.has(cat)) plannedSetAside += budget
+    else plannedExpenseByCat[cat] = budget
   }
-  // Planned savings leaves the expense side too, so "spent vs planned" compares
-  // spending with spending.
-  const plannedSetAside = plannedExpenseByCat[SAVINGS_CATEGORY] ?? 0
-  delete plannedExpenseByCat[SAVINGS_CATEGORY]
 
   const plannedIncome = Object.values(plannedIncomeByCat).reduce((a, b) => a + b, 0)
   const plannedExpenses = Object.values(plannedExpenseByCat).reduce((a, b) => a + b, 0)
