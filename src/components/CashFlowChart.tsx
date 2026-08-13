@@ -52,6 +52,7 @@ function SubtotalTooltip({
     { label: 'Fixed expenses', value: -p.fixedExpenses, color: COLOR.fixed },
     { label: 'Variable expenses', value: -p.variableExpenses, color: COLOR.variable },
     { label: 'Total expenses', value: -p.expenses, strong: true, top: true },
+    ...(p.setAside > 0.5 ? [{ label: 'Set aside', value: -p.setAside }] : []),
     { label: 'Net', value: p.net, strong: true },
     { label: 'End balance', value: p.balance, color: COLOR.balance, strong: true, top: true },
   ]

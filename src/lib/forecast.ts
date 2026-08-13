@@ -1,6 +1,8 @@
 import type {
+  Account,
   AppData,
   RecurringItem,
+  Transaction,
   ForecastPoint,
   MonthReview,
   CategoryActual,
@@ -105,8 +107,68 @@ export function itemAmountForMonth(item: RecurringItem, month: string): number {
   return itemBaseAmountForMonth(item, month)
 }
 
+/**
+ * What an account holds, and how we know.
+ *
+ * A tracked account reads the running balance off the latest imported
+ * statement row that carried one — the bank's own closing figure, so it needs
+ * no opening balance and can't drift. Until such a row exists it falls back to
+ * whatever was stored, and says so, rather than showing a confident zero.
+ */
+export function accountBalance(
+  data: AppData,
+  account: Account,
+): { balance: number; asOf: string; from: 'statement' | 'manual' | 'awaiting' } {
+  if (!account.tracked) return { balance: account.balance, asOf: account.asOf, from: 'manual' }
+  let latest: Transaction | undefined
+  for (const t of data.transactions) {
+    if (t.balanceAfter == null) continue
+    // Ties on the same day fall to the row imported last, which is the order
+    // the statement listed them in.
+    if (!latest || t.date >= latest.date) latest = t
+  }
+  if (!latest || latest.balanceAfter == null) {
+    return { balance: account.balance, asOf: account.asOf, from: 'awaiting' }
+  }
+  return { balance: latest.balanceAfter, asOf: latest.date, from: 'statement' }
+}
+
 export function totalBalance(data: AppData): number {
-  return data.accounts.reduce((sum, a) => sum + a.balance, 0)
+  return data.accounts.reduce((sum, a) => sum + accountBalance(data, a).balance, 0)
+}
+
+/** The account created to follow the statements, when there isn't one already. */
+export const TRACKED_ACCOUNT_NAME = 'S-Bank'
+
+/**
+ * Keep tracked accounts in step with the transactions now on file. Called after
+ * an import or a month deletion — the two moments the statements change.
+ *
+ * It also creates the tracked account the first time a statement arrives
+ * carrying a running balance, so the account nobody wants to maintain by hand
+ * never has to be set up by hand either. Renaming or deleting it afterwards
+ * works like any other account.
+ */
+export function syncTrackedAccounts(d: AppData): void {
+  if (!d.transactions.some((t) => t.balanceAfter != null)) return
+  if (!d.accounts.some((a) => a.tracked)) {
+    d.accounts.push({
+      id: uid(),
+      name: TRACKED_ACCOUNT_NAME,
+      balance: 0,
+      asOf: todayISO(),
+      tracked: true,
+    })
+  }
+  // The stored figure is only a cache — `accountBalance` is the authority — but
+  // it is what a backup file carries, so it should not go stale.
+  for (const a of d.accounts) {
+    if (!a.tracked) continue
+    const live = accountBalance(d, a)
+    if (live.from !== 'statement') continue
+    a.balance = live.balance
+    a.asOf = live.asOf
+  }
 }
 
 /**
@@ -116,7 +178,9 @@ export function totalBalance(data: AppData): number {
 export function anchorMonth(data: AppData): string {
   let m = ''
   for (const a of data.accounts) {
-    const am = (a.asOf || '').slice(0, 7)
+    // A tracked account's date comes from the statement it was read off, which
+    // is the one that moves as months are imported.
+    const am = (accountBalance(data, a).asOf || '').slice(0, 7)
     if (am && am > m) m = am
   }
   return m || currentMonth()
@@ -239,13 +303,19 @@ function plannedFlowsForMonth(data: AppData, month: string) {
   let income = 0
   let fixed = 0
   let variable = 0
+  let setAside = 0
   for (const item of data.recurring) {
     const amt = itemAmountForMonth(item, month)
     if (item.flow === 'income') income += amt
+    // Provisioning moves money between the user's own accounts. Counted as an
+    // expense it would drain the projected balance every month by money that
+    // never left — and the balance is the total across those accounts, so it
+    // is still there.
+    else if (isPlannedSetAside(item)) setAside += amt
     else if (isVariableExpense(item)) variable += amt
     else fixed += amt
   }
-  return { income, expenses: fixed + variable, fixed, variable }
+  return { income, expenses: fixed + variable, fixed, variable, setAside }
 }
 
 /**
@@ -258,7 +328,10 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
   let running = startingBalance(data)
   const out: ForecastPoint[] = []
   for (const month of months) {
-    const { income, expenses, fixed, variable } = plannedFlowsForMonth(data, month)
+    const { income, expenses, fixed, variable, setAside } = plannedFlowsForMonth(data, month)
+    // Net drives the balance line, so it is the change in total money: what
+    // came in, less what was spent. Money set aside is shown alongside rather
+    // than subtracted — it stays in the accounts this balance covers.
     const net = income - expenses
     running += net
     out.push({
@@ -266,6 +339,7 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
       label: shortMonth(month, data.settings.locale),
       income,
       expenses,
+      setAside,
       fixedExpenses: fixed,
       variableExpenses: variable,
       net,
@@ -310,7 +384,10 @@ export function buildLedger(data: AppData): LedgerPoint[] {
   // Per-month figures: real actuals for past months that have data, else the plan.
   const rows = months.map((month) => {
     if (month < now && withData.has(month)) {
-      const { income, expense } = actualsByCategory(data, month)
+      // Savings split out for the same reason as the plan side: it stays in the
+      // accounts this balance line covers. A bill a provision paid for is left
+      // in, because that money really did leave.
+      const { income, expense, setAside } = actualsByCategory(data, month, { splitSavings: true })
       const inc = Object.values(income).reduce((a, b) => a + b, 0)
       let fixed = 0
       let variable = 0
@@ -318,10 +395,11 @@ export function buildLedger(data: AppData): LedgerPoint[] {
         if (expenseCategoryIsVariable(cat)) variable += amt
         else fixed += amt
       }
-      return { month, income: inc, fixed, variable, expenses: fixed + variable, net: inc - (fixed + variable), actual: true }
+      const expenses = fixed + variable
+      return { month, income: inc, fixed, variable, expenses, setAside, net: inc - expenses, actual: true }
     }
-    const { income, fixed, variable, expenses } = plannedFlowsForMonth(data, month)
-    return { month, income, fixed, variable, expenses, net: income - expenses, actual: false }
+    const { income, fixed, variable, expenses, setAside } = plannedFlowsForMonth(data, month)
+    return { month, income, fixed, variable, expenses, setAside, net: income - expenses, actual: false }
   })
 
   // Anchor: startingBalance is the balance at the start of `now`. Roll back over
@@ -337,6 +415,7 @@ export function buildLedger(data: AppData): LedgerPoint[] {
       expenses: r.expenses,
       fixedExpenses: r.fixed,
       variableExpenses: r.variable,
+      setAside: r.setAside,
       net: r.net,
       balance: running,
       projected: r.month > now,

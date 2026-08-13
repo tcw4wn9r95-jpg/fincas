@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
-import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
+import { startingBalance, totalBalance, anchorMonth, accountBalance } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
@@ -219,38 +219,56 @@ export function Plan() {
 
       <Section
         title="Accounts"
-        desc="Your last known balance. The forecast rolls it forward through your plan automatically, so it stays current each month — no re-import needed."
+        desc="Where your money sits. An account whose statements carry a running balance keeps itself current — every import moves it on. Type a balance for anything you don't import, and the forecast rolls it forward through your plan."
       >
         <div className="space-y-2 mb-4">
-          {data.accounts.map((a) => (
-            <div
-              key={a.id}
-              className="flex items-center justify-between rounded-lg bg-canvas px-4 py-2.5 border border-line"
-            >
-              <div className="flex-1 min-w-0">
-                <input
-                  className="bg-transparent font-medium outline-none w-full focus:text-forest"
-                  defaultValue={a.name}
-                  onBlur={(e) => editAccount(a.id, { name: e.target.value.trim() || a.name })}
-                />
-                <div className="text-[11px] text-muted">as of {formatMonthLabel(a.asOf, locale)}</div>
+          {data.accounts.map((a) => {
+            const live = accountBalance(data, a)
+            return (
+              <div
+                key={a.id}
+                className="flex items-center justify-between rounded-lg bg-canvas px-4 py-2.5 border border-line"
+              >
+                <div className="flex-1 min-w-0">
+                  <input
+                    className="bg-transparent font-medium outline-none w-full focus:text-forest"
+                    defaultValue={a.name}
+                    onBlur={(e) => editAccount(a.id, { name: e.target.value.trim() || a.name })}
+                  />
+                  <div className="text-[11px] text-muted">
+                    {live.from === 'statement'
+                      ? `from your statement, ${live.asOf}`
+                      : live.from === 'awaiting'
+                        ? 'waiting for a statement with a balance column'
+                        : `as of ${formatMonthLabel(a.asOf, locale)}`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {a.tracked ? (
+                    <span
+                      className="text-right tabular-nums w-32 shrink-0"
+                      title="Read from your statements — import a month and it updates itself"
+                    >
+                      {live.from === 'awaiting' ? '—' : fx(live.balance)}
+                    </span>
+                  ) : (
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="bg-transparent text-right outline-none tabular-nums w-32 focus:text-forest"
+                      defaultValue={a.balance}
+                      onBlur={(e) =>
+                        editAccount(a.id, { balance: parseAmount(e.target.value) || 0, asOf: todayISO() })
+                      }
+                    />
+                  )}
+                  <button className="text-muted hover:text-clay" onClick={() => removeAccount(a.id)}>
+                    <IconTrash width={16} height={16} />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  className="bg-transparent text-right outline-none tabular-nums w-32 focus:text-forest"
-                  defaultValue={a.balance}
-                  onBlur={(e) =>
-                    editAccount(a.id, { balance: parseAmount(e.target.value) || 0, asOf: todayISO() })
-                  }
-                />
-                <button className="text-muted hover:text-clay" onClick={() => removeAccount(a.id)}>
-                  <IconTrash width={16} height={16} />
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
           {data.accounts.length === 0 && (
             <p className="text-sm text-muted">No accounts yet — add your starting balance below.</p>
           )}

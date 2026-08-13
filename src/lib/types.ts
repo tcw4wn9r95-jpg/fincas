@@ -15,10 +15,19 @@ export type Flow = 'income' | 'expense'
 export interface Account {
   id: string
   name: string
-  /** Current balance in the app's base currency. */
+  /**
+   * Current balance in the app's base currency. For a `tracked` account this
+   * is a cache of the last figure read from a statement — `accountBalance()`
+   * is the authority.
+   */
   balance: number
   /** ISO date the balance was last known accurate. */
   asOf: string
+  /**
+   * Balance comes from the running balance on imported statements instead of
+   * being typed in, so it updates itself every time a month is added.
+   */
+  tracked?: boolean
 }
 
 /** A planned, repeating income or expense — the backbone of the forecast. */
@@ -62,6 +71,12 @@ export interface Transaction {
   month: string
   /** Marked true once reviewed/confirmed in the reconcile flow. */
   reconciled?: boolean
+  /**
+   * The account's running balance after this row, when the statement carried
+   * one. The bank's own figure — used to keep a tracked account current without
+   * anyone typing a balance in.
+   */
+  balanceAfter?: number
   /**
    * How this transaction is split across provision buckets. One transaction
    * can feed several pots (a €1,000 transfer: €500 to taxes, €300 to the
@@ -281,6 +296,8 @@ export interface ForecastPoint {
   /** Expense split: fixed = through Imprevistos; variable = everything after. */
   fixedExpenses: number
   variableExpenses: number
+  /** Planned provisioning: kept out of `expenses`, since it stays in the accounts. */
+  setAside: number
   net: number
   /** Projected end-of-month total balance across all accounts. */
   balance: number

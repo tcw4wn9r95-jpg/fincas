@@ -106,6 +106,10 @@ const DESC_KEYS = /(description|memo|details|narrative|payee|name|concepto|refer
 const AMOUNT_KEYS = /^(amount|importe|value|monto)$/i
 const DEBIT_KEYS = /(debit|withdraw|paid out|cargo|expense)/i
 const CREDIT_KEYS = /(credit|deposit|paid in|received|abono|income)/i
+// Most statements carry a running balance. It is the bank's own figure for what
+// the account held after the row, which beats anything derived from the
+// transactions — no opening balance to guess, no drift.
+const BALANCE_KEYS = /^(balance|saldo|running balance|balance after|closing balance)$/i
 
 function pickField(fields: string[], re: RegExp): string | undefined {
   return fields.find((f) => re.test(f.trim()))
@@ -129,6 +133,7 @@ export function parseCSV(text: string): ParsedResult {
   const amountF = pickField(fields, AMOUNT_KEYS) ?? pickField(fields, /amount/i)
   const debitF = pickField(fields, DEBIT_KEYS)
   const creditF = pickField(fields, CREDIT_KEYS)
+  const balanceF = pickField(fields, BALANCE_KEYS) ?? pickField(fields, /balance|saldo/i)
 
   if (!amountF && !debitF && !creditF) {
     warnings.push('No amount/debit/credit column found — amounts may be wrong.')
@@ -153,6 +158,8 @@ export function parseCSV(text: string): ParsedResult {
     }
     if (amount == null) continue
 
+    const balanceAfter = balanceF ? cleanAmount(row[balanceF]) : null
+
     out.push({
       id: uid(),
       date,
@@ -161,6 +168,7 @@ export function parseCSV(text: string): ParsedResult {
       category: categorize(description, amount),
       source: 'csv',
       month: date.slice(0, 7),
+      ...(balanceAfter != null ? { balanceAfter } : {}),
     })
   }
 

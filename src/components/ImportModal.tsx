@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile } from '../lib/parse'
+import { syncTrackedAccounts } from '../lib/forecast'
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey } from '../lib/format'
 import type { Transaction } from '../lib/types'
@@ -238,11 +239,13 @@ export function ImportModal({
       const monthsCovered = new Set(rows.map((r) => r.month))
       update((d) => {
         d.transactions = [...d.transactions.filter((t) => !monthsCovered.has(t.month)), ...rows]
+        syncTrackedAccounts(d)
         return d
       })
     } else {
       update((d) => {
         d.transactions = [...d.transactions, ...rows]
+        syncTrackedAccounts(d)
         return d
       })
     }
