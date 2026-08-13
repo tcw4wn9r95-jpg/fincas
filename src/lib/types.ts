@@ -301,6 +301,14 @@ export interface MonthReview {
   setAside: number
   /** income − expenses − setAside: the cash the month actually left behind. */
   net: number
+  /**
+   * The same month with the provision machinery taken out of the picture:
+   * nothing moved into a pot, and no bill that a pot had already paid for.
+   * Putting money aside doesn't leave the account — it changes pocket — and a
+   * bill covered by a pot was funded in earlier months, so neither belongs in
+   * a read of how this month itself went.
+   */
+  netExProvisions: number
   plannedIncome: number
   plannedExpenses: number
   plannedSetAside: number

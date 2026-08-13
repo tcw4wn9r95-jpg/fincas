@@ -595,6 +595,9 @@ export function computeReview(data: AppData, month: string): MonthReview {
     // kept. Moving savings off the expense line changes how the month reads,
     // not what it left behind — this figure is the same either way.
     net: round2(income - expenses - setAside),
+    // Capped at expenses: a drawdown bigger than the category it paid for
+    // can't turn spending into income.
+    netExProvisions: round2(income - (expenses - Math.min(provisionedIncome, expenses))),
     plannedIncome,
     plannedExpenses,
     plannedSetAside,
@@ -620,8 +623,10 @@ export function monthReviewText(data: AppData, month: string): string {
     `Money date for ${month}: money in ${fx(r.income)} (planned ${fx(r.plannedIncome)}), ` +
       `spending ${fx(r.expenses)} (planned ${fx(r.plannedExpenses)}), ` +
       `set aside into provisions and savings ${fx(r.setAside)} (planned ${fx(r.plannedSetAside)}), ` +
-      `left over ${fx(r.net)} (planned ${fx(r.plannedNet)}). ` +
-      'Money set aside is reported on its own line, not as spending — it was kept, not consumed.',
+      `net result ${fx(r.net)} (planned ${fx(r.plannedNet)}). ` +
+      'Money set aside is reported on its own line, not as spending — it was kept, not consumed. ' +
+      `Excluding the provisions entirely — nothing moved into a pot, and no bill a pot had already paid for — the month came to ${fx(r.netExProvisions)}; ` +
+      'that is the read of how the month itself went, since setting money aside only moves it between pockets.',
   )
   if (r.provisionedIncome > 0.5) {
     lines.push(

@@ -513,8 +513,11 @@ export function MoneyDate({
                   : 'into provisions & savings'}
               </div>
             </div>
+            {/* Two nets, because they answer different questions: what the
+                month left behind, and how the month itself went once the pots
+                — which only move money between pockets — are set aside. */}
             <div className="card p-5">
-              <div className="label">Left over</div>
+              <div className="label">Net result</div>
               <div
                 className={classNames(
                   'stat-value',
@@ -531,10 +534,32 @@ export function MoneyDate({
               >
                 {fx(netVsPlan, { signed: true })} vs plan
               </div>
-              {review.provisionedIncome > 0.5 && (
-                <div className="text-xs text-muted mt-1">
-                  incl. {fx(review.provisionedIncome)} released from a provision — already saved for, not a
-                  surprise
+              {(review.setAside > 0.5 || review.provisionedIncome > 0.5) && (
+                <div className="mt-2.5 pt-2.5 border-t border-line">
+                  <div className="text-xs text-muted">Excluding provisions</div>
+                  <div
+                    className={classNames(
+                      'tabular-nums font-medium text-lg leading-tight',
+                      review.netExProvisions >= 0 ? 'text-forest' : 'text-clay',
+                    )}
+                  >
+                    {fx(review.netExProvisions, { signed: true })}
+                  </div>
+                  <p className="text-[11px] text-muted leading-snug mt-1">
+                    {(() => {
+                      const parts = [
+                        review.setAside > 0.5
+                          ? `${fx(review.setAside)} moved between pockets`
+                          : '',
+                        review.provisionedIncome > 0.5
+                          ? `${fx(review.provisionedIncome)} of spend a pot had already paid for`
+                          : '',
+                      ].filter(Boolean)
+                      return `${parts.join(' and ')} left out — ${
+                        parts.length > 1 ? 'neither is' : 'not'
+                      } this month's doing.`
+                    })()}
+                  </p>
                 </div>
               )}
             </div>
