@@ -43,7 +43,12 @@ export function ProvisionButton({
   const allocs = transactionAllocations(tx).filter((a) => labels.has(a.provisionId))
   const left = unallocatedAmount(tx)
   const fx = (n: number) => formatMoney(n, currency, locale)
-  const summary = allocs.map((a) => `${labels.get(a.provisionId)}: ${fx(a.amount)}`).join(' · ')
+  const summary = allocs
+    .map(
+      (a) =>
+        `${a.role === 'drawdown' ? 'From' : 'Into'} ${labels.get(a.provisionId)}: ${fx(a.amount)}`,
+    )
+    .join(' · ')
 
   return (
     <div className={classNames('flex items-center gap-2 min-w-0', !compact && 'flex-wrap')}>
@@ -63,8 +68,15 @@ export function ProvisionButton({
       </button>
       {!compact &&
         allocs.map((a) => (
-          <span key={a.provisionId} className="pill bg-forest-tint text-forest">
-            {labels.get(a.provisionId)} {fx(a.amount)}
+          <span
+            key={a.provisionId}
+            className={classNames(
+              'pill',
+              a.role === 'drawdown' ? 'bg-gold/15 text-gold' : 'bg-forest-tint text-forest',
+            )}
+          >
+            {a.role === 'drawdown' ? '−' : ''}
+            {fx(a.amount)} {a.role === 'drawdown' ? 'from' : 'to'} {labels.get(a.provisionId)}
           </span>
         ))}
       {!compact && allocs.length > 0 && left > 0.005 && (
@@ -109,13 +121,25 @@ export function ProvisionModal({
     for (const a of transactionAllocations(tx)) initial[a.provisionId] = String(a.amount)
     return initial
   })
-  // The emergency fund has no category to compare against, so unlike a
-  // provision its direction can't be inferred — the user says which way it goes.
-  const [emergencyRole, setEmergencyRole] = useState<'contribution' | 'drawdown'>(
-    () =>
-      transactionAllocations(tx).find((a) => a.provisionId === EMERGENCY_FUND_ID)?.role ??
-      'contribution',
-  )
+  /**
+   * Which way the money moves. One transaction is either putting money into
+   * savings or taking it out — mixing both in a single line makes no sense —
+   * so this is chosen once for the whole split rather than guessed per row.
+   *
+   * The guess is only a starting point: a bill in a provision's own category
+   * is obviously that pot being spent, and anything else is assumed to be a
+   * set-aside. That inference was previously the *only* answer, which quietly
+   * got it wrong whenever savings paid for something filed under a different
+   * category — a laptop bought out of the emergency fund read as money going in.
+   */
+  const [direction, setDirection] = useState<'contribution' | 'drawdown'>(() => {
+    const existing = transactionAllocations(tx)[0]
+    if (existing) return existing.role
+    return provisions.some((p) => provisionRoleFor(tx.category, p) === 'drawdown')
+      ? 'drawdown'
+      : 'contribution'
+  })
+  const pulling = direction === 'drawdown'
 
   const rowIds = useMemo(() => [...provisions.map((p) => p.id), EMERGENCY_FUND_ID], [provisions])
   const allocated = useMemo(
@@ -144,9 +168,9 @@ export function ProvisionModal({
     setAmount(id, String(round2(current + Math.max(0, remaining))))
   }
 
-  /** Pre-fill a row with what this provision actually needs, capped by what's left. */
+  /** Pre-fill a row with what this provision needs (or holds), capped by what's left. */
   function suggest(p: ProvisionStatus) {
-    setAmount(p.id, String(suggestProvisionAmount(tx, p, Math.max(0, remaining))))
+    setAmount(p.id, String(suggestProvisionAmount(tx, p, Math.max(0, remaining), direction)))
   }
 
   function save() {
@@ -154,10 +178,10 @@ export function ProvisionModal({
     for (const p of provisions) {
       const amount = round2(Math.max(0, parseAmount(amounts[p.id] ?? '') || 0))
       if (amount <= 0) continue
-      next.push({ provisionId: p.id, amount, role: provisionRoleFor(tx.category, p) })
+      next.push({ provisionId: p.id, amount, role: direction })
     }
     const toFund = round2(Math.max(0, parseAmount(amounts[EMERGENCY_FUND_ID] ?? '') || 0))
-    if (toFund > 0) next.push({ provisionId: EMERGENCY_FUND_ID, amount: toFund, role: emergencyRole })
+    if (toFund > 0) next.push({ provisionId: EMERGENCY_FUND_ID, amount: toFund, role: direction })
     onSave(next)
     onClose()
   }
@@ -176,6 +200,32 @@ export function ProvisionModal({
                 <IconClose />
               </button>
             </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-1 p-1 bg-canvas rounded-xl border border-line">
+              {(
+                [
+                  ['contribution', 'Set aside', 'Money going into your pots'],
+                  ['drawdown', 'Pull from savings', 'This was paid for out of a pot'],
+                ] as const
+              ).map(([d, title, hint]) => (
+                <button
+                  key={d}
+                  onClick={() => setDirection(d)}
+                  className={classNames(
+                    'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    direction === d ? 'bg-forest text-paper' : 'text-muted hover:text-ink',
+                  )}
+                  title={hint}
+                >
+                  {title}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted mt-2">
+              {pulling
+                ? `Reduces the pots below by what you take out. ${tx.category} stays the reason for the spend — this only says where the money came from.`
+                : 'Adds to the pots below, saving up for what they’re for.'}
+            </p>
 
             <div className="mt-4 flex items-end justify-between gap-3">
               <div>
@@ -221,7 +271,9 @@ export function ProvisionModal({
               const raw = amounts[p.id] ?? ''
               const value = Math.max(0, parseAmount(raw) || 0)
               const active = value > 0
-              const role = provisionRoleFor(tx.category, p)
+              // Taking out more than the pot holds isn't blocked — it happened,
+              // and the plan already reports the shortfall — but say so here.
+              const overdrawing = pulling && value > p.funded + 0.005
               return (
                 <div
                   key={p.id}
@@ -234,22 +286,19 @@ export function ProvisionModal({
                     <div className="min-w-0">
                       <div className="font-medium truncate">{p.label}</div>
                       <div className="text-xs text-muted">
-                        {fx(p.funded)} of {fx(p.targetAmount)} set aside
-                        {p.suggestedMonthly ? ` · ${fx(p.suggestedMonthly)}/mo suggested` : ''}
+                        {pulling
+                          ? `${fx(p.funded)} available`
+                          : `${fx(p.funded)} of ${fx(p.targetAmount)} set aside`}
+                        {!pulling && p.suggestedMonthly ? ` · ${fx(p.suggestedMonthly)}/mo suggested` : ''}
                       </div>
                     </div>
                     <span
                       className={classNames(
                         'pill shrink-0',
-                        role === 'drawdown' ? 'bg-gold/15 text-gold' : 'bg-forest-tint text-forest',
+                        pulling ? 'bg-gold/15 text-gold' : 'bg-forest-tint text-forest',
                       )}
-                      title={
-                        role === 'drawdown'
-                          ? `This is the ${p.category} bill itself — it draws the pot down`
-                          : 'Money set aside into this pot'
-                      }
                     >
-                      {role === 'drawdown' ? 'Draws down' : 'Sets aside'}
+                      {pulling ? 'Takes out' : 'Sets aside'}
                     </span>
                   </div>
 
@@ -270,7 +319,11 @@ export function ProvisionModal({
                     <button
                       className="btn-subtle text-xs shrink-0"
                       onClick={() => suggest(p)}
-                      title="Fill with what this provision needs, capped by what's left"
+                      title={
+                        pulling
+                          ? "Fill with what this pot can cover, capped by what's left"
+                          : "Fill with what this provision needs, capped by what's left"
+                      }
                     >
                       Suggest
                     </button>
@@ -293,6 +346,12 @@ export function ProvisionModal({
                       </button>
                     )}
                   </div>
+                  {overdrawing && (
+                    <p className="text-xs text-clay mt-2">
+                      {fx(value - p.funded)} more than this pot holds — the rest came from somewhere
+                      else.
+                    </p>
+                  )}
                 </div>
               )
             })}
@@ -301,7 +360,9 @@ export function ProvisionModal({
                 for a specific bill belongs here rather than nowhere. */}
             {(() => {
               const raw = amounts[EMERGENCY_FUND_ID] ?? ''
-              const active = Math.max(0, parseAmount(raw) || 0) > 0
+              const value = Math.max(0, parseAmount(raw) || 0)
+              const active = value > 0
+              const overdrawing = pulling && value > emergency.balance + 0.005
               return (
                 <div
                   className={classNames(
@@ -313,30 +374,25 @@ export function ProvisionModal({
                     <div className="min-w-0">
                       <div className="font-medium truncate">{EMERGENCY_FUND_LABEL}</div>
                       <div className="text-xs text-muted">
-                        {fx(emergency.balance)}
-                        {emergency.targetAmount > 0 ? ` of ${fx(emergency.targetAmount)}` : ''} saved
-                        {' · '}for whatever isn't earmarked
+                        {pulling ? (
+                          `${fx(emergency.balance)} available`
+                        ) : (
+                          <>
+                            {fx(emergency.balance)}
+                            {emergency.targetAmount > 0 ? ` of ${fx(emergency.targetAmount)}` : ''} saved
+                            {' · '}for whatever isn't earmarked
+                          </>
+                        )}
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-1 p-0.5 bg-canvas rounded-full border border-line shrink-0">
-                      {(['contribution', 'drawdown'] as const).map((r) => (
-                        <button
-                          key={r}
-                          onClick={() => setEmergencyRole(r)}
-                          className={classNames(
-                            'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                            emergencyRole === r ? 'bg-forest text-paper' : 'text-muted hover:text-ink',
-                          )}
-                          title={
-                            r === 'contribution'
-                              ? 'Money going into the fund'
-                              : 'Money coming out of the fund to cover this'
-                          }
-                        >
-                          {r === 'contribution' ? 'Pay in' : 'Take out'}
-                        </button>
-                      ))}
-                    </div>
+                    <span
+                      className={classNames(
+                        'pill shrink-0',
+                        pulling ? 'bg-gold/15 text-gold' : 'bg-forest-tint text-forest',
+                      )}
+                    >
+                      {pulling ? 'Takes out' : 'Sets aside'}
+                    </span>
                   </div>
 
                   {emergency.targetAmount > 0 && (
@@ -362,9 +418,13 @@ export function ProvisionModal({
                       className="btn-subtle text-xs shrink-0"
                       onClick={() => useRest(EMERGENCY_FUND_ID)}
                       disabled={remaining <= 0.005}
-                      title="Sweep everything still unallocated into the emergency fund"
+                      title={
+                        pulling
+                          ? 'Cover everything still unallocated from the emergency fund'
+                          : 'Sweep everything still unallocated into the emergency fund'
+                      }
                     >
-                      Sweep the rest
+                      {pulling ? 'Cover the rest' : 'Sweep the rest'}
                     </button>
                     {active && (
                       <button
@@ -377,6 +437,12 @@ export function ProvisionModal({
                       </button>
                     )}
                   </div>
+                  {overdrawing && (
+                    <p className="text-xs text-clay mt-2">
+                      {fx(value - emergency.balance)} more than the fund holds — the rest came from
+                      somewhere else.
+                    </p>
+                  )}
                 </div>
               )
             })()}

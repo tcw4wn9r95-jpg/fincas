@@ -166,26 +166,36 @@ export function allProvisionStatuses(data: AppData): ProvisionStatus[] {
   return data.provisions.map((p) => provisionStatus(data, p))
 }
 
-/** A transaction matching the provision's own category is the real bill (drawdown); anything else is money set aside for it (contribution). */
+/**
+ * The opening guess at which way a transaction moves money: one in the
+ * provision's own category is the bill itself (drawdown), anything else is
+ * assumed to be money set aside (contribution). Only a starting point — the
+ * allocation pop-up lets the direction be set outright, because savings can
+ * pay for something filed under any category at all.
+ */
 export function provisionRoleFor(category: string, provision: Pick<Provision, 'category'>): 'contribution' | 'drawdown' {
   return category === provision.category ? 'drawdown' : 'contribution'
 }
 
 /**
- * The amount to pre-fill when allocating a transaction to a provision. A
- * drawdown (the real bill) defaults to the whole transaction — that's usually
- * the exact bill. A contribution defaults to the provision's suggested monthly
- * set-aside (target remaining ÷ months until due), since the transfer itself
- * rarely matches that figure exactly. Either way it's capped by `available`
- * (default: the transaction's full amount) so a suggestion can never overspend
- * what's left to allocate.
+ * The amount to pre-fill when allocating a transaction to a provision.
+ *
+ * Taking money out defaults to the whole transaction — you're covering this
+ * spend from the pot. Putting money in defaults to the provision's suggested
+ * monthly set-aside (target remaining ÷ months until due), since the transfer
+ * itself rarely matches that figure exactly. Either way it's capped by
+ * `available` (default: the transaction's full amount) so a suggestion can
+ * never overspend what's left to allocate.
+ *
+ * `role` defaults to the guess from the categories, for callers that have no
+ * explicit direction to hand.
  */
 export function suggestProvisionAmount(
   t: Transaction,
   status: ProvisionStatus,
   available = Math.abs(t.amount),
+  role: 'contribution' | 'drawdown' = provisionRoleFor(t.category, status),
 ): number {
-  const role = provisionRoleFor(t.category, status)
   const wanted =
     role === 'contribution' && status.suggestedMonthly && status.suggestedMonthly > 0
       ? status.suggestedMonthly
@@ -194,10 +204,14 @@ export function suggestProvisionAmount(
 }
 
 /**
- * Drawdown-role transaction totals across a set of months (absolute), keyed
- * by the owning provision's category — how much of a category's actual
- * spend was already pre-funded, so the money-date view and the Sankey don't
- * flag/draw it as fresh, unplanned spending.
+ * Drawdown totals across a set of months (absolute), keyed by the category the
+ * money was actually spent in — how much of that category's spend was already
+ * pre-funded, so the money-date view and the Sankey don't flag or draw it as
+ * fresh, unplanned spending.
+ *
+ * Keyed by the transaction's own category rather than the pot's: savings pulled
+ * to cover a spend can land under any category, and what got pre-funded is the
+ * thing that was bought.
  */
 export function provisionCoveredByCategoryRange(data: AppData, months: string[]): Record<string, number> {
   const monthSet = new Set(months)
@@ -207,12 +221,9 @@ export function provisionCoveredByCategoryRange(data: AppData, months: string[])
     if (!monthSet.has(t.month)) continue
     for (const a of transactionAllocations(t)) {
       if (a.role !== 'drawdown') continue
-      // The emergency fund has no category of its own — money taken out of it
-      // covers whatever this transaction was, so it counts against that.
-      const category =
-        a.provisionId === EMERGENCY_FUND_ID ? t.category : byId.get(a.provisionId)?.category
-      if (!category) continue
-      covered[category] = round2((covered[category] ?? 0) + a.amount)
+      // Allocations to a pot that no longer exists shouldn't count for anything.
+      if (a.provisionId !== EMERGENCY_FUND_ID && !byId.has(a.provisionId)) continue
+      covered[t.category] = round2((covered[t.category] ?? 0) + a.amount)
     }
   }
   return covered

@@ -90,8 +90,9 @@ export interface ProvisionAllocation {
   provisionId: string
   amount: number
   /**
-   * Fixed when the allocation is made, by comparing the transaction's
-   * category to the provision's own — see `provisionRoleFor`.
+   * Which way the money moved: into the pot, or out of it to pay for this.
+   * Chosen when the allocation is made — the categories only seed a guess
+   * (`provisionRoleFor`), since savings can pay for anything.
    */
   role: 'contribution' | 'drawdown'
 }

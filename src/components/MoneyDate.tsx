@@ -16,10 +16,8 @@ import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import {
   allProvisionStatuses,
-  dropAllocations,
   emergencyFundStatus,
   provisionCoveredByCategory,
-  EMERGENCY_FUND_ID,
   type ProvisionStatus,
 } from '../lib/provisions'
 import type { ProvisionAllocation, Transaction } from '../lib/types'
@@ -235,15 +233,12 @@ export function MoneyDate({
       if (!t) return d
       const key = txMatchKey(t.description, t.amount)
       for (const x of d.transactions) {
-        if (txMatchKey(x.description, x.amount) === key) {
-          x.category = category
-          // The category changed, so prior provision allocations — whose role
-          // (contribution vs. drawdown) was set from the old category — can no
-          // longer be trusted; drop them rather than risk a silently wrong
-          // accrual. Re-allocating afterwards is one click. The emergency fund
-          // survives: its direction is chosen by hand, not read off the category.
-          dropAllocations(x, (a) => a.provisionId !== EMERGENCY_FUND_ID)
-        }
+        // Provision allocations survive: the category is what the money was
+        // for, the allocation is which pot it moved through, and their
+        // direction is now chosen by hand rather than read off the category —
+        // so re-filing a line no longer says anything about where its money
+        // came from.
+        if (txMatchKey(x.description, x.amount) === key) x.category = category
       }
       return d
     })
