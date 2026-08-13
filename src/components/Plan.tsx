@@ -44,7 +44,9 @@ function FundingRow({
         year: 'numeric',
       })
     : null
-  const urgent = line.status === 'overdue' || line.status === 'due-now'
+  // Only lines still on schedule reach this row — a passed date drops out of the
+  // transfer entirely, so 'due-now' is as urgent as it gets here.
+  const urgent = line.status === 'due-now'
   return (
     <div
       className={classNames(
@@ -63,7 +65,6 @@ function FundingRow({
           )}
         </div>
         <div className="text-xs text-muted">
-          {line.status === 'overdue' && <span className="text-clay">Past due{due ? ` ${due}` : ''} · </span>}
           {line.status === 'due-now' && <span className="text-ink">Due {due} · </span>}
           {line.status === 'on-track' && due && <span>Due {due} · </span>}
           {fx(line.remaining)} still to find
@@ -456,7 +457,7 @@ export function Plan() {
 
       <Section
         title="Move to savings"
-        desc="One transfer that keeps every provision and upcoming event on schedule. Anything due that month asks for its whole remaining balance — there's no later month to spread it into."
+        desc="One transfer that keeps every provision and upcoming event on schedule. Anything due that month asks for its whole remaining balance — there's no later month to spread it into. Once a date has passed it stops asking; there's no catch-up tab."
       >
         <div className="flex flex-wrap items-end justify-between gap-4 mb-4">
           <div>
@@ -479,10 +480,13 @@ export function Plan() {
           </div>
         </div>
 
-        {funding.lines.length === 0 && funding.undated.length === 0 && (
+        {funding.lines.length === 0 && funding.undated.length === 0 && funding.lapsed.length === 0 && (
           <p className="text-sm text-muted">
             Nothing to move — every provision and event is funded for that month.
           </p>
+        )}
+        {funding.lines.length === 0 && (funding.undated.length > 0 || funding.lapsed.length > 0) && (
+          <p className="text-sm text-muted">Nothing on schedule to fund that month.</p>
         )}
 
         <div className="space-y-2">
@@ -503,6 +507,26 @@ export function Plan() {
                 <div key={l.id} className="flex items-center justify-between gap-3 text-sm">
                   <span className="truncate">{l.label}</span>
                   <span className="tabular-nums text-muted shrink-0">{fx(l.remaining)} short</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {funding.lapsed.length > 0 && (
+          <div className="mt-4 rounded-lg border border-line bg-canvas/60 px-4 py-3">
+            <div className="text-sm font-medium text-muted">Date passed — no longer counted</div>
+            <p className="text-xs text-muted mt-0.5">
+              These stopped asking for money when their date went by. If one is still coming, give
+              it a new date and it rejoins the transfer.
+            </p>
+            <div className="mt-2 space-y-1">
+              {funding.lapsed.map((l) => (
+                <div key={l.id} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="truncate text-muted">{l.label}</span>
+                  <span className="tabular-nums text-muted shrink-0">
+                    {fx(l.remaining)} never set aside
+                  </span>
                 </div>
               ))}
             </div>

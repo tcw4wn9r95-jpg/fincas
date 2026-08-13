@@ -46,14 +46,8 @@ export interface FundingPlan {
   settled: FundingLine[]
   /** Lines that need money but can't be paced because no date was ever set. */
   undated: FundingLine[]
-}
-
-function statusFor(month: string, dueMonth: string | undefined): FundingStatus {
-  if (!dueMonth) return 'no-date'
-  const diff = monthsBetween(month, dueMonth)
-  if (diff < 0) return 'overdue'
-  if (diff === 0) return 'due-now'
-  return 'on-track'
+  /** Underfunded, but the date has passed — they no longer ask for anything. */
+  lapsed: FundingLine[]
 }
 
 const RANK: Record<FundingStatus, number> = { overdue: 0, 'due-now': 1, 'on-track': 2, 'no-date': 3 }
@@ -63,8 +57,15 @@ const RANK: Record<FundingStatus, number> = { overdue: 0, 'due-now': 1, 'on-trac
  *
  * Each line spreads what it still needs over the months left before it's due,
  * matching the per-provision pace shown elsewhere in the app. Anything due in
- * `month` — or already overdue — asks for the whole remaining balance, since
- * there is no later month to spread it into.
+ * `month` asks for the whole remaining balance, since there is no later month
+ * to spread it into.
+ *
+ * Once a date has passed, the line stops asking for money entirely: that bill
+ * has either landed or it hasn't, and either way a transfer now doesn't change
+ * it — a running catch-up tab would just inflate every future month with money
+ * that is no longer going anywhere. Passed is judged against today or the start
+ * of `month`, whichever is later, so a provision due on the 5th has lapsed by
+ * the 20th even while you're still looking at the current month.
  *
  * An event that created a provision is represented by that provision alone, so
  * the same trip can never be counted twice; an event without one is added on
@@ -73,6 +74,14 @@ const RANK: Record<FundingStatus, number> = { overdue: 0, 'due-now': 1, 'on-trac
 export function fundingPlan(data: AppData, month: string, today: string): FundingPlan {
   const lines: FundingLine[] = []
   const settled: FundingLine[] = []
+  // The moment the transfer would actually be made.
+  const monthStart = `${month}-01`
+  const asOf = today > monthStart ? today : monthStart
+  const statusFor = (dueDate: string | undefined): FundingStatus => {
+    if (!dueDate) return 'no-date'
+    if (dueDate < asOf) return 'overdue'
+    return monthsBetween(month, dueDate.slice(0, 7)) === 0 ? 'due-now' : 'on-track'
+  }
   const events = allEventStatuses(data, today)
   const eventByProvision = new Map(
     (data.events ?? []).filter((e) => e.provisionId).map((e) => [e.provisionId!, e.label]),
@@ -81,7 +90,7 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
   for (const p of allProvisionStatuses(data)) {
     const remaining = round2(Math.max(0, p.targetAmount - p.funded))
     const dueMonth = p.dueDate?.slice(0, 7)
-    const status = statusFor(month, dueMonth)
+    const status = statusFor(p.dueDate)
     const monthsLeft = dueMonth ? Math.max(1, monthsBetween(month, dueMonth)) : null
     const line: FundingLine = {
       id: p.id,
@@ -92,7 +101,7 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
       funded: p.funded,
       remaining,
       monthsLeft,
-      amount: remaining > 0 && monthsLeft ? round2(remaining / monthsLeft) : 0,
+      amount: remaining > 0 && monthsLeft && status !== 'overdue' ? round2(remaining / monthsLeft) : 0,
       status,
       eventLabel: eventByProvision.get(p.id),
     }
@@ -105,7 +114,7 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
     if (e.hasProvision || e.phase === 'past') continue
     const remaining = round2(Math.max(0, e.budget - e.spent))
     const dueMonth = e.startDate.slice(0, 7)
-    const status = statusFor(month, dueMonth)
+    const status = statusFor(e.startDate)
     const monthsLeft = Math.max(1, monthsBetween(month, dueMonth))
     const line: FundingLine = {
       id: e.id,
@@ -116,7 +125,7 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
       funded: round2(Math.min(e.spent, e.budget)),
       remaining,
       monthsLeft,
-      amount: remaining > 0 ? round2(remaining / monthsLeft) : 0,
+      amount: remaining > 0 && status !== 'overdue' ? round2(remaining / monthsLeft) : 0,
       status,
     }
     if (remaining <= 0.005) settled.push(line)
@@ -129,7 +138,8 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
     b.amount - a.amount
 
   const undated = lines.filter((l) => l.status === 'no-date').sort(sort)
-  const due = lines.filter((l) => l.status !== 'no-date').sort(sort)
+  const lapsed = lines.filter((l) => l.status === 'overdue').sort(sort)
+  const due = lines.filter((l) => l.status === 'due-now' || l.status === 'on-track').sort(sort)
 
   return {
     month,
@@ -137,5 +147,6 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
     lines: due,
     settled: settled.sort(sort),
     undated,
+    lapsed,
   }
 }

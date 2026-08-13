@@ -745,9 +745,9 @@ export function financialSummary(data: AppData): string {
       `To keep every provision and upcoming event on schedule, ${fx(funding.total)} should be moved into savings for ${nextMonth}: ` +
         funding.lines
           .filter((l) => l.amount > 0.005)
-          .map((l) => `${l.label} ${fx(l.amount)}${l.status === 'overdue' ? ' (past due)' : l.status === 'due-now' ? ' (due that month)' : ''}`)
+          .map((l) => `${l.label} ${fx(l.amount)}${l.status === 'due-now' ? ' (due that month)' : ''}`)
           .join(', ') +
-        '.',
+        '. Provisions whose date has already passed are deliberately excluded — they no longer ask to be caught up.',
     )
   }
 
