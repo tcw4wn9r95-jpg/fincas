@@ -3,7 +3,7 @@ import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
 import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
-import { fundingPlan, type FundingLine } from '../lib/funding'
+import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
@@ -168,6 +168,15 @@ export function Plan() {
     () => fundingPlan(data, fundingMonth, todayISO()),
     [data, fundingMonth],
   )
+
+  // ── Do the pots add up? ──
+  const pots = useMemo(() => potsCheck(data), [data])
+  function setProvisionAccount(id: string) {
+    update((d) => {
+      d.provisionAccountId = id || undefined
+      return d
+    })
+  }
 
   // ── Emergency fund ──
   // Only the target is stored; the balance is whatever transactions have been
@@ -599,6 +608,89 @@ export function Plan() {
             </div>
           )}
         </div>
+      </Section>
+
+      <Section
+        title="Do the pots add up?"
+        desc="Every pot balance here is worked out from what you allocated, which keeps them consistent with each other but proves nothing about the money being there. This compares what they claim against the account you actually transfer into."
+      >
+        <div className="mb-4">
+          <label className="label" htmlFor="pots-account">
+            Account holding the pots
+          </label>
+          <select
+            id="pots-account"
+            className="input w-auto"
+            value={pots.accountId ?? ''}
+            onChange={(e) => setProvisionAccount(e.target.value)}
+          >
+            <option value="">Not set</option>
+            {data.accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {data.accounts.length === 0 ? (
+          <p className="text-sm text-muted">Add an account above and this check comes to life.</p>
+        ) : pots.difference === null ? (
+          <p className="text-sm text-muted">
+            Pick the account you move money into when provisioning — the pots currently claim{' '}
+            <span className="tabular-nums text-ink">{fx(pots.total)}</span>.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="rounded-lg bg-canvas px-4 py-3 border border-line">
+                <div className="label">The pots claim</div>
+                <div className="text-xl tabular-nums">{fx(pots.total)}</div>
+                <div className="text-xs text-muted mt-0.5 tabular-nums">
+                  {fx(pots.provisions)} in provisions · {fx(pots.emergency)} emergency fund
+                </div>
+              </div>
+              <div className="rounded-lg bg-canvas px-4 py-3 border border-line">
+                <div className="label">{pots.accountName} holds</div>
+                <div className="text-xl tabular-nums">{fx(pots.accountBalance ?? 0)}</div>
+                <div className="text-xs text-muted mt-0.5">
+                  {pots.asOf ? `as you last recorded it, ${pots.asOf}` : 'no date recorded'}
+                </div>
+              </div>
+            </div>
+            {Math.abs(pots.difference) < 1 ? (
+              <div className="rounded-lg border border-forest/40 bg-forest-tint/40 px-4 py-3 text-sm">
+                <span className="font-medium text-forest">In step.</span> The account holds what the
+                pots say it should.
+              </div>
+            ) : pots.difference > 0 ? (
+              <div className="rounded-lg border border-gold/50 bg-gold/5 px-4 py-3 text-sm">
+                <span className="font-medium">
+                  {fx(pots.difference)} in {pots.accountName} isn't claimed by any pot.
+                </span>
+                <p className="text-xs text-muted mt-0.5">
+                  Either it belongs to a pot you haven't allocated to yet, or it's spare — worth
+                  giving it a job so it isn't quietly idle.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-clay/50 bg-clay/5 px-4 py-3 text-sm">
+                <span className="font-medium text-clay">
+                  The pots promise {fx(-pots.difference)} more than {pots.accountName} holds.
+                </span>
+                <p className="text-xs text-muted mt-0.5">
+                  Often just money in flight: moved back to your main account for a bill you haven't
+                  paid yet, so the pot still counts it. Otherwise a transfer never happened, a pot
+                  was funded twice, or something was spent without being drawn from its pot.
+                </p>
+              </div>
+            )}
+            <p className="text-xs text-muted mt-2">
+              Only as current as the balance you recorded for {pots.accountName} — update it above
+              before trusting a difference.
+            </p>
+          </>
+        )}
       </Section>
     </div>
   )

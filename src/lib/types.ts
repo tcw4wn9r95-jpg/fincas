@@ -202,6 +202,12 @@ export interface AppData {
   emergencyFund?: { targetAmount: number }
   /** Trips, parties and the like, budgeted and tracked on their own — see `SpecialEvent`. */
   events?: SpecialEvent[]
+  /**
+   * The account the pots actually live in — the one money is transferred to
+   * when provisioning. Lets the plan check what the pots claim to hold against
+   * what is really sitting there.
+   */
+  provisionAccountId?: string
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */

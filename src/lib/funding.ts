@@ -1,5 +1,5 @@
 import type { AppData, Transaction } from './types'
-import { allProvisionStatuses, EMERGENCY_FUND_ID } from './provisions'
+import { allProvisionStatuses, emergencyFundStatus, EMERGENCY_FUND_ID } from './provisions'
 import { allEventStatuses } from './events'
 import { NON_CASHFLOW } from './categorize'
 import { uid } from './format'
@@ -209,5 +209,49 @@ export function carryoverTransaction(month: string, amount: number, label: strin
     provisionAllocations: [
       { provisionId: EMERGENCY_FUND_ID, amount: round2(amount), role: 'contribution' },
     ],
+  }
+}
+
+// ── Do the pots add up? ───────────────────────────────────────────
+// Every pot balance in this app is derived from allocations, which makes it
+// internally consistent but says nothing about whether the money is really
+// there. Provisioning moves cash into a separate account; this compares what
+// the pots claim against what that account actually holds, which is the only
+// check that can catch a transfer never made or a pot funded twice.
+
+export interface PotsCheck {
+  /** Balance across every named provision. */
+  provisions: number
+  emergency: number
+  total: number
+  accountId?: string
+  accountName?: string
+  accountBalance?: number
+  /** The date that balance was last known accurate — the check is only as fresh as this. */
+  asOf?: string
+  /**
+   * accountBalance − total, or null when no account is nominated. Positive:
+   * money in the account that no pot has claimed. Negative: the pots promise
+   * more than the account holds.
+   */
+  difference: number | null
+}
+
+export function potsCheck(data: AppData): PotsCheck {
+  const provisions = round2(
+    allProvisionStatuses(data).reduce((s, p) => s + p.funded, 0),
+  )
+  const emergency = emergencyFundStatus(data).balance
+  const total = round2(provisions + emergency)
+  const account = data.accounts.find((a) => a.id === data.provisionAccountId)
+  return {
+    provisions,
+    emergency,
+    total,
+    accountId: account?.id,
+    accountName: account?.name,
+    accountBalance: account?.balance,
+    asOf: account?.asOf,
+    difference: account ? round2(account.balance - total) : null,
   }
 }
