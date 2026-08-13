@@ -20,6 +20,25 @@
   h3 {
     @apply font-serif;
   }
+  /*
+   * iOS Safari zooms the page whenever a focused control's text is under 16px,
+   * and never zooms back out — so working through the reconcile overlay, which
+   * is nothing but selects and amount fields, creeps in a step at a time. Touch
+   * devices get 16px controls; the pointer query leaves desktop on the app's
+   * smaller scale. `!important` because this has to beat the per-element
+   * text-xs/text-sm utilities, which live in a later layer.
+   *
+   * Note the fix is here rather than `maximum-scale=1` on the viewport, which
+   * would also stop the zoom — by taking pinch-to-zoom away from everyone.
+   */
+  @media (hover: none) and (pointer: coarse) {
+    input:not([type='checkbox']):not([type='radio']),
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+
   /* Subtle, elegant scrollbars */
   *::-webkit-scrollbar {
     width: 10px;
