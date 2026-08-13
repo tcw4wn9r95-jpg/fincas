@@ -29,6 +29,13 @@ export const CATEGORIES = [
   'Other',
 ] as const
 
+/**
+ * Categories that move money between the user's own accounts rather than in or
+ * out of their finances. Excluded from income, expenses and every average built
+ * on them — counting a transfer as spending would report the same euro twice.
+ */
+export const NON_CASHFLOW = new Set<string>(['Internal'])
+
 // Rules are tried in order — first match wins, so more specific / higher-priority
 // categories come first. Alongside the US/UK merchants, these cover the Spanish
 // & European merchants a Revolut export tends to carry (the app's home turf).

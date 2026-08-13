@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { type ProvisionStatus } from '../lib/provisions'
+import type { MonthCarryover } from '../lib/funding'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconCheck, IconSparkle } from './icons'
 import { Portal } from './Portal'
@@ -24,6 +25,10 @@ export function ReconcileOverlay({
   onConfirmAll,
   onAiCategorize,
   onProvision,
+  carryover,
+  fundBalance,
+  onSweepCarryover,
+  onUndoCarryover,
   aiBusy,
   aiError,
   onClose,
@@ -39,6 +44,11 @@ export function ReconcileOverlay({
   onAiCategorize?: () => void
   /** Opens the allocation pop-up for one transaction — owned by the parent so it stacks above this overlay. */
   onProvision: (t: Transaction) => void
+  /** This month's surplus, offered once everything is reconciled. */
+  carryover?: MonthCarryover
+  fundBalance: number
+  onSweepCarryover: () => void
+  onUndoCarryover: () => void
   aiBusy?: boolean
   aiError?: string
   onClose: () => void
@@ -82,6 +92,7 @@ export function ReconcileOverlay({
   const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other').length
   const unreconciled = total - done
   const pct = total ? Math.round((done / total) * 100) : 0
+  const fx = (n: number) => formatMoney(n, currency, locale)
 
   return (
     <Portal>
@@ -242,6 +253,43 @@ export function ReconcileOverlay({
               )
             })}
           </div>
+
+          {/* The last step of a money date: the surplus goes to savings before
+              it blends back into next month's spending money. */}
+          {carryover && done === total && total > 0 && (
+            <div className="px-6 py-4 border-t border-line bg-forest-tint/30">
+              {carryover.left > 0.005 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium">{fx(carryover.left)} left over</div>
+                    <p className="text-xs text-muted">
+                      Move it into your emergency fund and it starts next month as savings.
+                    </p>
+                  </div>
+                  <button className="btn-primary shrink-0" onClick={onSweepCarryover}>
+                    Move to savings
+                  </button>
+                </div>
+              ) : carryover.swept > 0.005 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 text-sm">
+                    <span className="text-forest font-medium">
+                      {fx(carryover.swept)} moved into savings.
+                    </span>{' '}
+                    <span className="text-muted">Your emergency fund holds {fx(fundBalance)}.</span>
+                  </div>
+                  <button className="btn-subtle text-xs shrink-0" onClick={onUndoCarryover}>
+                    Undo
+                  </button>
+                </div>
+              ) : (
+                <p className="text-sm text-muted">
+                  Nothing left over this month — {fx(Math.abs(carryover.net))} more went out than
+                  came in.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-line">
             <button className="btn-primary" onClick={onClose}>

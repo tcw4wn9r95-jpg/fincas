@@ -10,7 +10,7 @@ import {
 } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, todayISO } from '../lib/format'
 import { eventsInMonth } from '../lib/events'
-import { fundingPlan } from '../lib/funding'
+import { fundingPlan, monthCarryover, carryoverTransaction } from '../lib/funding'
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
@@ -113,6 +113,24 @@ export function MoneyDate({
     () => fundingPlan(data, addMonths(currentMonth(), 1), todayISO()),
     [data],
   )
+  const carryover = useMemo(() => monthCarryover(data, activeMonth), [data, activeMonth])
+
+  /** Move what the month didn't spend into the emergency fund. */
+  function sweepCarryover() {
+    update((d) => {
+      d.transactions.push(
+        carryoverTransaction(activeMonth, carryover.left, formatMonthLabel(activeMonth, locale)),
+      )
+      return d
+    })
+  }
+
+  function undoCarryover() {
+    update((d) => {
+      d.transactions = d.transactions.filter((t) => t.carryoverFor !== activeMonth)
+      return d
+    })
+  }
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
 
   const [sankeyOpen, setSankeyOpen] = useState(false)
@@ -145,6 +163,10 @@ export function MoneyDate({
     [data, activeMonth],
   )
   const reconciledCount = monthTxs.filter((t) => t.reconciled).length
+  // The carry-over is offered only once the month is actually closed —
+  // sweeping a surplus mid-month would be moving money you haven't finished
+  // spending.
+  const allReconciled = monthTxs.length > 0 && reconciledCount === monthTxs.length
   // Resolved from the store by id, so the pop-up always edits live data.
   const provisioningTx = provisioning
     ? data.transactions.find((t) => t.id === provisioning) ?? null
@@ -520,6 +542,31 @@ export function MoneyDate({
             </button>
           )}
 
+          {/* What the month didn't spend, before it quietly gets spent. */}
+          {allReconciled && (carryover.left > 0.005 || carryover.swept > 0.005) && (
+            <div className="card p-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-lg">
+                  {carryover.left > 0.005 ? 'Left over this month' : 'Carried into savings'}
+                </h3>
+                <p className="text-sm text-muted">
+                  {carryover.left > 0.005
+                    ? `${formatMonthLabel(activeMonth, locale)} ended with ${fx(carryover.left)} unspent. Move it into your emergency fund so it starts ${formatMonthLabel(addMonths(activeMonth, 1), locale)} as savings rather than spending money.`
+                    : `${fx(carryover.swept)} from ${formatMonthLabel(activeMonth, locale)} is in your emergency fund, which now holds ${fx(emergency.balance)}.`}
+                </p>
+              </div>
+              {carryover.left > 0.005 ? (
+                <button className="btn-primary shrink-0" onClick={sweepCarryover}>
+                  Move {fx(carryover.left)} to savings
+                </button>
+              ) : (
+                <button className="btn-subtle text-xs shrink-0" onClick={undoCarryover}>
+                  Undo
+                </button>
+              )}
+            </div>
+          )}
+
           {/* The one action that leaves the month: fund next month's provisions. */}
           {nextMonthFunding.total > 0 && (
             <div className="card p-5 flex flex-wrap items-center justify-between gap-3">
@@ -889,6 +936,10 @@ export function MoneyDate({
           onConfirmAll={reconcileAllSuggestions}
           onAiCategorize={hasApiKey(data) ? runAiCategorize : undefined}
           onProvision={(t) => setProvisioning(t.id)}
+          carryover={carryover}
+          fundBalance={emergency.balance}
+          onSweepCarryover={sweepCarryover}
+          onUndoCarryover={undoCarryover}
           aiBusy={aiBusy}
           aiError={aiError}
           onClose={() => setReconciling(false)}

@@ -72,6 +72,12 @@ export interface Transaction {
   provisionAllocations?: ProvisionAllocation[]
   /** Tags this transaction as spending that belongs to a special event. */
   eventId?: string
+  /**
+   * Set on the transfer that carries a month's leftover into savings, naming
+   * the month (YYYY-MM) it closes. Marks it as bookkeeping rather than a real
+   * expense, and keeps a month from being swept twice.
+   */
+  carryoverFor?: string
   /** @deprecated Pre-split single link, kept so old data still reads. See `provisionAllocations`. */
   provisionId?: string
   /** @deprecated See `provisionAllocations`. */

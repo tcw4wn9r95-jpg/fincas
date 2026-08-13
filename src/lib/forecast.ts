@@ -10,6 +10,7 @@ import { currentMonth, monthRange, shortMonth, addMonths, uid, todayISO } from '
 import { provisionCoveredByCategoryRange, allProvisionStatuses, emergencyFundStatus } from './provisions'
 import { allEventStatuses, eventSummaryLine } from './events'
 import { fundingPlan } from './funding'
+import { NON_CASHFLOW } from './categorize'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -129,12 +130,10 @@ export function startingBalance(data: AppData): number {
   return bal
 }
 
-/**
- * Categories that are money moving between your own accounts, not real income
- * or spending — excluded from money-date totals so a transfer to Revolut isn't
- * counted as an expense.
- */
-export const NON_CASHFLOW = new Set(['Internal'])
+// Defined with the categories themselves (and re-exported here, where most
+// callers already look for it) so modules can exclude transfers without
+// pulling in the whole forecast.
+export { NON_CASHFLOW }
 
 /**
  * A label for money released from a provision to cover a bill that landed
