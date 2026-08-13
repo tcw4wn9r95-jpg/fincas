@@ -8,7 +8,8 @@ import {
   spendSeriesByCategory,
   streak,
 } from '../lib/forecast'
-import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey } from '../lib/format'
+import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, todayISO } from '../lib/format'
+import { eventsInMonth } from '../lib/events'
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
@@ -60,7 +61,13 @@ interface TrendRow {
   run: number
 }
 
-export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void }) {
+export function MoneyDate({
+  onDiscuss,
+  onGoToEvents,
+}: {
+  onDiscuss: (month: string) => void
+  onGoToEvents: () => void
+}) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const [importing, setImporting] = useState(false)
@@ -94,6 +101,10 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
   const emergency = useMemo(() => emergencyFundStatus(data), [data])
+  const monthEvents = useMemo(
+    () => eventsInMonth(data, activeMonth, todayISO()),
+    [data, activeMonth],
+  )
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
 
   const [sankeyOpen, setSankeyOpen] = useState(false)
@@ -526,6 +537,43 @@ export function MoneyDate({ onDiscuss }: { onDiscuss: (month: string) => void })
               </button>
             )}
           </div>
+
+          {monthEvents.length > 0 && (
+            <div className="card p-5">
+              <h3 className="text-lg">How the events went</h3>
+              <p className="text-sm text-muted mb-3">
+                Budgeted separately, so a trip doesn't just read as a bad month.
+              </p>
+              <div className="space-y-3">
+                {monthEvents.map((e) => (
+                  <button
+                    key={e.id}
+                    className="w-full text-left rounded-lg border border-line bg-canvas px-4 py-3 hover:bg-forest-tint/40 transition"
+                    onClick={onGoToEvents}
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-1.5">
+                      <span className="font-medium truncate">{e.label}</span>
+                      <span
+                        className={classNames('text-sm tabular-nums shrink-0', e.over && 'text-clay')}
+                      >
+                        {fx(e.spent)} of {fx(e.budget)}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-line overflow-hidden">
+                      <div
+                        className={classNames('h-full rounded-full', e.over ? 'bg-clay' : 'bg-forest')}
+                        style={{ width: `${Math.min(100, e.pct)}%` }}
+                      />
+                    </div>
+                    <div className="text-xs text-muted mt-1.5">
+                      {e.over ? `${fx(-e.remaining)} over budget` : `${fx(e.remaining)} under budget`}
+                      {e.pendingCount > 0 && ` · ${e.pendingCount} logged line${e.pendingCount === 1 ? '' : 's'} still to confirm`}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {(overPlan.length > 0 || underPlan.length > 0) && (
             <div className="card p-5">

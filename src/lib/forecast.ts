@@ -6,8 +6,9 @@ import type {
   CategoryActual,
   Scenario,
 } from './types'
-import { currentMonth, monthRange, shortMonth, addMonths, uid } from './format'
+import { currentMonth, monthRange, shortMonth, addMonths, uid, todayISO } from './format'
 import { provisionCoveredByCategoryRange, allProvisionStatuses, emergencyFundStatus } from './provisions'
+import { allEventStatuses, eventSummaryLine } from './events'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -725,6 +726,14 @@ export function financialSummary(data: AppData): string {
               (p.suggestedMonthly ? `, ≈${fx(p.suggestedMonthly)}/mo to stay on track` : ''),
           )
           .join('; '),
+    )
+  }
+
+  const events = allEventStatuses(data, todayISO())
+  if (events.length) {
+    lines.push(
+      'Special events (trips, parties — budgeted on their own, not just part of the month): ' +
+        events.slice(0, 6).map((e) => eventSummaryLine(e, fx)).join('; '),
     )
   }
 

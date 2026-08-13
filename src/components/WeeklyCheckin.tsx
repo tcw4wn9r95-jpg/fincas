@@ -7,13 +7,21 @@ import {
   weekStartOf,
   weekLabel,
   weeklyReviewText,
+  addDaysISO,
 } from '../lib/weekly'
+import { eventsInRange } from '../lib/events'
 import { formatMoney, classNames, todayISO } from '../lib/format'
 import { ImportModal } from './ImportModal'
 import { Sparkline } from './Sparkline'
 import { IconUpload, IconChat } from './icons'
 
-export function WeeklyCheckin({ onDiscuss }: { onDiscuss: (prompt: string) => void }) {
+export function WeeklyCheckin({
+  onDiscuss,
+  onGoToEvents,
+}: {
+  onDiscuss: (prompt: string) => void
+  onGoToEvents: () => void
+}) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
   const [importing, setImporting] = useState(false)
@@ -26,6 +34,10 @@ export function WeeklyCheckin({ onDiscuss }: { onDiscuss: (prompt: string) => vo
   const activeWeek = weeks.includes(week) ? week : weeks[0]
 
   const review = useMemo(() => computeWeek(data, activeWeek), [data, activeWeek])
+  const weekEvents = useMemo(
+    () => eventsInRange(data, activeWeek, addDaysISO(activeWeek, 6), todayISO()),
+    [data, activeWeek],
+  )
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, { round: true, ...opts })
 
   const hasData = (data.sampleTransactions?.length ?? 0) > 0
@@ -84,6 +96,36 @@ export function WeeklyCheckin({ onDiscuss }: { onDiscuss: (prompt: string) => vo
           </button>
         </div>
       </div>
+
+      {weekEvents.length > 0 && (
+        <div className="card p-5">
+          <h3 className="text-lg">On this week</h3>
+          <p className="text-sm text-muted mb-3">
+            Spending inside these dates can belong to an event instead of your ordinary week — tag
+            it there and it stops reading as everyday overspend.
+          </p>
+          <div className="space-y-2">
+            {weekEvents.map((e) => (
+              <button
+                key={e.id}
+                className="w-full text-left rounded-lg border border-line bg-canvas px-4 py-3 hover:bg-forest-tint/40 transition"
+                onClick={onGoToEvents}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium truncate">{e.label}</span>
+                  <span className={classNames('text-sm tabular-nums shrink-0', e.over && 'text-clay')}>
+                    {fx(e.spent)} of {fx(e.budget)}
+                  </span>
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  {e.phase === 'live' ? 'Happening now' : e.phase === 'upcoming' ? 'Coming up' : 'Just finished'}
+                  {e.over ? ` · ${fx(-e.remaining)} over` : ` · ${fx(e.remaining)} left`}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {!hasData ? (
         <div className="card p-8 text-center">

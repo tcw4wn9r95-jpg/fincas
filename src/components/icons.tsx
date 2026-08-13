@@ -163,6 +163,27 @@ export function IconWeek(p: IconProps) {
   )
 }
 
+/** A pin on a date — spending that belongs to one occasion. */
+export function IconEvent(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" />
+      <circle cx="12" cy="10" r="2.4" />
+    </svg>
+  )
+}
+
+/** Three dots — the overflow menu. */
+export function IconMore(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <circle cx="5" cy="12" r="1.4" />
+      <circle cx="12" cy="12" r="1.4" />
+      <circle cx="19" cy="12" r="1.4" />
+    </svg>
+  )
+}
+
 /** A jar with a coin slot — money set aside ahead of a known bill. */
 export function IconProvision(p: IconProps) {
   return (

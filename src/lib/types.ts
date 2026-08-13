@@ -70,6 +70,8 @@ export interface Transaction {
    * legacy single-link fields below still resolve.
    */
   provisionAllocations?: ProvisionAllocation[]
+  /** Tags this transaction as spending that belongs to a special event. */
+  eventId?: string
   /** @deprecated Pre-split single link, kept so old data still reads. See `provisionAllocations`. */
   provisionId?: string
   /** @deprecated See `provisionAllocations`. */
@@ -119,6 +121,49 @@ export interface Provision {
   createdAt: string
 }
 
+/**
+ * One spend logged by hand while an event is happening — the running tally you
+ * keep at the party, before any statement exists. It is deliberately NOT a
+ * `Transaction`: it never touches the month's totals, because the statement
+ * that arrives later is the real record. Once the matching line does arrive,
+ * `matchedTxId` retires this one so the two can't both count.
+ */
+export interface EventExpense {
+  id: string
+  date: string
+  label: string
+  /** Positive: what was spent. */
+  amount: number
+  category: string
+  matchedTxId?: string
+}
+
+export type EventKind = 'travel' | 'party' | 'other'
+
+/**
+ * A trip, a party, a wedding — spending that is planned as a lump, happens in a
+ * burst, and is worth judging against its own budget rather than getting lost
+ * inside a month. Money can be set aside for it ahead of time through a linked
+ * provision, exactly like any other known upcoming expense.
+ */
+export interface SpecialEvent {
+  id: string
+  label: string
+  kind: EventKind
+  /** ISO dates; a single-day event has `endDate === startDate`. */
+  startDate: string
+  endDate: string
+  budget: number
+  /** The category its spending belongs to, e.g. "Travel". */
+  category: string
+  /** The sinking fund saving up for it, when one was created. */
+  provisionId?: string
+  /** Logged live during the event — see `EventExpense`. */
+  expenses: EventExpense[]
+  notes?: string
+  createdAt: string
+}
+
 export interface Settings {
   /** Anthropic API key — stored on-device only, never synced to GitHub. */
   apiKey: string
@@ -148,6 +193,8 @@ export interface AppData {
    * allocations, exactly like a provision (`emergencyFundStatus`).
    */
   emergencyFund?: { targetAmount: number }
+  /** Trips, parties and the like, budgeted and tracked on their own — see `SpecialEvent`. */
+  events?: SpecialEvent[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */
