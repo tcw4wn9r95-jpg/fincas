@@ -163,6 +163,17 @@ export function IconWeek(p: IconProps) {
   )
 }
 
+/** A question mark — ask what to do with this. */
+export function IconHelp(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9.2a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.7-.9 1.3v.6" />
+      <path d="M12 17h.01" />
+    </svg>
+  )
+}
+
 /** A pin on a date — spending that belongs to one occasion. */
 export function IconEvent(p: IconProps) {
   return (

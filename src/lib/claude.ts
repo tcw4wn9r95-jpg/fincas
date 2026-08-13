@@ -2,7 +2,15 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { AppData, ChatMessage, Transaction } from './types'
 import { financialSummary, monthReviewText } from './forecast'
 import { CATEGORIES } from './categorize'
-import { normDescription } from './format'
+import { normDescription, todayISO } from './format'
+import {
+  allProvisionStatuses,
+  emergencyFundStatus,
+  transactionAllocations,
+  EMERGENCY_FUND_ID,
+  EMERGENCY_FUND_LABEL,
+} from './provisions'
+import { allEventStatuses } from './events'
 
 // The assistant runs entirely from the browser using the user's own
 // Anthropic API key (kept on-device). Their financial data is sent only
@@ -170,6 +178,138 @@ export async function aiCategorize(
     if (t && valid.has(category)) out.set(t.id, category)
   }
   return out
+}
+
+// ── Per-transaction advice ────────────────────────────────────────
+// "What should I do with this line?" asked from the reconcile screen. The
+// answer has to be actionable *in this app*, so the model is told how the
+// app's own machinery works — provisions, the emergency fund, events, rules —
+// on top of the user's full financial snapshot.
+
+/** How the user has treated lines that look like this one before. */
+function similarHistory(data: AppData, tx: Transaction, limit = 8): string[] {
+  const key = normDescription(tx.description)
+  const out: string[] = []
+  for (const t of data.transactions) {
+    if (t.id === tx.id || normDescription(t.description) !== key) continue
+    const bits = [`${t.date} ${t.description} ${t.amount} → ${t.category}`]
+    const allocs = transactionAllocations(t)
+    if (allocs.length) {
+      bits.push(
+        '(' +
+          allocs
+            .map((a) => {
+              const p = data.provisions.find((x) => x.id === a.provisionId)
+              const label = a.provisionId === EMERGENCY_FUND_ID ? EMERGENCY_FUND_LABEL : p?.label ?? 'a deleted pot'
+              return `${a.role === 'drawdown' ? 'took' : 'put'} ${a.amount} ${a.role === 'drawdown' ? 'from' : 'into'} ${label}`
+            })
+            .join('; ') +
+          ')',
+      )
+    }
+    out.push(bits.join(' '))
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+/**
+ * Ask what to do with one transaction, streamed into the reconcile card.
+ * Deliberately opinionated and short: this is read mid-task, one line among
+ * dozens, so a survey of options would be worse than useless.
+ */
+export async function streamTransactionAdvice(
+  data: AppData,
+  tx: Transaction,
+  handlers: StreamHandlers,
+): Promise<void> {
+  const apiKey = data.settings.apiKey?.trim()
+  if (!apiKey) {
+    handlers.onError('Add your Anthropic API key in Settings to ask Claude about a transaction.')
+    return
+  }
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
+  const { currency } = data.settings
+  const provisions = allProvisionStatuses(data)
+  const emergency = emergencyFundStatus(data)
+  const events = allEventStatuses(data, todayISO())
+  const history = similarHistory(data, tx)
+
+  const system = [
+    'You are a calm, sharp personal financial advisor built into a private budgeting app.',
+    'The user is reconciling a bank statement and has stopped on one transaction. Tell them how to treat it.',
+    '',
+    'HOW THIS APP WORKS — your advice must be expressed in these terms:',
+    `- Every transaction gets exactly one category from: ${CATEGORIES.join(', ')}.`,
+    '- "Internal" is money moved between the user\'s own accounts; it is excluded from income and spending entirely.',
+    '- Provisions are sinking funds for known upcoming bills, each with a target amount and a due date. A transaction can be split across several pots.',
+    '- Allocating has a direction: "set aside" adds to a pot, "pull from savings" takes money out of one to cover this spend. Pulling is the right call when the money for this really came out of a pot, whatever the spend was for.',
+    '- The emergency fund is the catch-all pot for money not earmarked for any named bill.',
+    '- Events (trips, parties) have their own budget and dates; spending inside those dates can be tagged to the event so it is judged against that budget instead of the month.',
+    '- Teaching a rule makes every future import with matching wording take a category automatically. Worth suggesting for anything recurring.',
+    '- Money put into a pot is reported as savings, not as spending.',
+    '',
+    'ANSWER FORMAT: at most 4 short markdown bullets, each leading with the action.',
+    'Name the exact category, pot, or event to use. Give the one-line reason from their numbers, not generic advice.',
+    'If the line is unremarkable, say so in a single bullet — do not manufacture work.',
+    'Never use tables or nested lists. Never restate the transaction back to them.',
+    '',
+    '--- FINANCIAL SNAPSHOT ---',
+    financialSummary(data),
+    '--- END SNAPSHOT ---',
+  ].join('\n')
+
+  const details = [
+    `Date: ${tx.date}`,
+    `Description: ${tx.description}`,
+    `Amount: ${tx.amount} ${currency} (${tx.amount < 0 ? 'money out' : 'money in'})`,
+    `Currently filed under: ${tx.category}`,
+    provisions.length
+      ? 'Provisions available: ' +
+        provisions
+          .map(
+            (p) =>
+              `${p.label} [${p.category}] ${p.funded}/${p.targetAmount} funded${p.dueDate ? `, due ${p.dueDate}` : ''}`,
+          )
+          .join('; ')
+      : 'No provisions exist yet.',
+    `Emergency fund: ${emergency.balance} saved${emergency.targetAmount ? ` of ${emergency.targetAmount} target` : ''}.`,
+    events.length
+      ? 'Events: ' +
+        events
+          .map((e) => `${e.label} (${e.startDate}–${e.endDate}, ${e.spent}/${e.budget} spent)`)
+          .join('; ')
+      : 'No events planned.',
+    history.length
+      ? 'How they treated lines with the same wording before:\n' + history.join('\n')
+      : 'They have never had a line with this wording before.',
+  ].join('\n')
+
+  try {
+    const stream = client.messages.stream({
+      model: data.settings.model || 'claude-opus-4-8',
+      max_tokens: 500,
+      system,
+      messages: [
+        { role: 'user', content: `What should I do with this transaction?\n\n${details}` },
+      ],
+    })
+    stream.on('text', (delta) => handlers.onText(delta))
+    const final = await stream.finalMessage()
+    handlers.onDone(
+      final.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map((b) => b.text)
+        .join(''),
+    )
+  } catch (err) {
+    let message = 'Something went wrong talking to Claude.'
+    if (err instanceof Anthropic.AuthenticationError) message = 'Your API key was rejected. Check it in Settings.'
+    else if (err instanceof Anthropic.RateLimitError) message = 'Rate limited by the API — wait a moment and try again.'
+    else if (err instanceof Anthropic.APIError) message = `API error: ${err.message}`
+    else if (err instanceof Error) message = err.message
+    handlers.onError(message)
+  }
 }
 
 export async function askClaude(

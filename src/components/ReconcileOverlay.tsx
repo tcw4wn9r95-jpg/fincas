@@ -4,7 +4,9 @@ import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { type ProvisionStatus } from '../lib/provisions'
 import type { MonthCarryover } from '../lib/funding'
 import type { Transaction } from '../lib/types'
-import { IconClose, IconCheck, IconSparkle } from './icons'
+import { IconClose, IconCheck, IconSparkle, IconHelp } from './icons'
+import { Markdown } from './Markdown'
+import type { StreamHandlers } from '../lib/claude'
 import { Portal } from './Portal'
 import { ProvisionButton } from './ProvisionModal'
 
@@ -25,6 +27,7 @@ export function ReconcileOverlay({
   onConfirmAll,
   onAiCategorize,
   onProvision,
+  onAskAdvice,
   carryover,
   fundBalance,
   onSweepCarryover,
@@ -44,6 +47,8 @@ export function ReconcileOverlay({
   onAiCategorize?: () => void
   /** Opens the allocation pop-up for one transaction — owned by the parent so it stacks above this overlay. */
   onProvision: (t: Transaction) => void
+  /** Streams Claude's take on one line — omitted when there's no API key. */
+  onAskAdvice?: (t: Transaction, handlers: StreamHandlers) => void
   /** This month's surplus, offered once everything is reconciled. */
   carryover?: MonthCarryover
   fundBalance: number
@@ -53,6 +58,28 @@ export function ReconcileOverlay({
   aiError?: string
   onClose: () => void
 }) {
+  // Advice is asked for one line at a time and streams in place; opening a
+  // different line replaces it, so the card never carries a stale answer.
+  const [adviceFor, setAdviceFor] = useState<string | null>(null)
+  const [advice, setAdvice] = useState('')
+  const [adviceError, setAdviceError] = useState('')
+
+  function askAdvice(t: Transaction) {
+    if (!onAskAdvice) return
+    if (adviceFor === t.id) {
+      setAdviceFor(null)
+      return
+    }
+    setAdviceFor(t.id)
+    setAdvice('')
+    setAdviceError('')
+    onAskAdvice(t, {
+      onText: (delta) => setAdvice((prev) => prev + delta),
+      onDone: () => {},
+      onError: (message) => setAdviceError(message),
+    })
+  }
+
   const [typeFilter, setTypeFilter] = useState('')
   const [sortBy, setSortBy] = useState<'default' | 'date' | 'name' | 'amount'>('default')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -240,7 +267,7 @@ export function ReconcileOverlay({
                       </button>
                     )}
                   </div>
-                  <div className="mt-2">
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <ProvisionButton
                       tx={t}
                       provisions={provisions}
@@ -248,7 +275,35 @@ export function ReconcileOverlay({
                       locale={locale}
                       onOpen={() => onProvision(t)}
                     />
+                    {/* Only while a line is still open: once it's reconciled
+                        the decision is made and the question is moot. */}
+                    {onAskAdvice && !t.reconciled && (
+                      <button
+                        className={classNames(
+                          'btn-subtle text-xs shrink-0 inline-flex items-center gap-1.5',
+                          adviceFor === t.id && 'text-forest',
+                        )}
+                        onClick={() => askAdvice(t)}
+                        title="Ask Claude how to treat this line, using your full picture"
+                      >
+                        <IconHelp width={14} height={14} />
+                        {adviceFor === t.id ? 'Hide' : 'What do I do?'}
+                      </button>
+                    )}
                   </div>
+                  {adviceFor === t.id && (
+                    <div className="mt-2 rounded-lg border border-forest/25 bg-forest-tint/30 p-3">
+                      {adviceError ? (
+                        <p className="text-xs text-clay">{adviceError}</p>
+                      ) : advice ? (
+                        <div className="text-sm [&_p]:mb-1.5 [&_ul]:mb-0 [&_li]:mb-0.5">
+                          <Markdown text={advice} />
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted">Reading your numbers…</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}

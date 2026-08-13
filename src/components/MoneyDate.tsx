@@ -12,7 +12,7 @@ import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, ad
 import { eventsInMonth } from '../lib/events'
 import { fundingPlan, monthCarryover, carryoverTransaction } from '../lib/funding'
 import { CATEGORIES, withRule } from '../lib/categorize'
-import { aiCategorize, hasApiKey } from '../lib/claude'
+import { aiCategorize, hasApiKey, streamTransactionAdvice } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import {
   allProvisionStatuses,
@@ -947,6 +947,11 @@ export function MoneyDate({
           onConfirmAll={reconcileAllSuggestions}
           onAiCategorize={hasApiKey(data) ? runAiCategorize : undefined}
           onProvision={(t) => setProvisioning(t.id)}
+          onAskAdvice={
+            hasApiKey(data)
+              ? (t, handlers) => void streamTransactionAdvice(data, t, handlers)
+              : undefined
+          }
           carryover={carryover}
           fundBalance={emergency.balance}
           onSweepCarryover={sweepCarryover}
