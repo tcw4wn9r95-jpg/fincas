@@ -141,14 +141,12 @@ export function startingBalance(data: AppData): number {
 export { NON_CASHFLOW }
 
 /**
- * A label for money released from a provision to cover a bill that landed
- * this month — surfaced separately (`MonthReview.provisionedIncome`, the
- * Sankey's shortfall split) for display only. It is never added into
- * `income`/`net`/`actualsByCategoryRange`: those feed the balance ledger and
- * multi-month averages, which must reflect real cash movement. The
- * contribution that funded it was already excluded from cash flow as
- * `Internal` when it happened — adding the release back as fresh income here
- * too would count the same money twice across the year.
+ * A label for money released from a provision to cover a bill that landed this
+ * month — used by the Sankey's shortfall split, which draws the pots as a
+ * visible source of cash. `actualsByCategoryRange` deliberately keeps such
+ * spending in its category so that diagram (and plan-matching) still see it;
+ * only `computeReview`'s totals take it out, where charging it twice would make
+ * a provisioned bill sink the month it lands in.
  */
 export const PROVISIONED_BRACKET = 'Provisioned'
 
@@ -479,6 +477,7 @@ export function computeReview(data: AppData, month: string): MonthReview {
   let income = 0
   let expenses = 0
   let setAside = 0
+  let provisionedSpend = 0
   let excludedIn = 0
   let excludedOut = 0
   const actualIncomeByCat: Record<string, number> = {}
@@ -501,24 +500,30 @@ export function computeReview(data: AppData, month: string): MonthReview {
     netByCat[t.category] = (netByCat[t.category] ?? 0) + t.amount + aside
   }
   setAside = round2(setAside)
+
+  // Bills a provision paid for, per category.
+  const provisionCovered = provisionCoveredByCategoryRange(data, [month])
+
   for (const [cat, n] of Object.entries(netByCat)) {
     const net = round2(n)
     if (net > 0) {
       income += net
       actualIncomeByCat[cat] = net
     } else if (net < 0) {
-      expenses += -net
-      actualExpenseByCat[cat] = -net
+      const gross = -net
+      // The category row keeps the whole spend — a month that paid €3,600 of
+      // tax must not read as having paid none — but the total leaves out the
+      // part a pot covered. That cost was charged in the months that funded
+      // the pot; charging it again on the day the bill lands is what made a
+      // quarterly tax bill sink an otherwise ordinary month.
+      const covered = Math.min(gross, round2(provisionCovered[cat] ?? 0))
+      actualExpenseByCat[cat] = gross
+      expenses += gross - covered
+      provisionedSpend += covered
     }
   }
-
-  // A bill covered by a provision was really paid for in earlier months.
-  // Surfaced separately rather than folded into `income`/`net`: those feed
-  // the balance ledger and multi-month averages, which must track real cash
-  // movement (the contribution was already excluded as `Internal` when it
-  // happened, so adding the release back here too would double-count it).
-  const provisionCovered = provisionCoveredByCategoryRange(data, [month])
-  const provisionedIncome = round2(Object.values(provisionCovered).reduce((a, b) => a + b, 0))
+  expenses = round2(expenses)
+  provisionedSpend = round2(provisionedSpend)
 
   // Planned figures from recurring items for this month.
   const plannedIncomeByCat: Record<string, number> = {}
@@ -595,9 +600,8 @@ export function computeReview(data: AppData, month: string): MonthReview {
     // kept. Moving savings off the expense line changes how the month reads,
     // not what it left behind — this figure is the same either way.
     net: round2(income - expenses - setAside),
-    // Capped at expenses: a drawdown bigger than the category it paid for
-    // can't turn spending into income.
-    netExProvisions: round2(income - (expenses - Math.min(provisionedIncome, expenses))),
+    netBeforeSetAside: round2(income - expenses),
+    provisionedSpend,
     plannedIncome,
     plannedExpenses,
     plannedSetAside,
@@ -606,7 +610,6 @@ export function computeReview(data: AppData, month: string): MonthReview {
     transactionCount: txs.length,
     excludedIn,
     excludedOut,
-    provisionedIncome,
   }
 }
 
@@ -623,15 +626,16 @@ export function monthReviewText(data: AppData, month: string): string {
     `Money date for ${month}: money in ${fx(r.income)} (planned ${fx(r.plannedIncome)}), ` +
       `spending ${fx(r.expenses)} (planned ${fx(r.plannedExpenses)}), ` +
       `set aside into provisions and savings ${fx(r.setAside)} (planned ${fx(r.plannedSetAside)}), ` +
-      `net result ${fx(r.net)} (planned ${fx(r.plannedNet)}). ` +
-      'Money set aside is reported on its own line, not as spending — it was kept, not consumed. ' +
-      `Excluding the provisions entirely — nothing moved into a pot, and no bill a pot had already paid for — the month came to ${fx(r.netExProvisions)}; ` +
-      'that is the read of how the month itself went, since setting money aside only moves it between pockets.',
+      `net result ${fx(r.net)} (planned ${fx(r.plannedNet)}), ` +
+      `which before setting anything aside was ${fx(r.netBeforeSetAside)}. ` +
+      'Money set aside is reported on its own line, not as spending — it was kept, not consumed.',
   )
-  if (r.provisionedIncome > 0.5) {
+  if (r.provisionedSpend > 0.5) {
     lines.push(
-      `Of that spend, ${fx(r.provisionedIncome)} was already saved for in a provision ahead of time — ` +
-        `real cash flow this month, but not a surprise.`,
+      `A further ${fx(r.provisionedSpend)} of bills was paid this month out of provisions. That is real ` +
+        'money leaving the account, but it is deliberately not in the spending or net figures above: ' +
+        'the cost was charged in the earlier months that funded the pot, so charging it again now would ' +
+        'count it twice and make a well-run month look disastrous.',
     )
   }
   const expenses = r.categories.filter((c) => c.flow === 'expense')
@@ -722,9 +726,10 @@ export function financialSummary(data: AppData): string {
   if (months.length) {
     const r = computeReview(data, months[0])
     lines.push(
-      `Latest reviewed month ${months[0]}: income ${fx(r.income)}, expenses ${fx(r.expenses)}, net ${fx(r.net)} (planned net ${fx(r.plannedNet)}).` +
-        (r.provisionedIncome > 0.5
-          ? ` Of that spend, ${fx(r.provisionedIncome)} was already saved for in a provision, so it wasn't a surprise even though it counts as real cash flow.`
+      `Latest reviewed month ${months[0]}: income ${fx(r.income)}, spending ${fx(r.expenses)}, ` +
+        `set aside ${fx(r.setAside)}, net result ${fx(r.net)} (planned net ${fx(r.plannedNet)}).` +
+        (r.provisionedSpend > 0.5
+          ? ` A further ${fx(r.provisionedSpend)} of bills was paid from provisions — excluded from spending and net, because it was charged in the months that funded the pot.`
           : ''),
     )
     const over = r.categories

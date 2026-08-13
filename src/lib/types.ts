@@ -301,20 +301,20 @@ export interface CategoryActual {
 export interface MonthReview {
   month: string
   income: number
-  /** Spending only — money put into provisions or savings is not in here. */
+  /**
+   * Ordinary spending: money put into provisions or savings is not in here,
+   * and neither is a bill a provision paid for — that was charged in the
+   * months that funded it.
+   */
   expenses: number
   /** Money kept: paid into provisions, the emergency fund, or plain savings. */
   setAside: number
-  /** income − expenses − setAside: the cash the month actually left behind. */
+  /** income − expenses − setAside: what the month actually gained or lost. */
   net: number
-  /**
-   * The same month with the provision machinery taken out of the picture:
-   * nothing moved into a pot, and no bill that a pot had already paid for.
-   * Putting money aside doesn't leave the account — it changes pocket — and a
-   * bill covered by a pot was funded in earlier months, so neither belongs in
-   * a read of how this month itself went.
-   */
-  netExProvisions: number
+  /** The same figure before any money was committed to a pot. */
+  netBeforeSetAside: number
+  /** Spending this month that a provision had already paid for. */
+  provisionedSpend: number
   plannedIncome: number
   plannedExpenses: number
   plannedSetAside: number
@@ -324,10 +324,4 @@ export interface MonthReview {
   /** Money moved between the user's own accounts (Internal), not counted in totals. */
   excludedIn: number
   excludedOut: number
-  /**
-   * Real cash this month that came from a provision drawdown (already counted
-   * in `income`/`expenses` — this is a breakdown, not an addition). Lets the
-   * UI show "this wasn't a surprise" without altering the true totals.
-   */
-  provisionedIncome: number
 }

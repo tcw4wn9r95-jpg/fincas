@@ -1,7 +1,6 @@
 import type { AppData, Transaction } from './types'
 import { allProvisionStatuses, emergencyFundStatus, EMERGENCY_FUND_ID } from './provisions'
 import { allEventStatuses } from './events'
-import { NON_CASHFLOW } from './categorize'
 import { uid } from './format'
 
 // One number for a job the app couldn't answer before: at the end of the month,
@@ -170,22 +169,20 @@ export interface MonthCarryover {
 }
 
 /**
- * What a month has left over. Transfers between the user's own accounts are
- * excluded, so the sweep itself doesn't shrink the surplus it came from — the
- * money left the current account but never left their finances.
+ * What a month has left over, given the net the money date reports for it.
+ *
+ * The net is passed in rather than recomputed so the sweep prompt and the
+ * summary can never disagree — they are the same number by construction, not
+ * by two implementations happening to match. All this adds is how much of that
+ * surplus has already been moved.
  */
-export function monthCarryover(data: AppData, month: string): MonthCarryover {
-  let net = 0
+export function monthCarryover(data: AppData, month: string, net: number): MonthCarryover {
   let swept = 0
   for (const t of data.transactions) {
-    if (t.month !== month) continue
-    if (t.carryoverFor === month) swept += Math.abs(t.amount)
-    if (NON_CASHFLOW.has(t.category)) continue
-    net += t.amount
+    if (t.month === month && t.carryoverFor === month) swept += Math.abs(t.amount)
   }
-  net = round2(net)
   swept = round2(swept)
-  return { month, net, swept, left: round2(Math.max(0, net - swept)) }
+  return { month, net: round2(net), swept, left: round2(Math.max(0, net - swept)) }
 }
 
 /**

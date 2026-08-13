@@ -113,7 +113,10 @@ export function MoneyDate({
     () => fundingPlan(data, addMonths(currentMonth(), 1), todayISO()),
     [data],
   )
-  const carryover = useMemo(() => monthCarryover(data, activeMonth), [data, activeMonth])
+  const carryover = useMemo(
+    () => monthCarryover(data, activeMonth, review.net),
+    [data, activeMonth, review.net],
+  )
 
   /** Move what the month didn't spend into the emergency fund. */
   function sweepCarryover() {
@@ -501,6 +504,12 @@ export function MoneyDate({
               <div className="text-sm text-muted mt-1">
                 planned {fx(review.plannedExpenses)}
               </div>
+              {review.provisionedSpend > 0.5 && (
+                <div className="text-xs text-muted mt-1">
+                  plus {fx(review.provisionedSpend)} of bills your provisions paid — charged to the
+                  months that funded them
+                </div>
+              )}
             </div>
             {/* Kept, not spent — a provision transfer is a different kind of
                 event from a grocery run, and reads wrong lumped in with one. */}
@@ -534,31 +543,20 @@ export function MoneyDate({
               >
                 {fx(netVsPlan, { signed: true })} vs plan
               </div>
-              {(review.setAside > 0.5 || review.provisionedIncome > 0.5) && (
+              {review.setAside > 0.5 && (
                 <div className="mt-2.5 pt-2.5 border-t border-line">
-                  <div className="text-xs text-muted">Excluding provisions</div>
+                  <div className="text-xs text-muted">Before setting aside</div>
                   <div
                     className={classNames(
                       'tabular-nums font-medium text-lg leading-tight',
-                      review.netExProvisions >= 0 ? 'text-forest' : 'text-clay',
+                      review.netBeforeSetAside >= 0 ? 'text-forest' : 'text-clay',
                     )}
                   >
-                    {fx(review.netExProvisions, { signed: true })}
+                    {fx(review.netBeforeSetAside, { signed: true })}
                   </div>
                   <p className="text-[11px] text-muted leading-snug mt-1">
-                    {(() => {
-                      const parts = [
-                        review.setAside > 0.5
-                          ? `${fx(review.setAside)} moved between pockets`
-                          : '',
-                        review.provisionedIncome > 0.5
-                          ? `${fx(review.provisionedIncome)} of spend a pot had already paid for`
-                          : '',
-                      ].filter(Boolean)
-                      return `${parts.join(' and ')} left out — ${
-                        parts.length > 1 ? 'neither is' : 'not'
-                      } this month's doing.`
-                    })()}
+                    What the month earned over what you lived on, before you committed{' '}
+                    {fx(review.setAside)} of it to future bills.
                   </p>
                 </div>
               )}
