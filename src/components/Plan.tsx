@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
-import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, parseAmount } from '../lib/format'
+import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
 import { startingBalance, totalBalance, anchorMonth } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
+import { fundingPlan, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
@@ -22,6 +23,54 @@ function Section({
       <h3 className="text-lg">{title}</h3>
       <p className="text-sm text-muted mb-4">{desc}</p>
       {children}
+    </div>
+  )
+}
+
+/** One thing to save for, and this month's share of it. */
+function FundingRow({
+  line,
+  fx,
+  locale,
+}: {
+  line: FundingLine
+  fx: (n: number) => string
+  locale: string
+}) {
+  const due = line.dueDate
+    ? new Date(line.dueDate + 'T00:00:00').toLocaleDateString(locale, {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    : null
+  const urgent = line.status === 'overdue' || line.status === 'due-now'
+  return (
+    <div
+      className={classNames(
+        'flex items-center gap-3 rounded-lg border px-4 py-3',
+        urgent ? 'border-gold/50 bg-gold/5' : 'border-line bg-canvas',
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-medium truncate">{line.label}</span>
+          {line.kind === 'event' && <span className="pill bg-forest-tint text-forest">event</span>}
+          {line.eventLabel && (
+            <span className="pill bg-forest-tint text-forest" title={`The fund for ${line.eventLabel}`}>
+              event fund
+            </span>
+          )}
+        </div>
+        <div className="text-xs text-muted">
+          {line.status === 'overdue' && <span className="text-clay">Past due{due ? ` ${due}` : ''} · </span>}
+          {line.status === 'due-now' && <span className="text-ink">Due {due} · </span>}
+          {line.status === 'on-track' && due && <span>Due {due} · </span>}
+          {fx(line.remaining)} still to find
+          {line.monthsLeft && line.monthsLeft > 1 ? ` over ${line.monthsLeft} months` : ' — all of it now'}
+        </div>
+      </div>
+      <div className="tabular-nums text-right shrink-0">{fx(line.amount)}</div>
     </div>
   )
 }
@@ -112,6 +161,13 @@ export function Plan() {
       return d
     })
   }
+  // ── Money to move into savings ──
+  const [fundingMonth, setFundingMonth] = useState(() => addMonths(currentMonth(), 1))
+  const funding = useMemo(
+    () => fundingPlan(data, fundingMonth, todayISO()),
+    [data, fundingMonth],
+  )
+
   // ── Emergency fund ──
   // Only the target is stored; the balance is whatever transactions have been
   // allocated to it, so it can't drift from what actually happened.
@@ -396,6 +452,69 @@ export function Plan() {
             <IconPlus width={16} height={16} /> Add
           </button>
         </div>
+      </Section>
+
+      <Section
+        title="Move to savings"
+        desc="One transfer that keeps every provision and upcoming event on schedule. Anything due that month asks for its whole remaining balance — there's no later month to spread it into."
+      >
+        <div className="flex flex-wrap items-end justify-between gap-4 mb-4">
+          <div>
+            <div className="label">Move for {formatMonthLabel(fundingMonth + '-01', locale)}</div>
+            <div className="stat-value tabular-nums">{fx(funding.total)}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-1 p-1 bg-canvas rounded-xl border border-line">
+            {[currentMonth(), addMonths(currentMonth(), 1)].map((m, i) => (
+              <button
+                key={m}
+                onClick={() => setFundingMonth(m)}
+                className={classNames(
+                  'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                  fundingMonth === m ? 'bg-forest text-paper' : 'text-muted hover:text-ink',
+                )}
+              >
+                {i === 0 ? 'This month' : 'Next month'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {funding.lines.length === 0 && funding.undated.length === 0 && (
+          <p className="text-sm text-muted">
+            Nothing to move — every provision and event is funded for that month.
+          </p>
+        )}
+
+        <div className="space-y-2">
+          {funding.lines.map((l) => (
+            <FundingRow key={l.id} line={l} fx={fx} locale={locale} />
+          ))}
+        </div>
+
+        {funding.undated.length > 0 && (
+          <div className="mt-4 rounded-lg border border-gold/40 bg-gold/5 px-4 py-3">
+            <div className="text-sm font-medium">Not counted — no date set</div>
+            <p className="text-xs text-muted mt-0.5">
+              Without a due date there's no way to know how fast to save. Add one and these join the
+              transfer.
+            </p>
+            <div className="mt-2 space-y-1">
+              {funding.undated.map((l) => (
+                <div key={l.id} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="truncate">{l.label}</span>
+                  <span className="tabular-nums text-muted shrink-0">{fx(l.remaining)} short</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {funding.settled.length > 0 && (
+          <p className="text-xs text-muted mt-3">
+            {funding.settled.length} already fully funded:{' '}
+            {funding.settled.map((l) => l.label).join(', ')}.
+          </p>
+        )}
       </Section>
 
       <Section

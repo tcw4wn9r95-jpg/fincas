@@ -148,7 +148,13 @@ export function App() {
           <main className="px-4 sm:px-6 lg:px-10 py-6 lg:py-10 pb-24 lg:pb-10 max-w-5xl mx-auto">
             {tab === 'overview' && <Dashboard goTo={(t) => go(t)} />}
             {tab === 'weekly' && <WeeklyCheckin onDiscuss={discussPrompt} onGoToEvents={() => go('events')} />}
-            {tab === 'money-date' && <MoneyDate onDiscuss={discussMonth} onGoToEvents={() => go('events')} />}
+            {tab === 'money-date' && (
+              <MoneyDate
+                onDiscuss={discussMonth}
+                onGoToEvents={() => go('events')}
+                onGoToPlan={() => go('plan')}
+              />
+            )}
             {tab === 'events' && <Events />}
             {tab === 'insights' && <Insights goToSettings={() => go('settings')} />}
             {tab === 'assistant' && (

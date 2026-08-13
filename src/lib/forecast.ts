@@ -9,6 +9,7 @@ import type {
 import { currentMonth, monthRange, shortMonth, addMonths, uid, todayISO } from './format'
 import { provisionCoveredByCategoryRange, allProvisionStatuses, emergencyFundStatus } from './provisions'
 import { allEventStatuses, eventSummaryLine } from './events'
+import { fundingPlan } from './funding'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -734,6 +735,19 @@ export function financialSummary(data: AppData): string {
     lines.push(
       'Special events (trips, parties — budgeted on their own, not just part of the month): ' +
         events.slice(0, 6).map((e) => eventSummaryLine(e, fx)).join('; '),
+    )
+  }
+
+  const nextMonth = addMonths(currentMonth(), 1)
+  const funding = fundingPlan(data, nextMonth, todayISO())
+  if (funding.total > 0.5) {
+    lines.push(
+      `To keep every provision and upcoming event on schedule, ${fx(funding.total)} should be moved into savings for ${nextMonth}: ` +
+        funding.lines
+          .filter((l) => l.amount > 0.005)
+          .map((l) => `${l.label} ${fx(l.amount)}${l.status === 'overdue' ? ' (past due)' : l.status === 'due-now' ? ' (due that month)' : ''}`)
+          .join(', ') +
+        '.',
     )
   }
 

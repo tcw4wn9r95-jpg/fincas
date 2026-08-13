@@ -10,6 +10,7 @@ import {
 } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, todayISO } from '../lib/format'
 import { eventsInMonth } from '../lib/events'
+import { fundingPlan } from '../lib/funding'
 import { CATEGORIES, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
@@ -64,9 +65,11 @@ interface TrendRow {
 export function MoneyDate({
   onDiscuss,
   onGoToEvents,
+  onGoToPlan,
 }: {
   onDiscuss: (month: string) => void
   onGoToEvents: () => void
+  onGoToPlan: () => void
 }) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
@@ -104,6 +107,13 @@ export function MoneyDate({
   const monthEvents = useMemo(
     () => eventsInMonth(data, activeMonth, todayISO()),
     [data, activeMonth],
+  )
+  // Anchored to today, not to the month being reviewed: the transfer is an
+  // action you take now, and browsing back to March shouldn't ask you to fund
+  // April against balances that have since moved on.
+  const nextMonthFunding = useMemo(
+    () => fundingPlan(data, addMonths(currentMonth(), 1), todayISO()),
+    [data],
   )
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, opts)
 
@@ -513,6 +523,27 @@ export function MoneyDate({
               </p>
               <SankeyChart graph={sankeyGraph} currency={currency} locale={locale} />
             </button>
+          )}
+
+          {/* The one action that leaves the month: fund next month's provisions. */}
+          {nextMonthFunding.total > 0 && (
+            <div className="card p-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-lg">Move to savings</h3>
+                <p className="text-sm text-muted">
+                  Keep {formatMonthLabel(nextMonthFunding.month + '-01', locale)}'s provisions
+                  {nextMonthFunding.lines.some((l) => l.kind === 'event') ? ' and events' : ''} on
+                  schedule — {nextMonthFunding.lines.length} thing
+                  {nextMonthFunding.lines.length === 1 ? '' : 's'} to cover.
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="stat-value tabular-nums">{fx(nextMonthFunding.total)}</div>
+                <button className="btn-subtle text-xs" onClick={onGoToPlan}>
+                  See the breakdown
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Close the loop: make the plan (and forecast) reflect what happened */}
