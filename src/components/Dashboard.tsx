@@ -11,6 +11,7 @@ import {
   monthsWithData,
   actualsByCategoryRange,
   hasBalanceAnchor,
+  buildSummary,
 } from '../lib/forecast'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import { dataChecks, checksLevel } from '../lib/consistency'
@@ -23,6 +24,10 @@ import { SankeyChart } from './SankeyChart'
 import { SankeyOverlay } from './SankeyOverlay'
 import { ScenarioBar } from './Scenarios'
 import { Logo, IconPlan, IconUpload } from './icons'
+
+/** How far the headline chart looks back, and forward. */
+const SUMMARY_BACK = 6
+const SUMMARY_FORWARD = 12
 
 function Stat({
   label,
@@ -58,6 +63,9 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   const fileRef = useRef<HTMLInputElement>(null)
 
   const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
+  // The headline chart looks back as well as forward: six settled months with
+  // the plan drawn against them, then the plan as it stands today.
+  const summary = useMemo(() => buildSummary(data, SUMMARY_BACK, SUMMARY_FORWARD), [data])
   const ledger = useMemo(() => buildLedger(data), [data])
   const history = useMemo(() => computeHistory(data), [data])
   const year = currentMonth().slice(0, 4)
@@ -96,6 +104,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   const checks = useMemo(() => dataChecks(data), [data])
   const serious = checks.filter((c) => c.level !== 'info')
   const balance = startingBalance(data)
+  const settledMonths = summary.filter((p) => p.actual).length
   const thisMonth = forecast[0]
   // Whole numbers at a glance; cents live in the planner where precision matters.
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, { round: true, ...opts })
@@ -243,9 +252,10 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           <div>
             <h2 className="text-xl">Cash-flow forecast</h2>
             <p className="text-sm text-muted">
-              Income, fixed vs variable expenses
-              {anchored ? ', and projected balance' : ' — no balance recorded to project from'} ·
-              next {forecast.length} months
+              {settledMonths > 0
+                ? `The last ${settledMonths} ${settledMonths === 1 ? 'month' : 'months'} against what you planned, then the next ${SUMMARY_FORWARD} as planned today`
+                : `Income, fixed vs variable expenses · next ${SUMMARY_FORWARD} months`}
+              {!anchored && ' · no balance recorded to project from'}
             </p>
           </div>
           {anchored && lowest && lowest.balance < balance && (
@@ -265,7 +275,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
         </div>
         <ScenarioBar />
         <CashFlowChart
-          points={forecast}
+          points={summary}
           currency={currency}
           locale={locale}
           scenario={scenarioOverlay}

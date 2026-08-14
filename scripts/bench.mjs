@@ -435,6 +435,52 @@ console.log('\n── K. The data check finds what quietly makes the numbers lie
   eq('a tidy file reports nothing', C.dataChecks(clean).length, 0)
 }
 
+console.log('\n── L. The headline chart: six months back, twelve forward ──')
+{
+  const txs = []
+  for (let i = 6; i >= 1; i--) {
+    const m = M(-i)
+    txs.push(tx({ date: `${m}-01`, description: 'Salary', amount: 4200, category: 'Income' }))
+    txs.push(tx({ date: `${m}-03`, description: 'Rent', amount: -1800, category: 'Housing' }))
+    txs.push(tx({ date: `${m}-09`, description: 'Groceries', amount: -600, category: 'Food' }))
+  }
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 9400, asOf: endOf(-1), tracked: true }],
+    recurring: [
+      line({ id: 'r1', label: 'Salary', amount: 4200, flow: 'income', category: 'Income', group: 'Income' }),
+      line({ id: 'r2', label: 'Rent', amount: 1800, flow: 'expense', category: 'Housing', group: 'Fixed monthly' }),
+      line({ id: 'r3', label: 'Groceries', amount: 500, flow: 'expense', category: 'Food', group: 'Variable' }),
+    ],
+    transactions: txs,
+  })
+  const s = F.buildSummary(d, 6, 12)
+  eq('eighteen months in all', s.length, 18)
+  eq('starts six months back', s[0].month, M(-6))
+  eq('ends eleven months ahead', s[17].month, M(11))
+  eq('the six settled months are marked actual', s.filter((p) => p.actual).length, 6)
+  eq('the forward half is projected', s.filter((p) => p.projected).length, 11)
+
+  const past = s[0]
+  const future = s[17]
+  eq('a settled month carries what was planned', past.plannedIncome, 4200)
+  eq('… including planned spending', past.plannedExpenses, 2300)
+  ok('a future month carries no second plan line', future.plannedIncome === undefined)
+
+  // The regression this guards: rent read as fixed in the projected half and
+  // variable in the settled half, because only the plan side knew the section.
+  eq('rent is fixed in the settled half', past.fixedExpenses, 1800)
+  eq('… and fixed in the projected half too', future.fixedExpenses, 1800)
+  eq('groceries stay variable in both', `${past.variableExpenses}/${future.variableExpenses}`, '600/500')
+
+  let continuous = true
+  for (let i = 1; i < s.length; i++) {
+    if (Math.abs(s[i].balance - (s[i - 1].balance + s[i].net)) > 0.005) continuous = false
+  }
+  ok('the balance runs continuously across the join', continuous)
+  const nowPoint = s.find((p) => p.month === NOW)
+  eq('and meets the anchored balance at today', nowPoint.balance, F.startingBalance(d) + nowPoint.net)
+}
+
 console.log(
   `\n${fails === 0 ? `ALL ${checks} CHECKS PASSED` : `${fails} of ${checks} CHECKS FAILED`}`,
 )

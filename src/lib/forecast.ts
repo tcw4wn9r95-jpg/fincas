@@ -185,9 +185,10 @@ export function anchorMonth(data: AppData): string {
 export function startingBalance(data: AppData): number {
   const now = currentMonth()
   const withData = new Set(monthsWithData(data))
+  const fixedCats = fixedCategories(data)
   let bal = totalBalance(data)
   for (let m = anchorMonth(data); m < now; m = addMonths(m, 1)) {
-    bal += monthFlows(data, m, withData, now).net
+    bal += monthFlows(data, m, withData, now, fixedCats).net
   }
   return round2(bal)
 }
@@ -331,9 +332,30 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
   return out
 }
 
-/** Category-based fixed/variable split for actual transactions (no plan line to ask). */
-function expenseCategoryIsVariable(category: string): boolean {
-  return !FIXED_CATS.has(category) && !PROVISION_CATS.has(category)
+/**
+ * Which categories count as fixed when splitting *actual* spending, where there
+ * is no plan line on the transaction to ask.
+ *
+ * The plan is the authority: a category the user filed under "Fixed monthly" is
+ * fixed whatever it is called — rent is the obvious one, and it is nobody's idea
+ * of discretionary spending. The built-in list only covers categories the plan
+ * never mentions, and a category the plan explicitly calls variable stays
+ * variable. Without this the same rent read as fixed in the projected half of a
+ * chart and variable in the settled half.
+ */
+function fixedCategories(data: AppData): Set<string> {
+  const out = new Set(FIXED_CATS)
+  for (const item of data.recurring) {
+    if (item.flow !== 'expense') continue
+    const section = planSection(item)
+    if (section === 'Fixed monthly') out.add(item.category)
+    else if (section === 'Variable') out.delete(item.category)
+  }
+  return out
+}
+
+function expenseCategoryIsVariable(fixed: Set<string>, category: string): boolean {
+  return !fixed.has(category) && !PROVISION_CATS.has(category)
 }
 
 export interface LedgerPoint extends ForecastPoint {
@@ -353,14 +375,20 @@ export interface LedgerPoint extends ForecastPoint {
  * here, so the balance the plan page quotes and the one the ledger draws are the
  * same number by construction rather than by two implementations agreeing.
  */
-function monthFlows(data: AppData, month: string, withData: Set<string>, now: string) {
+function monthFlows(
+  data: AppData,
+  month: string,
+  withData: Set<string>,
+  now: string,
+  fixedCats: Set<string>,
+) {
   if (month < now && withData.has(month)) {
     const { income, expense, setAside } = actualsByCategory(data, month, { splitSavings: true })
     const inc = Object.values(income).reduce((a, b) => a + b, 0)
     let fixed = 0
     let variable = 0
     for (const [cat, amt] of Object.entries(expense)) {
-      if (expenseCategoryIsVariable(cat)) variable += amt
+      if (expenseCategoryIsVariable(fixedCats, cat)) variable += amt
       else fixed += amt
     }
     const expenses = fixed + variable
@@ -392,7 +420,7 @@ export function buildLedger(data: AppData): LedgerPoint[] {
   for (let m = start; m <= lastMonth; m = addMonths(m, 1)) months.push(m)
 
   // Per-month figures: real actuals for past months that have data, else the plan.
-  const rows = months.map((month) => monthFlows(data, month, withData, now))
+  const rows = months.map((month) => monthFlows(data, month, withData, now, fixedCategories(data)))
 
   // Anchor: startingBalance is the balance at the start of `now`. Roll back over
   // the shown past months so the running total lands exactly there.
@@ -412,6 +440,62 @@ export function buildLedger(data: AppData): LedgerPoint[] {
       balance: running,
       projected: r.month > now,
       actual: r.actual,
+    }
+  })
+}
+
+export interface SummaryPoint extends LedgerPoint {
+  /**
+   * Settled months only: what the plan expected, drawn against what happened.
+   * Absent on months still to come, where the plan *is* the figure — a second
+   * line on top of the first would say nothing.
+   */
+  plannedIncome?: number
+  plannedExpenses?: number
+}
+
+/**
+ * The headline chart's span: the last `back` months as they really went with
+ * the plan drawn against them, then `forward` months of plan.
+ *
+ * The same balance runs through both halves, so the line arrives at today from
+ * what actually happened rather than starting there — which is the only way to
+ * see whether the projection is being met.
+ */
+export function buildSummary(data: AppData, back = 6, forward = 12): SummaryPoint[] {
+  const now = currentMonth()
+  const locale = data.settings.locale
+  const withData = new Set(monthsWithData(data))
+
+  const months: string[] = []
+  for (let m = addMonths(now, -back); m < now; m = addMonths(m, 1)) months.push(m)
+  for (let i = 0; i < forward; i++) months.push(addMonths(now, i))
+
+  const fixedCats = fixedCategories(data)
+  const rows = months.map((m) => monthFlows(data, m, withData, now, fixedCats))
+  // startingBalance is the balance at the start of `now`; roll back over the
+  // months shown before it so the run lands exactly there.
+  const netBeforeNow = rows.filter((r) => r.month < now).reduce((s, r) => s + r.net, 0)
+  let running = startingBalance(data) - netBeforeNow
+  return rows.map((r) => {
+    running += r.net
+    // Only months with real figures get a plan to compare against; a past month
+    // that was never imported is already showing the plan.
+    const planned = r.actual ? plannedFlowsForMonth(data, r.month) : undefined
+    return {
+      month: r.month,
+      label: shortMonth(r.month, locale),
+      income: r.income,
+      expenses: r.expenses,
+      fixedExpenses: r.fixed,
+      variableExpenses: r.variable,
+      setAside: r.setAside,
+      net: r.net,
+      balance: round2(running),
+      projected: r.month > now,
+      actual: r.actual,
+      plannedIncome: planned?.income,
+      plannedExpenses: planned?.expenses,
     }
   })
 }
