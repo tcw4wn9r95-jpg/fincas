@@ -534,8 +534,20 @@ export function buildSummary(data: AppData, back = 6, forward = 12): SummaryPoin
   const locale = data.settings.locale
   const withData = new Set(monthsWithData(data))
 
+  // Look back only as far as there is something to look back at. A past month
+  // with nothing imported can only be drawn from the plan, and a projection
+  // wearing the clothes of history is worse than no history: delete every money
+  // date and the chart would still show months of "what happened".
+  let start = now
+  for (let m = addMonths(now, -back); m < now; m = addMonths(m, 1)) {
+    if (withData.has(m)) {
+      start = m
+      break
+    }
+  }
+
   const months: string[] = []
-  for (let m = addMonths(now, -back); m < now; m = addMonths(m, 1)) months.push(m)
+  for (let m = start; m < now; m = addMonths(m, 1)) months.push(m)
   for (let i = 0; i < forward; i++) months.push(addMonths(now, i))
 
   const fixedCats = fixedCategories(data)

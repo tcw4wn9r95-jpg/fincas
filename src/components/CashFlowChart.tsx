@@ -61,6 +61,13 @@ const niceStep = (v: number) => {
   const step = Math.pow(10, Math.floor(Math.log10(v))) / 2
   return Math.ceil(v / step) * step
 }
+/** The month before this one, for spotting a break in a run of settled months. */
+const prevMonth = (m: string) => {
+  const [y, mm] = m.split('-').map(Number)
+  const d = new Date(y, mm - 2, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 const axisMin = (min: number) => (min >= 0 ? 0 : -niceStep(-min))
 const axisMax = (max: number) => (max <= 0 ? 0 : niceStep(max))
 
@@ -173,12 +180,18 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
     scenarioBalance: scenarioBalances.get(p.month),
   }))
 
-  // The settled stretch, shaded so "what happened" reads apart from "what is
-  // planned" without a second chart.
-  const settled = points.filter((p) => !p.projected && p.actual)
-  const hasPlannedOverlay = settled.length > 0
-  const firstSettled = settled[0]?.month
-  const lastSettled = settled[settled.length - 1]?.month
+  // The settled stretches, shaded so "what happened" reads apart from "what is
+  // planned" without a second chart. One band per unbroken run: a month inside
+  // the window that was never imported is the plan again, and shading over it
+  // would claim it as history.
+  const runs: Array<[string, string]> = []
+  for (const p of points) {
+    const last = runs[runs.length - 1]
+    if (!p.actual) continue
+    if (last && last[1] === prevMonth(p.month)) last[1] = p.month
+    else runs.push([p.month, p.month])
+  }
+  const hasPlannedOverlay = runs.length > 0
 
   // Eighteen months cross a year boundary, so the axis needs one unique key per
   // month; January carries the year to say which one it is.
@@ -242,21 +255,26 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
               wrapperStyle={{ fontSize: 12, paddingBottom: 10 }}
             />
             <ReferenceLine yAxisId="flow" y={0} stroke="#cdbf9f" />
-            {hasPlannedOverlay && (
+            {runs.map(([from, to], i) => (
               <ReferenceArea
+                key={from}
                 yAxisId="flow"
-                x1={firstSettled}
-                x2={lastSettled}
+                x1={from}
+                x2={to}
                 fill="#2e5347"
                 fillOpacity={0.05}
-                label={{
-                  value: 'what happened',
-                  position: 'insideTopLeft',
-                  fill: '#8a8375',
-                  fontSize: 11,
-                }}
+                label={
+                  i === 0
+                    ? {
+                        value: 'what happened',
+                        position: 'insideTopLeft',
+                        fill: '#8a8375',
+                        fontSize: 11,
+                      }
+                    : undefined
+                }
               />
-            )}
+            ))}
             <Line
               yAxisId="flow"
               type="linear"

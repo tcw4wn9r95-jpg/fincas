@@ -238,7 +238,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
             <p className="text-sm text-muted">
               {settledMonths > 0
                 ? `The last ${settledMonths} ${settledMonths === 1 ? 'month' : 'months'} against what you planned, then the next ${SUMMARY_FORWARD} as planned today`
-                : `Income, fixed vs variable expenses · next ${SUMMARY_FORWARD} months`}
+                : `Money in against money out, as planned · next ${SUMMARY_FORWARD} months`}
               {!anchored && ' · no balance recorded to project from'}
             </p>
           </div>

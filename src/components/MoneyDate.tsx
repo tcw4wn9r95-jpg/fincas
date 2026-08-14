@@ -236,14 +236,21 @@ export function MoneyDate({
   }
 
   function deleteMonth() {
+    const samples = (data.sampleTransactions ?? []).filter((t) => t.month === activeMonth).length
+    const what =
+      `${monthTxs.length} transaction${monthTxs.length === 1 ? '' : 's'}` +
+      (samples > 0 ? ` and ${samples} weekly check-in line${samples === 1 ? '' : 's'}` : '')
     if (
       !confirm(
-        `Delete all ${monthTxs.length} transaction${monthTxs.length === 1 ? '' : 's'} for ${formatMonthLabel(activeMonth, locale)}? This can't be undone.`,
+        `Delete all ${what} for ${formatMonthLabel(activeMonth, locale)}? This can't be undone.`,
       )
     )
       return
     update((d) => {
       d.transactions = d.transactions.filter((t) => t.month !== activeMonth)
+      // The weekly pulse holds its own sample of the same month. Leaving it
+      // behind is how a month you deleted keeps turning up.
+      d.sampleTransactions = (d.sampleTransactions ?? []).filter((t) => t.month !== activeMonth)
       return d
     })
   }
