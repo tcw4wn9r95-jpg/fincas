@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { useData } from '../store'
 import {
   computeReview,
+  cardPaymentTarget,
   isCardAccount,
   monthsWithData,
   actualsByCategory,
@@ -193,7 +194,11 @@ export function MoneyDate({
   function reconcileAllSuggestions() {
     update((d) => {
       for (const t of d.transactions) {
-        if (t.month === activeMonth && !t.reconciled && t.category !== 'Other') {
+        // The same gate the OK button applies: a card payment nobody has aimed
+        // settles nothing, so bulk-confirming it would quietly wave through a
+        // line that isn't actually doing what its category claims.
+        const needsCard = t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(d, t) === undefined
+        if (t.month === activeMonth && !t.reconciled && t.category !== 'Other' && !needsCard) {
           const key = txMatchKey(t.description, t.amount)
           const category = t.category
           for (const x of d.transactions) {
@@ -961,7 +966,16 @@ export function MoneyDate({
           onSetCard={setTxCard}
           onSetCategory={(id, category) => {
             setTxCategory(id, category)
-            setReconciled(id, true)
+            // Recategorising normally *is* the confirmation — that's why there's
+            // no separate step for the common case. But filing something as
+            // Other still needs a real category, and filing it as a card
+            // payment while it can't yet resolve to a card would auto-confirm a
+            // payment that settles nothing: the OK button blocks both, so
+            // picking either from the dropdown must not skip around that gate.
+            const t = data.transactions.find((x) => x.id === id)
+            const needsCard =
+              category === CARD_PAYMENT_CATEGORY && t && cardPaymentTarget(data, t) === undefined
+            if (category !== 'Other' && !needsCard) setReconciled(id, true)
           }}
           onToggle={setReconciled}
           onConfirmAll={reconcileAllSuggestions}

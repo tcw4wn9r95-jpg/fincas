@@ -638,6 +638,14 @@ console.log('\n── P. A credit card: charged when spent, settled without spen
   eq('naming the card closes that one', -F.accountBalance(aimed, card), 0)
   eq('… and leaves the other alone', -F.accountBalance(aimed, amex), 140)
 
+  // The breakdown a card's row shows its work with — this is what answers "why
+  // is this number what it is" without reverse-engineering the transactions.
+  const activity = F.cardActivity(two, card)
+  eq('charged, read back out', activity.charged, 600)
+  eq('paid, read back out — zero, since it was never aimed here', activity.paid, 0)
+  const activityAimed = F.cardActivity(aimed, card)
+  eq('once aimed, the payment shows in the breakdown too', activityAimed.paid, 600)
+
   // Categorisation reaches for it on its own.
   eq('a card payment is recognised on sight', C.categorize('PAGO TARJETA DE CREDITO', -900), 'Card payment')
   eq('… in English too', C.categorize('CREDIT CARD AUTOPAY', -900), 'Card payment')

@@ -3,11 +3,14 @@ import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
 import {
   accountBalance,
+  cardActivity,
+  cardPaymentTarget,
   isCardAccount,
   startingBalance,
   totalBalance,
   trackedAccountName,
 } from '../lib/forecast'
+import { CARD_PAYMENT_CATEGORY } from '../lib/categorize'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
@@ -104,6 +107,19 @@ export function Plan() {
   const recorded = totalBalance(data)
   const opening = startingBalance(data)
   const rolled = data.accounts.length > 0 && Math.abs(opening - recorded) > 0.5
+  // Left over from before a card payment had to say which card it settles —
+  // or from picking one that got deleted since. Each one is money the debt
+  // above is quietly missing.
+  const cardAccounts = useMemo(() => data.accounts.filter(isCardAccount), [data.accounts])
+  const unaimedPayments = useMemo(
+    () =>
+      cardAccounts.length > 1
+        ? data.transactions.filter(
+            (t) => t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(data, t) === undefined,
+          )
+        : [],
+    [data, cardAccounts.length],
+  )
   const [acct, setAcct] = useState({ name: '', balance: '' })
   /**
    * `kind` decides what the typed figure means: for cash it is what the account
@@ -271,6 +287,24 @@ export function Plan() {
         title="Accounts"
         desc="Where your money sits, and what you owe. An account whose statements carry a running balance keeps itself current — every import moves it on. A card works the other way round: its charges are spending the day they happen, so what you owe is worked out from those charges less every card payment, and paying the bill closes the gap instead of costing you twice."
       >
+        {unaimedPayments.length > 0 && (
+          <div className="rounded-lg border border-gold/40 bg-gold/5 px-4 py-3 mb-4 text-sm">
+            <p className="font-medium">
+              {unaimedPayments.length} card payment{unaimedPayments.length === 1 ? '' : 's'} not
+              saying which card{unaimedPayments.length === 1 ? '' : 's'}
+            </p>
+            <p className="text-muted mt-0.5">
+              With more than one card, a payment has to name the one it settles or it pays off
+              none of them — the debt above is missing {fx(unaimedPayments.reduce((s, t) => s + Math.abs(t.amount), 0))}
+              {' '}because of these. Open the money date for{' '}
+              {Array.from(new Set(unaimedPayments.map((t) => t.month)))
+                .sort()
+                .map((m) => formatMonthLabel(m, locale))
+                .join(', ')}{' '}
+              and pick a card on each.
+            </p>
+          </div>
+        )}
         <div className="space-y-2 mb-4">
           {data.accounts.map((a) => {
             const awaiting = a.tracked && !a.asOf
@@ -278,6 +312,7 @@ export function Plan() {
             // A card's figure is worked out from its charges and the payments
             // that settled them, so it is shown rather than typed.
             const owed = card ? -accountBalance(data, a) : 0
+            const activity = card ? cardActivity(data, a) : null
             return (
               <div
                 key={a.id}
@@ -291,7 +326,9 @@ export function Plan() {
                   />
                   <div className="text-[11px] text-muted">
                     {card
-                      ? `owed — charges since ${formatMonthLabel(a.asOf, locale)}, less what you've paid off`
+                      ? activity && (activity.charged > 0.005 || activity.paid > 0.005)
+                        ? `since ${formatMonthLabel(a.asOf, locale)}: ${fx(activity.charged)} charged − ${fx(activity.paid)} paid`
+                        : `owed since ${formatMonthLabel(a.asOf, locale)} — nothing charged or paid yet`
                       : a.tracked
                         ? awaiting
                           ? 'waiting for its first current-account statement'

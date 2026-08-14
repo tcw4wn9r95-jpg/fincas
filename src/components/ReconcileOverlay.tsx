@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CATEGORIES } from '../lib/categorize'
+import { CARD_PAYMENT_CATEGORY, CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { type ProvisionStatus } from '../lib/provisions'
 import type { Account, Transaction } from '../lib/types'
@@ -113,7 +113,14 @@ export function ReconcileOverlay({
 
   const done = txs.filter((t) => t.reconciled).length
   const total = txs.length
-  const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other').length
+  /**
+   * A payment aimed at no card settles none — silently, since nothing else
+   * marks it wrong. With one card there's nothing to aim, so it always
+   * resolves; with several, it needs a pick.
+   */
+  const unaimed = (t: Transaction) =>
+    t.category === CARD_PAYMENT_CATEGORY && cards.length > 1 && !t.cardAccountId
+  const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other' && !unaimed(t)).length
   const unreconciled = total - done
   const pct = total ? Math.round((done / total) * 100) : 0
 
@@ -203,13 +210,15 @@ export function ReconcileOverlay({
             )}
             {ordered.map((t) => {
               const isOther = t.category === 'Other'
+              const needsCard = unaimed(t)
+              const blocked = isOther || needsCard
               return (
                 <div
                   key={t.id}
                   className={classNames(
                     'rounded-xl border p-3.5 transition',
                     t.reconciled ? 'border-line bg-forest-tint/20 opacity-70' : 'border-line',
-                    isOther && !t.reconciled && 'border-gold/50',
+                    blocked && !t.reconciled && 'border-gold/50',
                   )}
                 >
                   <div className="flex items-start justify-between gap-3 mb-2">
@@ -256,8 +265,14 @@ export function ReconcileOverlay({
                       <button
                         className="btn-primary inline-flex items-center gap-1 shrink-0"
                         onClick={() => onToggle(t.id, true)}
-                        disabled={isOther}
-                        title={isOther ? 'Pick a category first' : 'Confirm'}
+                        disabled={blocked}
+                        title={
+                          isOther
+                            ? 'Pick a category first'
+                            : needsCard
+                              ? 'Say which card this pays off first — otherwise it settles neither'
+                              : 'Confirm'
+                        }
                       >
                         <IconCheck width={15} height={15} /> OK
                       </button>

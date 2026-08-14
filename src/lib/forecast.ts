@@ -151,6 +151,25 @@ export function accountBalance(data: AppData, account: Account, through?: string
 }
 
 /**
+ * What has actually moved on a card since it was opened: everything charged,
+ * everything paid off. The balance alone can't be read backwards into these —
+ * a debt that looks unchanged could be nothing happening, or a month of
+ * spending exactly cancelled by a payment — so this is what a card's row shows
+ * its work with, the same way `potsCheck` shows its own.
+ */
+export function cardActivity(data: AppData, account: Account): { charged: number; paid: number } {
+  let charged = 0
+  let paid = 0
+  for (const t of data.transactions) {
+    if (t.accountId === account.id && t.category !== CARD_PAYMENT_CATEGORY) charged += -t.amount
+    else if (t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(data, t) === account.id) {
+      paid += Math.abs(t.amount)
+    }
+  }
+  return { charged: round2(charged), paid: round2(paid) }
+}
+
+/**
  * Everything you hold, less everything you owe on a card, at the point the cash
  * balances are anchored to.
  *
