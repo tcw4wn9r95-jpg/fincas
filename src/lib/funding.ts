@@ -1,7 +1,6 @@
-import type { AppData, Transaction } from './types'
-import { allProvisionStatuses, emergencyFundStatus, EMERGENCY_FUND_ID } from './provisions'
+import type { AppData } from './types'
+import { allProvisionStatuses, emergencyFundStatus } from './provisions'
 import { allEventStatuses } from './events'
-import { uid } from './format'
 
 // One number for a job the app couldn't answer before: at the end of the month,
 // how much cash do I actually move out of the current account so every provision
@@ -169,63 +168,6 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
     undated,
     lapsed,
     notYet,
-  }
-}
-
-// ── Month-end carry-over ──────────────────────────────────────────
-// The other direction: not what next month needs, but what this one didn't
-// spend. Closing a month leaves a surplus sitting in the current account,
-// where it reads as spendable and quietly gets spent. Moving it into savings
-// is the last step of a money date.
-
-export interface MonthCarryover {
-  month: string
-  /** Income minus expenses — the same net the money date reports. */
-  net: number
-  /** Of that surplus, how much has already been moved into savings. */
-  swept: number
-  /** Still sitting in the current account, waiting to be moved. */
-  left: number
-}
-
-/**
- * What a month has left over, given the net the money date reports for it.
- *
- * The net is passed in rather than recomputed so the sweep prompt and the
- * summary can never disagree — they are the same number by construction, not
- * by two implementations happening to match. All this adds is how much of that
- * surplus has already been moved.
- */
-export function monthCarryover(data: AppData, month: string, net: number): MonthCarryover {
-  let swept = 0
-  for (const t of data.transactions) {
-    if (t.month === month && t.carryoverFor === month) swept += Math.abs(t.amount)
-  }
-  swept = round2(swept)
-  return { month, net: round2(net), swept, left: round2(Math.max(0, net - swept)) }
-}
-
-/**
- * The transfer that carries a month's surplus into the emergency fund. Filed
- * as an internal movement so it never reads as spending, and pre-reconciled
- * because the user just decided it — there is nothing left to confirm.
- */
-export function carryoverTransaction(month: string, amount: number, label: string): Transaction {
-  const [y, m] = month.split('-').map(Number)
-  const lastDay = new Date(y, m, 0).getDate()
-  return {
-    id: uid(),
-    date: `${month}-${String(lastDay).padStart(2, '0')}`,
-    description: `Left over from ${label} → savings`,
-    amount: -round2(amount),
-    category: 'Internal',
-    source: 'manual',
-    month,
-    reconciled: true,
-    carryoverFor: month,
-    provisionAllocations: [
-      { provisionId: EMERGENCY_FUND_ID, amount: round2(amount), role: 'contribution' },
-    ],
   }
 }
 

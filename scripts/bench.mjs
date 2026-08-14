@@ -98,7 +98,6 @@ console.log('\n── A. A plain month, no pots ──')
   eq('setAside', r.setAside, 0)
   eq('net', r.net, 1000)
   eq('cards tie (in − out − aside = net)', r.income - r.expenses - r.setAside, r.net)
-  eq('carry-over left to sweep', U.monthCarryover(d, M(-1), r.net).left, 1000)
 }
 
 console.log('\n── B. Money set aside stays money ──')

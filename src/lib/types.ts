@@ -97,9 +97,12 @@ export interface Transaction {
    */
   cardAccountId?: string
   /**
-   * Set on the transfer that carries a month's leftover into savings, naming
-   * the month (YYYY-MM) it closes. Marks it as bookkeeping rather than a real
-   * expense, and keeps a month from being swept twice.
+   * @deprecated Named the month a leftover-sweep transaction closed, back when
+   * a money date offered to move what a month didn't spend into the emergency
+   * fund. Retired: the sweep never moved real money — cash balances come only
+   * from statements — so it only ever inflated the emergency fund's claimed
+   * total without anything to show for it in the account meant to hold it.
+   * Kept so a transaction written by that flow still reads; nothing sets it now.
    */
   carryoverFor?: string
   /** @deprecated Pre-split single link, kept so old data still reads. See `provisionAllocations`. */
