@@ -221,7 +221,10 @@ console.log('\n── E. The forecast: provisioning must not drain it ──')
   eq('planned set aside', f[0].setAside, 500)
   eq('net = the change in money held', f[0].net, 1200)
   eq('balance grows by net', f[1].balance - f[0].balance, 1200)
-  eq('a balance dated this month is not rolled', F.startingBalance(d), 6000)
+  // Dated the 5th: five days of this month are already inside that figure, so
+  // the month opened 5/31 of its net lower.
+  const daysThisMonth = new Date(+NOW.slice(0, 4), +NOW.slice(5, 7), 0).getDate()
+  eq('a mid-month balance is unwound to the month’s start', F.startingBalance(d), 6000 - (1200 * 5) / daysThisMonth)
 }
 
 console.log('\n── F. No balance anywhere ──')
@@ -425,6 +428,98 @@ console.log('\n── K. Allocations that can’t be true are put right on load 
   // Repairing twice must not keep shaving money off.
   S.repairAllocations(d)
   eq('running it again changes nothing', P.provisionStatus(d, d.provisions[0]).funded, 430)
+}
+
+console.log('\n── M. Rolling a recorded balance forward, day by day ──')
+{
+  const plan = [
+    line({ id: 'r1', label: 'Salary', amount: 3100, flow: 'income', category: 'Income' }),
+    line({ id: 'r2', label: 'Rent', amount: 1100, flow: 'expense', category: 'Housing' }),
+  ]
+  const days = (m) => new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate()
+
+  // 1. A statement closing on the last day of last month opens this one exactly.
+  const clean = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-1), tracked: true }],
+    recurring: plan,
+  })
+  eq('a month-end statement needs no roll at all', F.startingBalance(clean), 8000)
+
+  // 2. A statement closing mid-month, with that month imported: the tail of the
+  //    month is read off the transactions themselves, not estimated.
+  const midImported = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: `${M(-1)}-15`, tracked: true }],
+    recurring: plan,
+    transactions: [
+      tx({ date: `${M(-1)}-03`, description: 'Salary', amount: 3100, category: 'Income' }),
+      tx({ date: `${M(-1)}-10`, description: 'Rent', amount: -1100, category: 'Housing' }),
+      // After the statement date — the only part the balance does not contain.
+      tx({ date: `${M(-1)}-20`, description: 'Car repair', amount: -640, category: 'Transport' }),
+      tx({ date: `${M(-1)}-27`, description: 'Refund', amount: 90, category: 'Shopping' }),
+    ],
+  })
+  eq('only what happened after the statement is added', F.startingBalance(midImported), 8000 - 640 + 90)
+
+  // 3. Same statement, nothing imported: the plan covers the tail by days.
+  const midPlanned = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: `${M(-1)}-15`, tracked: true }],
+    recurring: plan,
+  })
+  eq(
+    'with nothing imported the plan fills the tail pro rata',
+    F.startingBalance(midPlanned),
+    8000 + (2000 * (days(M(-1)) - 15)) / days(M(-1)),
+  )
+
+  // 4. Money set aside never leaves the accounts the balance covers, so it must
+  //    not move the roll either.
+  const withSetAside = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: `${M(-1)}-15`, tracked: true }],
+    recurring: plan,
+    provisions: [{ id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, createdAt: '2020-01-01' }],
+    transactions: [
+      tx({ date: `${M(-1)}-20`, description: 'Car repair', amount: -640, category: 'Transport' }),
+      tx({
+        date: `${M(-1)}-22`,
+        description: 'To flexible',
+        amount: -500,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'p1', amount: 500, role: 'contribution' }],
+      }),
+      tx({ date: `${M(-1)}-24`, description: 'Between my accounts', amount: -900, category: 'Internal' }),
+    ],
+  })
+  eq('setting money aside does not move the balance', F.startingBalance(withSetAside), 8000 - 640)
+
+  // 5. A balance typed part-way through this month is unwound to the month's
+  //    start, so the forecast doesn't count those days twice.
+  const today = `${NOW}-12`
+  const typedToday = base({
+    accounts: [{ id: 'a1', name: 'Revolut', balance: 5000, asOf: today }],
+    recurring: plan,
+    transactions: [
+      tx({ date: `${NOW}-02`, description: 'Salary', amount: 3100, category: 'Income' }),
+      tx({ date: `${NOW}-06`, description: 'Rent', amount: -1100, category: 'Housing' }),
+    ],
+  })
+  eq('the days already lived through come back out', F.startingBalance(typedToday), 5000 - 2000)
+  eq('… and what is held today is still what was typed', F.balanceToday(typedToday), 5000)
+
+  // 6. The ledger's last settled row lands on the recorded balance.
+  const led = F.buildLedger(
+    base({
+      accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-1), tracked: true }],
+      recurring: plan,
+      transactions: [
+        tx({ date: `${M(-1)}-03`, description: 'Salary', amount: 3100, category: 'Income' }),
+        tx({ date: `${M(-1)}-10`, description: 'Rent', amount: -1100, category: 'Housing' }),
+      ],
+    }),
+  )
+  eq('the ledger ends last month on the statement figure', led.find((p) => p.month === M(-1)).balance, 8000)
+
+  // 7. No balance anywhere: nothing to roll, and nothing invented.
+  eq('nothing recorded rolls to nothing', F.balanceToday(base({ recurring: plan })), 0)
 }
 
 console.log('\n── L. The headline chart: six months back, twelve forward ──')

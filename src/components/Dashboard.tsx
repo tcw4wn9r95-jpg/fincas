@@ -3,7 +3,6 @@ import { useData } from '../store'
 import {
   buildForecast,
   buildLedger,
-  startingBalance,
   forecastHorizon,
   activeScenario,
   applyScenario,
@@ -12,6 +11,8 @@ import {
   actualsByCategoryRange,
   hasBalanceAnchor,
   buildSummary,
+  balanceToday,
+  totalBalance,
 } from '../lib/forecast'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import { provisionCoveredByCategoryRange } from '../lib/provisions'
@@ -98,7 +99,10 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   // flows are still real, so they stay; the balance line goes, rather than
   // drawing a projection off a starting point nobody ever gave us.
   const anchored = hasBalanceAnchor(data)
-  const balance = startingBalance(data)
+  // What they hold now, not where the projection starts: mid-month those are
+  // deliberately different, and only one of them is a balance.
+  const balance = balanceToday(data)
+  const recorded = totalBalance(data)
   const settledMonths = summary.filter((p) => p.actual).length
   const thisMonth = forecast[0]
   // Whole numbers at a glance; cents live in the planner where precision matters.
@@ -188,7 +192,11 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           <Stat
             label="Total balance"
             value={fx(balance)}
-            sub={`${data.accounts.length} ${data.accounts.length === 1 ? 'account' : 'accounts'}`}
+            sub={
+              Math.abs(balance - recorded) > 0.5
+                ? `rolled forward from ${fx(recorded)}`
+                : `${data.accounts.length} ${data.accounts.length === 1 ? 'account' : 'accounts'}`
+            }
           />
         ) : (
           <button className="card p-5 text-left hover:shadow-lift transition" onClick={() => goTo('plan')}>

@@ -164,33 +164,96 @@ export function hasBalanceAnchor(data: AppData): boolean {
  */
 export function anchorMonth(data: AppData): string {
   const now = currentMonth()
-  let latest = ''
-  for (const a of data.accounts) {
-    // A tracked account's date is the statement's, which moves as months are
-    // imported; a manual one's is whenever it was last typed.
-    const am = (a.asOf || '').slice(0, 7)
-    if (am && am > latest) latest = am
-  }
+  const latest = latestAsOf(data).slice(0, 7)
   if (!latest) return now
   const next = addMonths(latest, 1)
   return next > now ? now : next
 }
 
+/** The latest date any recorded balance is true as of. */
+function latestAsOf(data: AppData): string {
+  let latest = ''
+  for (const a of data.accounts) {
+    // A tracked account's date is the statement's, which moves as months are
+    // imported; a manual one's is whenever it was last typed.
+    if (a.asOf && a.asOf > latest) latest = a.asOf
+  }
+  return latest
+}
+
+function daysInMonth(month: string): number {
+  const [y, m] = month.split('-').map(Number)
+  return new Date(y, m, 0).getDate()
+}
+
 /**
- * Self-anchoring balance: the known balance rolled forward to the start of the
- * current month, so the forecast's starting point stays current as real months
- * pass with no need to re-import. Months that have been imported roll on their
- * real figures; months that haven't roll on the plan.
+ * What a month did across part of itself: after `after`, through `through`.
+ *
+ * A balance is true on a *day*, not a month, and statements rarely fall on the
+ * last one — so rolling only whole months either skips the tail of the month a
+ * balance was taken in, or counts a month that figure had already lived
+ * through. Imported months answer this exactly, from the dated transactions
+ * themselves. A month with nothing imported falls back to its share of the plan
+ * by days, which is the best available guess and is exactly right at either end.
+ */
+function netBetween(data: AppData, month: string, after: string, through: string): number {
+  const days = daysInMonth(month)
+  if (data.transactions.some((t) => t.month === month)) {
+    let net = 0
+    for (const t of data.transactions) {
+      if (t.month !== month || t.date <= after || t.date > through) continue
+      if (NON_CASHFLOW.has(t.category)) continue
+      // Money set aside stays inside the accounts this balance covers, so it is
+      // added back exactly as `monthFlows` does for a whole month.
+      net += t.amount + setAsideAmount(t)
+    }
+    return round2(net)
+  }
+  const { income, expenses } = plannedFlowsForMonth(data, month)
+  const from = Math.min(Math.max(Number(after.slice(8, 10)) || 0, 0), days)
+  const to = Math.min(Math.max(Number(through.slice(8, 10)) || 0, 0), days)
+  return round2((income - expenses) * (Math.max(0, to - from) / days))
+}
+
+/**
+ * Self-anchoring balance: the recorded balances rolled to the *start of the
+ * current month*, which is where the forecast and the ledger both begin. This
+ * keeps the starting point current as real months pass, with no re-import.
+ *
+ * Three pieces, in order: whatever is left of the month the balance was taken
+ * in, then every whole month since, on real figures where the month has been
+ * imported and on the plan where it hasn't. A balance dated inside the current
+ * month is the other direction — it already contains part of this month, so
+ * that part comes back out.
  */
 export function startingBalance(data: AppData): number {
   const now = currentMonth()
+  const asOf = latestAsOf(data)
+  const bal = totalBalance(data)
+  if (!asOf) return round2(bal)
+
+  const anchor = asOf.slice(0, 7)
+  if (anchor >= now) return round2(bal - netBetween(data, now, `${now}-00`, asOf))
+
+  let rolled = bal + netBetween(data, anchor, asOf, `${anchor}-31`)
   const withData = new Set(monthsWithData(data))
   const fixedCats = fixedCategories(data)
-  let bal = totalBalance(data)
-  for (let m = anchorMonth(data); m < now; m = addMonths(m, 1)) {
-    bal += monthFlows(data, m, withData, now, fixedCats).net
+  for (let m = addMonths(anchor, 1); m < now; m = addMonths(m, 1)) {
+    rolled += monthFlows(data, m, withData, now, fixedCats).net
   }
-  return round2(bal)
+  return round2(rolled)
+}
+
+/**
+ * What the accounts hold *today* — the recorded figures brought up to date,
+ * rather than to the start of the month. This is the number to show as a
+ * balance; `startingBalance` is where a projection starts, and mid-month the
+ * two are deliberately different.
+ */
+export function balanceToday(data: AppData): number {
+  const now = currentMonth()
+  if (!hasBalanceAnchor(data)) return 0
+  return round2(startingBalance(data) + netBetween(data, now, `${now}-00`, todayISO()))
 }
 
 // Defined with the categories themselves (and re-exported here, where most
@@ -325,7 +388,9 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
       fixedExpenses: fixed,
       variableExpenses: variable,
       net,
-      balance: running,
+      // Rounded per point, like the ledger: a dozen months of floating-point
+      // addition otherwise leaves cents of dust on the projection.
+      balance: round2(running),
       projected: month > start,
     })
   }
@@ -869,7 +934,13 @@ export function financialSummary(data: AppData): string {
   const lines: string[] = []
   lines.push(`Base currency: ${currency}`)
   if (hasBalanceAnchor(data)) {
-    lines.push(`Total balance across accounts: ${fx(totalBalance(data))}`)
+    const held = balanceToday(data)
+    const recorded = totalBalance(data)
+    lines.push(
+      Math.abs(held - recorded) > 0.5
+        ? `Total balance across accounts: ${fx(held)} today — ${fx(recorded)} was recorded, and the plan has been run over the days since.`
+        : `Total balance across accounts: ${fx(held)}`,
+    )
     lines.push(
       'Accounts: ' +
         data.accounts

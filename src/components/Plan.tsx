@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
-import { startingBalance, totalBalance, anchorMonth, trackedAccountName } from '../lib/forecast'
+import { startingBalance, totalBalance, trackedAccountName } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
@@ -82,6 +82,12 @@ export function Plan() {
   const fx = (n: number) => formatMoney(n, currency, locale)
 
   // ── Accounts ──
+  // What was recorded, against where the forecast actually starts. They differ
+  // whenever a balance is older than the start of this month — or newer, when
+  // one was typed part-way through it.
+  const recorded = totalBalance(data)
+  const opening = startingBalance(data)
+  const rolled = data.accounts.length > 0 && Math.abs(opening - recorded) > 0.5
   const [acct, setAcct] = useState({ name: '', balance: '' })
   function addAccount() {
     if (!acct.name.trim()) return
@@ -301,17 +307,17 @@ export function Plan() {
             </button>
           </div>
         )}
-        {data.accounts.length > 0 && anchorMonth(data) < currentMonth() && (
-          <div className="rounded-lg bg-forest-tint/50 border border-line px-4 py-2.5 mb-4 flex items-center justify-between text-sm">
+        {rolled && (
+          <div className="rounded-lg bg-forest-tint/50 border border-line px-4 py-2.5 mb-4 flex items-center justify-between gap-3 text-sm">
             <span className="text-muted">
-              Rolled forward to {formatMonthLabel(currentMonth(), locale)}
+              Where {formatMonthLabel(currentMonth(), locale)} started
+              {opening > recorded
+                ? ', carrying what you recorded forward through your plan'
+                : ', with the days that balance already covers taken back out'}
             </span>
-            <span className="font-medium tabular-nums">
-              {fx(startingBalance(data))}
-              <span className="text-muted font-normal">
-                {' '}
-                (from {fx(totalBalance(data))})
-              </span>
+            <span className="font-medium tabular-nums shrink-0">
+              {fx(opening)}
+              <span className="text-muted font-normal"> (from {fx(recorded)})</span>
             </span>
           </div>
         )}

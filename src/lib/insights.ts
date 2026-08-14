@@ -4,7 +4,7 @@ import {
   computeReview,
   spendSeriesByCategory,
   streak,
-  totalBalance,
+  balanceToday,
   hasBalanceAnchor,
 } from './forecast'
 
@@ -144,7 +144,7 @@ export function deriveInsights(data: AppData): Insights | null {
   // read as an empty account rather than a missing figure.
   const monthsCovered =
     avgSpend > 0 && hasBalanceAnchor(data)
-      ? Math.round((totalBalance(data) / avgSpend) * 10) / 10
+      ? Math.round((balanceToday(data) / avgSpend) * 10) / 10
       : null
   const debtPlanLines = data.recurring.filter((r) => r.flow === 'expense' && r.category === 'Loans').length
   const investment: InvestmentChecklist = {
