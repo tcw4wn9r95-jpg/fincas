@@ -122,12 +122,25 @@ export function emergencyFundStatus(data: AppData): EmergencyFundStatus {
   }
 }
 
+/**
+ * When a pot starts asking for money: its own start date, or the day it was
+ * created. The single way to read it — a provision written before start dates
+ * existed has none, and every caller should treat that as "from the beginning".
+ */
+export function provisionStart(p: Pick<Provision, 'startDate' | 'createdAt'>): string {
+  return p.startDate || p.createdAt
+}
+
 export interface ProvisionStatus {
   id: string
   label: string
   category: string
   targetAmount: number
   dueDate?: string
+  /** Resolved through `provisionStart` — never absent here. */
+  startDate: string
+  /** True while the start date is still ahead: the pot is dormant, not behind. */
+  notStarted: boolean
   /** Accrued so far: contributions minus drawdowns, floored at 0 for the progress bar. */
   funded: number
   contributed: number
@@ -155,14 +168,22 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
   const overdrawn = Math.max(0, -balance)
   const pct = p.targetAmount > 0 ? Math.min(100, Math.round((funded / p.targetAmount) * 100)) : 0
 
+  const now = new Date()
+  const nowMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const start = provisionStart(p)
+  const notStarted = start.slice(0, 7) > nowMonth
+
   let monthsRemaining: number | null = null
   let suggestedMonthly: number | null = null
   if (p.dueDate) {
-    const now = new Date()
-    const nowMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
     monthsRemaining = Math.max(0, monthsBetween(nowMonth, p.dueDate.slice(0, 7)))
+    // Paced from whichever comes later, today or the day it starts: a pot that
+    // only begins in March has March-to-due to fill, not now-to-due, and saying
+    // otherwise would ask for a smaller monthly figure than it will really need.
+    const from = notStarted ? start.slice(0, 7) : nowMonth
+    const months = Math.max(1, monthsBetween(from, p.dueDate.slice(0, 7)))
     const remaining = Math.max(0, p.targetAmount - funded)
-    suggestedMonthly = round2(remaining / Math.max(1, monthsRemaining))
+    suggestedMonthly = round2(remaining / months)
   }
 
   return {
@@ -171,6 +192,8 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
     category: p.category,
     targetAmount: p.targetAmount,
     dueDate: p.dueDate,
+    startDate: start,
+    notStarted,
     funded,
     contributed: round2(contributed),
     drawn: round2(drawn),

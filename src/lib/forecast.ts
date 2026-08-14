@@ -1036,7 +1036,11 @@ export function financialSummary(data: AppData): string {
             (p) =>
               `${p.label} [${p.category}] ${fx(p.funded)}/${fx(p.targetAmount)} funded` +
               (p.dueDate ? `, due ${p.dueDate}` : '') +
-              (p.suggestedMonthly ? `, ≈${fx(p.suggestedMonthly)}/mo to stay on track` : ''),
+              // Say so rather than letting an empty pot read as neglect.
+              (p.notStarted ? `, not started yet — saving begins ${p.startDate}` : '') +
+              (p.suggestedMonthly
+                ? `, ≈${fx(p.suggestedMonthly)}/mo ${p.notStarted ? 'once it starts' : 'to stay on track'}`
+                : ''),
           )
           .join('; '),
     )

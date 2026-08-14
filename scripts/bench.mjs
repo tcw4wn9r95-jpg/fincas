@@ -568,6 +568,48 @@ console.log('\n── L. The headline chart: six months back, twelve forward ─
   eq('and meets the anchored balance at today', nowPoint.balance, F.startingBalance(d) + nowPoint.net)
 }
 
+console.log('\n── O. A provision that starts later ──')
+{
+  const p = (over) => ({
+    id: 'p1',
+    label: 'Car service',
+    category: 'Transport',
+    targetAmount: 1200,
+    dueDate: `${M(6)}-15`,
+    createdAt: '2020-01-01',
+    ...over,
+  })
+
+  // No start date: it started the day it was created.
+  const always = base({ provisions: [p({})] })
+  eq('an undated start falls back to when it was made', P.provisionStatus(always, always.provisions[0]).startDate, '2020-01-01')
+  eq('… and it is asking for money now', P.provisionStatus(always, always.provisions[0]).notStarted, false)
+  const nowPlan = U.fundingPlan(always, NOW, `${NOW}-15`)
+  eq('so it is in this month’s transfer', nowPlan.lines.map((l) => l.id).join(','), 'p1')
+  eq('spread over the six months to its date', nowPlan.total, 200)
+
+  // Starting in three months: dormant until then, and paced over what is left.
+  const later = base({ provisions: [p({ startDate: `${M(3)}-01` })] })
+  const st = P.provisionStatus(later, later.provisions[0])
+  eq('a future start reads as not started', st.notStarted, true)
+  eq('… and paces over start-to-due, not now-to-due', st.suggestedMonthly, 400)
+  const plan = U.fundingPlan(later, NOW, `${NOW}-15`)
+  eq('it asks for nothing this month', plan.total, 0)
+  eq('… and is listed as not yet', plan.notYet.map((l) => l.id).join(','), 'p1')
+  ok('… out of the lines being funded', plan.lines.length === 0)
+
+  // Once its month arrives it joins the transfer at the paced amount.
+  const started = U.fundingPlan(later, M(3), `${NOW}-15`)
+  eq('in its own month it joins in', started.lines.map((l) => l.id).join(','), 'p1')
+  eq('… for its share of the months left', started.total, 400)
+  ok('and nothing is left waiting', started.notYet.length === 0)
+
+  // A start date already behind us changes nothing.
+  const begun = base({ provisions: [p({ startDate: `${M(-2)}-01` })] })
+  eq('a past start is simply started', P.provisionStatus(begun, begun.provisions[0]).notStarted, false)
+  eq('and it funds like any other', U.fundingPlan(begun, NOW, `${NOW}-15`).total, 200)
+}
+
 console.log('\n── N. Every surface reads the plan the same way ──')
 {
   const d = base({

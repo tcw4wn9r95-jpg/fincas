@@ -9,6 +9,16 @@ import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
 import { IconPlus, IconTrash } from './icons'
 
+/**
+ * What a provision can be for: a bill. Income is what funds one, and the
+ * transfer categories are how money moves between your own accounts — a pot
+ * filed under either would read every salary or transfer as its bill being
+ * paid, through `provisionRoleFor`.
+ */
+const PROVISION_CATS = CATEGORIES.filter(
+  (c) => c !== 'Income' && c !== 'Internal' && c !== 'Transfer' && c !== 'Savings',
+)
+
 function Section({
   title,
   desc,
@@ -154,7 +164,13 @@ export function Plan() {
   }
 
   // ── Provisions ──
-  const [prov, setProv] = useState({ label: '', category: CATEGORIES[0] as string, target: '', dueDate: '' })
+  const [prov, setProv] = useState({
+    label: '',
+    category: 'Taxes' as string,
+    target: '',
+    dueDate: '',
+    startDate: '',
+  })
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
   function addProvision() {
     if (!prov.label.trim() || !parseAmount(prov.target)) return
@@ -164,13 +180,15 @@ export function Plan() {
       category: prov.category,
       targetAmount: parseAmount(prov.target) || 0,
       dueDate: prov.dueDate || undefined,
+      // Left blank, a provision starts the day it is created.
+      startDate: prov.startDate || undefined,
       createdAt: todayISO(),
     }
     update((d) => {
       d.provisions.push(p)
       return d
     })
-    setProv({ label: '', category: CATEGORIES[0] as string, target: '', dueDate: '' })
+    setProv({ label: '', category: 'Taxes', target: '', dueDate: '', startDate: '' })
   }
   function removeProvision(id: string) {
     update((d) => {
@@ -432,7 +450,7 @@ export function Plan() {
                   value={p.category}
                   onChange={(e) => editProvision(p.id, { category: e.target.value })}
                 >
-                  {CATEGORIES.map((c) => (
+                  {PROVISION_CATS.map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>
@@ -457,15 +475,29 @@ export function Plan() {
                   style={{ width: `${p.pct}%` }}
                 />
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-muted mt-1.5">
-                <span>due</span>
+              <div className="flex items-center gap-1.5 text-xs text-muted mt-1.5 flex-wrap">
+                <span>from</span>
                 <input
                   type="date"
                   className="bg-transparent outline-none focus:text-forest"
+                  aria-label={`When ${p.label} starts saving`}
+                  defaultValue={p.startDate.slice(0, 10)}
+                  onChange={(e) => editProvision(p.id, { startDate: e.target.value || undefined })}
+                />
+                <span>· due</span>
+                <input
+                  type="date"
+                  className="bg-transparent outline-none focus:text-forest"
+                  aria-label={`When ${p.label} is due`}
                   defaultValue={p.dueDate ?? ''}
                   onChange={(e) => editProvision(p.id, { dueDate: e.target.value || undefined })}
                 />
-                {p.suggestedMonthly ? <span>· ≈{fx(p.suggestedMonthly)}/mo to stay on track</span> : null}
+                {p.suggestedMonthly ? (
+                  <span>
+                    · ≈{fx(p.suggestedMonthly)}/mo{' '}
+                    {p.notStarted ? 'once it starts' : 'to stay on track'}
+                  </span>
+                ) : null}
               </div>
               {p.overdrawn > 0.5 && (
                 <div className="text-xs text-clay mt-1">
@@ -490,7 +522,7 @@ export function Plan() {
             value={prov.category}
             onChange={(e) => setProv({ ...prov, category: e.target.value })}
           >
-            {CATEGORIES.map((c) => (
+            {PROVISION_CATS.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
@@ -504,12 +536,28 @@ export function Plan() {
             value={prov.target}
             onChange={(e) => setProv({ ...prov, target: e.target.value })}
           />
-          <input
-            className="input w-auto"
-            type="date"
-            value={prov.dueDate}
-            onChange={(e) => setProv({ ...prov, dueDate: e.target.value })}
-          />
+          {/* Native date inputs take no placeholder, so each carries its own
+              word — two bare date boxes side by side say nothing. */}
+          <label className="input w-auto flex items-center gap-2 text-xs text-muted">
+            from
+            <input
+              className="bg-transparent outline-none text-sm text-ink"
+              type="date"
+              aria-label="When this provision starts saving (defaults to today)"
+              value={prov.startDate}
+              onChange={(e) => setProv({ ...prov, startDate: e.target.value })}
+            />
+          </label>
+          <label className="input w-auto flex items-center gap-2 text-xs text-muted">
+            due
+            <input
+              className="bg-transparent outline-none text-sm text-ink"
+              type="date"
+              aria-label="When this provision is due"
+              value={prov.dueDate}
+              onChange={(e) => setProv({ ...prov, dueDate: e.target.value })}
+            />
+          </label>
           <button className="btn-primary" onClick={addProvision}>
             <IconPlus width={16} height={16} /> Add
           </button>
@@ -541,14 +589,18 @@ export function Plan() {
           </div>
         </div>
 
-        {funding.lines.length === 0 && funding.undated.length === 0 && funding.lapsed.length === 0 && (
+        {funding.lines.length === 0 &&
+          funding.undated.length === 0 &&
+          funding.lapsed.length === 0 &&
+          funding.notYet.length === 0 && (
           <p className="text-sm text-muted">
             Nothing to move — every provision and event is funded for that month.
           </p>
-        )}
-        {funding.lines.length === 0 && (funding.undated.length > 0 || funding.lapsed.length > 0) && (
-          <p className="text-sm text-muted">Nothing on schedule to fund that month.</p>
-        )}
+          )}
+        {funding.lines.length === 0 &&
+          (funding.undated.length > 0 || funding.lapsed.length > 0 || funding.notYet.length > 0) && (
+            <p className="text-sm text-muted">Nothing on schedule to fund that month.</p>
+          )}
 
         <div className="space-y-2">
           {funding.lines.map((l) => (
@@ -568,6 +620,27 @@ export function Plan() {
                 <div key={l.id} className="flex items-center justify-between gap-3 text-sm">
                   <span className="truncate">{l.label}</span>
                   <span className="tabular-nums text-muted shrink-0">{fx(l.remaining)} short</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {funding.notYet.length > 0 && (
+          <div className="mt-4 rounded-lg border border-line bg-canvas/60 px-4 py-3">
+            <div className="text-sm font-medium text-muted">Not yet — they start later</div>
+            <p className="text-xs text-muted mt-0.5">
+              These join the transfer in the month they start, and spread what they need over the
+              months they have from there.
+            </p>
+            <div className="mt-2 space-y-1">
+              {funding.notYet.map((l) => (
+                <div key={l.id} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="truncate text-muted">{l.label}</span>
+                  <span className="tabular-nums text-muted shrink-0">
+                    {fx(l.remaining)} from{' '}
+                    {l.startDate ? formatMonthLabel(l.startDate.slice(0, 7), locale) : 'later'}
+                  </span>
                 </div>
               ))}
             </div>

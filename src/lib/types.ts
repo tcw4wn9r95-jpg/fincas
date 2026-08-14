@@ -131,6 +131,13 @@ export interface Provision {
   targetAmount: number
   /** ISO date (or YYYY-MM) the provisioned expense is next expected. */
   dueDate?: string
+  /**
+   * When this pot starts asking for money. Before it, the pot is dormant: it
+   * takes nothing from the monthly transfer and paces itself over the months
+   * from here to `dueDate` rather than from today. Absent means it started the
+   * day it was created — read it through `provisionStart()`, never directly.
+   */
+  startDate?: string
   createdAt: string
 }
 

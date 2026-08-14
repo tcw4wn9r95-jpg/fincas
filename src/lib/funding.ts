@@ -17,7 +17,7 @@ function monthsBetween(a: string, b: string): number {
   return (by - ay) * 12 + (bm - am)
 }
 
-export type FundingStatus = 'overdue' | 'due-now' | 'on-track' | 'no-date'
+export type FundingStatus = 'overdue' | 'due-now' | 'on-track' | 'no-date' | 'not-started'
 
 export interface FundingLine {
   id: string
@@ -33,6 +33,8 @@ export interface FundingLine {
   /** The share of `remaining` that belongs to this month — what to move. */
   amount: number
   status: FundingStatus
+  /** When this line starts asking for money (provisions only). */
+  startDate?: string
   /** Set when this provision is the fund behind an event. */
   eventLabel?: string
 }
@@ -49,9 +51,17 @@ export interface FundingPlan {
   undated: FundingLine[]
   /** Underfunded, but the date has passed — they no longer ask for anything. */
   lapsed: FundingLine[]
+  /** Real, but not yet: they start saving in a later month than this one. */
+  notYet: FundingLine[]
 }
 
-const RANK: Record<FundingStatus, number> = { overdue: 0, 'due-now': 1, 'on-track': 2, 'no-date': 3 }
+const RANK: Record<FundingStatus, number> = {
+  overdue: 0,
+  'due-now': 1,
+  'on-track': 2,
+  'no-date': 3,
+  'not-started': 4,
+}
 
 /**
  * What to move into savings for `month` (YYYY-MM).
@@ -91,8 +101,12 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
   for (const p of allProvisionStatuses(data)) {
     const remaining = round2(Math.max(0, p.targetAmount - p.funded))
     const dueMonth = p.dueDate?.slice(0, 7)
-    const status = statusFor(p.dueDate)
-    const monthsLeft = dueMonth ? Math.max(1, monthsBetween(month, dueMonth)) : null
+    // A pot that starts later asks for nothing yet — and then for the whole
+    // remaining balance spread over the months it does have.
+    const startMonth = p.startDate.slice(0, 7)
+    const status = startMonth > month ? 'not-started' : statusFor(p.dueDate)
+    const spreadFrom = startMonth > month ? startMonth : month
+    const monthsLeft = dueMonth ? Math.max(1, monthsBetween(spreadFrom, dueMonth)) : null
     const line: FundingLine = {
       id: p.id,
       label: p.label,
@@ -102,8 +116,12 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
       funded: p.funded,
       remaining,
       monthsLeft,
-      amount: remaining > 0 && monthsLeft && status !== 'overdue' ? round2(remaining / monthsLeft) : 0,
+      amount:
+        remaining > 0 && monthsLeft && status !== 'overdue' && status !== 'not-started'
+          ? round2(remaining / monthsLeft)
+          : 0,
       status,
+      startDate: p.startDate,
       eventLabel: eventByProvision.get(p.id),
     }
     if (remaining <= 0.005) settled.push(line)
@@ -140,6 +158,7 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
 
   const undated = lines.filter((l) => l.status === 'no-date').sort(sort)
   const lapsed = lines.filter((l) => l.status === 'overdue').sort(sort)
+  const notYet = lines.filter((l) => l.status === 'not-started').sort(sort)
   const due = lines.filter((l) => l.status === 'due-now' || l.status === 'on-track').sort(sort)
 
   return {
@@ -149,6 +168,7 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
     settled: settled.sort(sort),
     undated,
     lapsed,
+    notYet,
   }
 }
 
