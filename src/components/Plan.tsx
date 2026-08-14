@@ -4,7 +4,6 @@ import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth,
 import { startingBalance, totalBalance, anchorMonth, trackedAccountName } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
-import { dataChecks, type DataCheck } from '../lib/consistency'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
@@ -73,30 +72,6 @@ function FundingRow({
         </div>
       </div>
       <div className="tabular-nums text-right shrink-0">{fx(line.amount)}</div>
-    </div>
-  )
-}
-
-const CHECK_TONE: Record<DataCheck['level'], { dot: string; label: string }> = {
-  blocker: { dot: 'bg-clay', label: 'stops the numbers working' },
-  warn: { dot: 'bg-gold', label: 'worth fixing' },
-  info: { dot: 'bg-sage', label: 'have a look' },
-}
-
-/** One thing that doesn't add up, and where to go about it. */
-function CheckRow({ check }: { check: DataCheck }) {
-  const tone = CHECK_TONE[check.level]
-  return (
-    <div className="flex gap-3 rounded-lg border border-line bg-canvas px-4 py-3">
-      <span
-        className={classNames('mt-1.5 h-2 w-2 shrink-0 rounded-full', tone.dot)}
-        title={tone.label}
-      />
-      <div className="min-w-0">
-        <div className="font-medium">{check.title}</div>
-        <p className="text-sm text-muted">{check.detail}</p>
-        {check.fix && <p className="text-sm text-forest mt-0.5">{check.fix}</p>}
-      </div>
     </div>
   )
 }
@@ -207,9 +182,6 @@ export function Plan() {
     [data, fundingMonth],
   )
 
-  // ── Does the data hold together? ──
-  const checks = useMemo(() => dataChecks(data), [data])
-
   // ── Do the pots add up? ──
   const pots = useMemo(() => potsCheck(data), [data])
   function setProvisionAccount(id: string) {
@@ -257,24 +229,6 @@ export function Plan() {
           Starting balances, your full monthly plan, and goals — all editable
         </p>
       </div>
-
-      <Section
-        title="Does this add up?"
-        desc="Everything here is worked out from what you've imported, so it can be perfectly consistent and still be wrong. This is the check on the inputs themselves."
-      >
-        {checks.length === 0 ? (
-          <p className="text-sm text-muted">
-            Nothing looks off: a balance to project from, every allocation
-            pointing somewhere real, and no gaps in the months you've imported.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {checks.map((c) => (
-              <CheckRow key={c.id} check={c} />
-            ))}
-          </div>
-        )}
-      </Section>
 
       <Section
         title="Accounts"

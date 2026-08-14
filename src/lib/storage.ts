@@ -1,5 +1,6 @@
-import type { AppData, ChatMessage, Settings } from './types'
+import type { AppData, ChatMessage, ProvisionAllocation, Settings } from './types'
 import { todayISO, uid, currentMonth, addMonths } from './format'
+import { EMERGENCY_FUND_ID, transactionAllocations } from './provisions'
 
 const STORAGE_KEY = 'fincas.data.v1'
 export const DATA_VERSION = 1
@@ -29,17 +30,65 @@ export function emptyData(): AppData {
   }
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * Put right the two ways an allocation can be wrong, in place, every time data
+ * is loaded or restored.
+ *
+ * A pot balance is derived from these allocations, so either fault shows up as
+ * money the app thinks is set aside that isn't:
+ *
+ *  - **Earmarked for a pot that no longer exists.** Deleting a provision clears
+ *    its allocations now, but data written before that did, or restored from an
+ *    older backup, can still name one.
+ *  - **Split further than the transaction went.** A €100 transfer with €150
+ *    spread across pots. Allocations are taken in order until the transaction
+ *    is used up, and the excess is dropped — nothing is invented to cover it.
+ *
+ * Legacy single-link fields are normalised through `transactionAllocations`
+ * first and then cleared, so the same link can't be read twice.
+ */
+export function repairAllocations(d: AppData): AppData {
+  const pots = new Set<string>(d.provisions.map((p) => p.id))
+  pots.add(EMERGENCY_FUND_ID)
+
+  for (const t of d.transactions) {
+    const current = transactionAllocations(t)
+    if (current.length === 0) continue
+
+    let left = round2(Math.abs(t.amount))
+    const kept: ProvisionAllocation[] = []
+    for (const a of current) {
+      if (!pots.has(a.provisionId)) continue
+      const amount = round2(Math.min(a.amount, left))
+      if (amount <= 0.005) continue
+      kept.push({ ...a, amount })
+      left = round2(left - amount)
+    }
+
+    const unchanged =
+      kept.length === current.length && kept.every((a, i) => a.amount === current[i].amount)
+    if (unchanged && t.provisionAllocations) continue
+    t.provisionAllocations = kept.length ? kept : undefined
+    t.provisionId = undefined
+    t.provisionRole = undefined
+    t.provisionAmount = undefined
+  }
+  return d
+}
+
 export function loadData(): AppData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return emptyData()
     const parsed = JSON.parse(raw) as AppData
     // Merge in any new default settings keys without clobbering saved ones.
-    return {
+    return repairAllocations({
       ...emptyData(),
       ...parsed,
       settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
-    }
+    })
   } catch {
     return emptyData()
   }
@@ -107,12 +156,12 @@ export async function importData(file: File): Promise<AppData> {
   if (!parsed || typeof parsed !== 'object' || !('version' in parsed)) {
     throw new Error('That file does not look like a CasaresSan Finances backup.')
   }
-  return {
+  return repairAllocations({
     ...emptyData(),
     ...parsed,
     settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
     updatedAt: new Date().toISOString(),
-  }
+  })
 }
 
 // ── Demo data — lets a first-time user see the app come alive ─────────

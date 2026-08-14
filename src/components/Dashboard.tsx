@@ -14,7 +14,6 @@ import {
   buildSummary,
 } from '../lib/forecast'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
-import { dataChecks, checksLevel } from '../lib/consistency'
 import { provisionCoveredByCategoryRange } from '../lib/provisions'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
@@ -99,10 +98,6 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   // flows are still real, so they stay; the balance line goes, rather than
   // drawing a projection off a starting point nobody ever gave us.
   const anchored = hasBalanceAnchor(data)
-  // Anything that makes these figures untrustworthy is worth saying here, where
-  // the figures are, rather than only on the page that fixes it.
-  const checks = useMemo(() => dataChecks(data), [data])
-  const serious = checks.filter((c) => c.level !== 'info')
   const balance = startingBalance(data)
   const settledMonths = summary.filter((p) => p.actual).length
   const thisMonth = forecast[0]
@@ -221,31 +216,6 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           sub="of this month's income"
         />
       </div>
-
-      {serious.length > 0 && (
-        <button
-          className="card w-full p-4 text-left flex items-start gap-3 hover:shadow-lift transition"
-          onClick={() => goTo('plan')}
-        >
-          <span
-            className={classNames(
-              'mt-1.5 h-2 w-2 shrink-0 rounded-full',
-              checksLevel(serious) === 'blocker' ? 'bg-clay' : 'bg-gold',
-            )}
-          />
-          <span className="min-w-0">
-            <span className="block font-medium">
-              {serious.length === 1
-                ? serious[0].title
-                : `${serious.length} things don't add up yet`}
-            </span>
-            <span className="block text-sm text-muted">
-              {serious.length === 1 ? serious[0].detail : serious.map((c) => c.title).join(' · ')}
-            </span>
-            <span className="block text-sm text-forest mt-0.5">See the check in Plan</span>
-          </span>
-        </button>
-      )}
 
       <div className="card p-6">
         <div className="flex items-baseline justify-between mb-4">

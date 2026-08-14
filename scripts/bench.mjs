@@ -27,7 +27,7 @@ const server = await createServer({
 const F = await server.ssrLoadModule('/src/lib/forecast.ts')
 const P = await server.ssrLoadModule('/src/lib/provisions.ts')
 const U = await server.ssrLoadModule('/src/lib/funding.ts')
-const C = await server.ssrLoadModule('/src/lib/consistency.ts')
+const S = await server.ssrLoadModule('/src/lib/storage.ts')
 const fmt = await server.ssrLoadModule('/src/lib/format.ts')
 
 const NOW = fmt.currentMonth()
@@ -232,12 +232,6 @@ console.log('\n── F. No balance anywhere ──')
   })
   eq('no anchor to project from', F.hasBalanceAnchor(d), false)
   eq('totalBalance', F.totalBalance(d), 0)
-  const c = C.dataChecks(d)
-  ok(
-    'the data check calls it out as a blocker',
-    c.some((x) => x.id === 'no-accounts' && x.level === 'blocker'),
-    JSON.stringify(c.map((x) => x.id)),
-  )
   // An account that exists but has never been given a figure is still no anchor.
   const tracked = base({ ...d, accounts: [{ id: 'a1', name: 'S-Bank', balance: 0, asOf: '', tracked: true }] })
   eq('a tracked account awaiting its first statement is not an anchor', F.hasBalanceAnchor(tracked), false)
@@ -374,65 +368,63 @@ console.log('\n── J. What to move into savings, and whether it is really the
   eq('… has 900 nobody has claimed', pots.difference, 900)
 }
 
-console.log('\n── K. The data check finds what quietly makes the numbers lie ──')
+console.log('\n── K. Allocations that can’t be true are put right on load ──')
 {
   const d = base({
-    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-3), tracked: true }],
-    recurring: [line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' })],
     provisions: [{ id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, createdAt: '2020-01-01' }],
     transactions: [
-      // Two months back and one month back, with the month between missing.
-      tx({ date: `${M(-3)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
-      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
-      tx({ date: `${M(-1)}-03`, description: 'Coffee', amount: -4, category: 'Food' }),
-      tx({ date: `${M(-1)}-03`, description: 'Coffee', amount: -4, category: 'Food' }),
-      tx({ date: `${M(-1)}-04`, description: 'Unsure', amount: -50, category: 'Other', reconciled: false }),
+      // Split further than the transaction went: €150 across a €100 transfer.
       tx({
         date: `${M(-1)}-08`,
         description: 'Over-split',
         amount: -100,
         category: 'Savings',
-        provisionAllocations: [{ provisionId: 'p1', amount: 150, role: 'contribution' }],
+        provisionAllocations: [
+          { provisionId: 'p1', amount: 80, role: 'contribution' },
+          { provisionId: 'emergency-fund', amount: 70, role: 'contribution' },
+        ],
       }),
+      // Earmarked for a pot that no longer exists.
       tx({
         date: `${M(-1)}-09`,
         description: 'Ghost pot',
-        amount: -100,
+        amount: -200,
         category: 'Savings',
-        provisionAllocations: [{ provisionId: 'gone', amount: 100, role: 'contribution' }],
+        provisionAllocations: [{ provisionId: 'gone', amount: 200, role: 'contribution' }],
       }),
+      // Untouched: within its amount, pointing somewhere real.
       tx({
         date: `${M(-1)}-10`,
-        description: 'Pot paid a bill it never had',
-        amount: -500,
-        category: 'Taxes',
-        provisionAllocations: [{ provisionId: 'p1', amount: 500, role: 'drawdown' }],
+        description: 'Good split',
+        amount: -300,
+        category: 'Savings',
+        provisionAllocations: [{ provisionId: 'p1', amount: 300, role: 'contribution' }],
+      }),
+      // The pre-split single link, which has to survive as one allocation.
+      tx({
+        date: `${M(-1)}-11`,
+        description: 'Legacy link',
+        amount: -50,
+        category: 'Savings',
+        provisionId: 'p1',
+        provisionRole: 'contribution',
+        provisionAmount: 50,
       }),
     ],
   })
-  const ids = C.dataChecks(d).map((c) => c.id)
-  for (const want of [
-    'stale-balance',
-    'over-allocated',
-    'orphan-allocations',
-    'overdrawn-pots',
-    'month-gap',
-    'unreconciled-past',
-    'duplicates',
-  ]) {
-    ok(`finds ${want}`, ids.includes(want), `saw ${ids.join(', ')}`)
-  }
-  ok('does not cry about a missing account when there is one', !ids.includes('no-accounts'))
-
-  const clean = base({
-    accounts: [{ id: 'a1', name: 'S-Bank', balance: 8000, asOf: endOf(-1), tracked: true }],
-    recurring: [line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' })],
-    transactions: [
-      tx({ date: `${M(-1)}-01`, description: 'Salary', amount: 3000, category: 'Income' }),
-      tx({ date: `${M(-1)}-02`, description: 'Rent', amount: -2000, category: 'Housing' }),
-    ],
-  })
-  eq('a tidy file reports nothing', C.dataChecks(clean).length, 0)
+  S.repairAllocations(d)
+  const [over, ghost, good, legacy] = d.transactions
+  eq('the over-split is trimmed to what moved', P.allocatedTotal(over), 100)
+  eq('… taking the allocations in order', over.provisionAllocations.map((a) => a.amount).join(','), '80,20')
+  eq('the ghost allocation is dropped', P.allocatedTotal(ghost), 0)
+  ok('… leaving nothing behind', ghost.provisionAllocations === undefined)
+  eq('a sound split is left alone', P.allocatedTotal(good), 300)
+  eq('the legacy single link becomes one allocation', P.allocatedTotal(legacy), 50)
+  ok('… and the old fields are cleared', legacy.provisionId === undefined)
+  eq('the pot now holds only what is real', P.provisionStatus(d, d.provisions[0]).funded, 430)
+  // Repairing twice must not keep shaving money off.
+  S.repairAllocations(d)
+  eq('running it again changes nothing', P.provisionStatus(d, d.provisions[0]).funded, 430)
 }
 
 console.log('\n── L. The headline chart: six months back, twelve forward ──')

@@ -1,6 +1,5 @@
 import {
   ComposedChart,
-  Bar,
   Line,
   XAxis,
   YAxis,
@@ -35,21 +34,35 @@ interface Props {
 
 // Series colors validated against the paper surface (#fbf9f4):
 // contrast ≥ 3:1 and CVD-safe adjacency (protan ΔE 21+).
+//
+// One hue per direction of money: green in, clay out. What was planned uses the
+// same hue as what happened, dotted — so a dotted green line reads as "the
+// income you expected" without a colour to learn.
 const COLOR = {
-  fixed: '#2e5347',
-  variable: '#b95f38',
   income: '#3f7d63',
+  expenses: '#b95f38',
   balance: '#1f3d34',
   // Violet reads as "hypothetical" and sits in a different hue family from the
   // greens/clay, so it stays separable under colour-vision deficiency.
   scenario: '#6d5296',
-  // What was planned for a month that has since happened. Gold is already the
-  // "planned" hue on the track-record chart, so the two read as one idea.
-  plannedIn: '#b8862f',
-  plannedOut: '#7d7466',
 }
 
 type ChartPoint = SummaryPoint & { scenarioBalance?: number }
+
+/**
+ * Axis bounds that are guaranteed to contain the data.
+ *
+ * Two Y axes make recharts align their tick counts, and its automatic rounding
+ * can land the top of one below its own maximum — which silently clips the end
+ * of the balance line off the top of the plot rather than showing a taller
+ * axis. Rounding out to a half-decade step ourselves can only ever widen.
+ */
+const niceStep = (v: number) => {
+  const step = Math.pow(10, Math.floor(Math.log10(v))) / 2
+  return Math.ceil(v / step) * step
+}
+const axisMin = (min: number) => (min >= 0 ? 0 : -niceStep(-min))
+const axisMax = (max: number) => (max <= 0 ? 0 : niceStep(max))
 
 function SubtotalTooltip({
   active,
@@ -73,14 +86,14 @@ function SubtotalTooltip({
   const planned = typeof p.plannedIncome === 'number'
   const rows: Array<{ label: string; value: number; color?: string; strong?: boolean; top?: boolean }> = [
     { label: 'Income', value: p.income, color: COLOR.income },
-    ...(planned ? [{ label: 'Planned income', value: p.plannedIncome!, color: COLOR.plannedIn }] : []),
-    { label: 'Fixed expenses', value: -p.fixedExpenses, color: COLOR.fixed },
-    { label: 'Variable expenses', value: -p.variableExpenses, color: COLOR.variable },
-    { label: 'Total expenses', value: -p.expenses, strong: true, top: true },
-    ...(planned
-      ? [{ label: 'Planned expenses', value: -(p.plannedExpenses ?? 0), color: COLOR.plannedOut }]
-      : []),
-    ...(p.setAside > 0.5 ? [{ label: 'Set aside', value: -p.setAside }] : []),
+    ...(planned ? [{ label: 'Planned income', value: p.plannedIncome! }] : []),
+    { label: 'Expenses', value: -p.expenses, color: COLOR.expenses, top: true },
+    ...(planned ? [{ label: 'Planned expenses', value: -(p.plannedExpenses ?? 0) }] : []),
+    // The split isn't drawn any more, but it is the first thing you want when a
+    // month looks wrong: committed costs or discretionary ones.
+    { label: 'of which fixed', value: -p.fixedExpenses },
+    { label: 'of which variable', value: -p.variableExpenses },
+    ...(p.setAside > 0.5 ? [{ label: 'Set aside', value: -p.setAside, top: true }] : []),
     { label: 'Net', value: p.net, strong: true },
     ...(showBalance
       ? [{ label: 'End balance', value: p.balance, color: COLOR.balance, strong: true, top: true }]
@@ -161,9 +174,9 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
   const tick = (m: string) =>
     m.slice(5) === '01' ? `${labels.get(m)} ${m.slice(2, 4)}` : labels.get(m) ?? m
 
-  // Eighteen months don't fit a phone: rather than dropping months or letting
-  // the bars collapse into hairlines, the plot keeps a legible width and the
-  // narrow screen scrolls it. On a wide one the min-width never binds.
+  // Eighteen months don't fit a phone: rather than dropping months or crushing
+  // them together, the plot keeps a legible width and the narrow screen scrolls
+  // it. On a wide one the min-width never binds.
   return (
     <div className="overflow-x-auto -mx-2 px-2">
       <div style={{ minWidth: Math.max(320, points.length * 38) }}>
@@ -181,11 +194,19 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
             />
             {/* Flows on the left, the balance on its own scale at the right: a
                 balance an order of magnitude larger than a month's spending would
-                otherwise flatten the bars into a strip along the axis. */}
-            <YAxis yAxisId="flow" tickFormatter={fxc} tickLine={false} axisLine={false} width={48} />
+                otherwise squash both flow lines onto the axis. */}
+            <YAxis
+              yAxisId="flow"
+              domain={[axisMin, axisMax]}
+              tickFormatter={fxc}
+              tickLine={false}
+              axisLine={false}
+              width={48}
+            />
             <YAxis
               yAxisId="balance"
               orientation="right"
+              domain={[axisMin, axisMax]}
               tickFormatter={fxc}
               tickLine={false}
               axisLine={false}
@@ -193,7 +214,7 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
               tick={showBalance ? { fill: COLOR.balance } : false}
             />
             <Tooltip
-              cursor={{ fill: 'rgba(31,61,52,0.06)' }}
+              cursor={{ stroke: '#c9bfa8', strokeWidth: 1 }}
               content={
                 <SubtotalTooltip
                   currency={currency}
@@ -224,68 +245,56 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
                 }}
               />
             )}
-            {/* Stacked expense subtotals — 2px surface stroke keeps segments separable */}
-            <Bar
-              yAxisId="flow"
-              dataKey="fixedExpenses"
-              stackId="exp"
-              fill={COLOR.fixed}
-              stroke="#fbf9f4"
-              strokeWidth={2}
-              name="Fixed expenses"
-              barSize={20}
-            />
-            <Bar
-              yAxisId="flow"
-              dataKey="variableExpenses"
-              stackId="exp"
-              fill={COLOR.variable}
-              stroke="#fbf9f4"
-              strokeWidth={2}
-              name="Variable expenses"
-              barSize={20}
-              radius={[4, 4, 0, 0]}
-            />
             <Line
               yAxisId="flow"
-              type="monotone"
+              type="linear"
               dataKey="income"
               name="Income"
               stroke={COLOR.income}
-              strokeWidth={2}
-              strokeDasharray="5 4"
+              strokeWidth={2.5}
               dot={false}
+              activeDot={{ r: 4, fill: COLOR.income, stroke: '#fbf9f4', strokeWidth: 2 }}
             />
-            {/* Only over the settled months — ahead of today the plan is the figure
-                already drawn, and a second identical line would say nothing. */}
+            <Line
+              yAxisId="flow"
+              type="linear"
+              dataKey="expenses"
+              name="Expenses"
+              stroke={COLOR.expenses}
+              strokeWidth={2.5}
+              dot={false}
+              activeDot={{ r: 4, fill: COLOR.expenses, stroke: '#fbf9f4', strokeWidth: 2 }}
+            />
+            {/* Only over the settled months — ahead of today the plan is the line
+                already drawn, and a second identical one would say nothing. */}
             {hasPlannedOverlay && (
               <Line
                 yAxisId="flow"
-                type="monotone"
+                type="linear"
                 dataKey="plannedIncome"
                 name="Planned income"
-                stroke={COLOR.plannedIn}
-                strokeWidth={2}
+                stroke={COLOR.income}
+                strokeWidth={1.75}
                 strokeDasharray="2 3"
-                dot={{ r: 2.5, fill: COLOR.plannedIn, strokeWidth: 0 }}
+                dot={{ r: 2.5, fill: COLOR.income, strokeWidth: 0 }}
               />
             )}
             {hasPlannedOverlay && (
               <Line
                 yAxisId="flow"
-                type="monotone"
+                type="linear"
                 dataKey="plannedExpenses"
                 name="Planned expenses"
-                stroke={COLOR.plannedOut}
-                strokeWidth={2}
+                stroke={COLOR.expenses}
+                strokeWidth={1.75}
                 strokeDasharray="2 3"
-                dot={{ r: 2.5, fill: COLOR.plannedOut, strokeWidth: 0 }}
+                dot={{ r: 2.5, fill: COLOR.expenses, strokeWidth: 0 }}
               />
             )}
             {showBalance && (
               <Line
                 yAxisId="balance"
-                type="monotone"
+                type="linear"
                 dataKey="balance"
                 name={scenario ? 'Balance · baseline' : 'Projected balance'}
                 stroke={COLOR.balance}
@@ -297,7 +306,7 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
             {showBalance && scenario && (
               <Line
                 yAxisId="balance"
-                type="monotone"
+                type="linear"
                 dataKey="scenarioBalance"
                 name={`Balance · ${scenario.name}`}
                 stroke={COLOR.scenario}
