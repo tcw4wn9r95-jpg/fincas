@@ -388,6 +388,7 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
       fixedExpenses: fixed,
       variableExpenses: variable,
       net,
+      netResult: round2(net - setAside),
       // Rounded per point, like the ledger: a dozen months of floating-point
       // addition otherwise leaves cents of dust on the projection.
       balance: round2(running),
@@ -502,6 +503,7 @@ export function buildLedger(data: AppData): LedgerPoint[] {
       variableExpenses: r.variable,
       setAside: r.setAside,
       net: r.net,
+      netResult: round2(r.net - r.setAside),
       balance: running,
       projected: r.month > now,
       actual: r.actual,
@@ -556,6 +558,7 @@ export function buildSummary(data: AppData, back = 6, forward = 12): SummaryPoin
       variableExpenses: r.variable,
       setAside: r.setAside,
       net: r.net,
+      netResult: round2(r.net - r.setAside),
       balance: round2(running),
       projected: r.month > now,
       actual: r.actual,
@@ -974,9 +977,11 @@ export function financialSummary(data: AppData): string {
   lines.push(
     hasBalanceAnchor(data)
       ? 'Next 6 months projected end-of-month balance: ' +
-          forecast.map((f) => `${f.label} ${fx(f.balance)} (net ${fx(f.net)})`).join('; ')
-      : 'Next 6 months planned net (no balance to project from): ' +
-          forecast.map((f) => `${f.label} ${fx(f.net)}`).join('; '),
+          forecast
+            .map((f) => `${f.label} ${fx(f.balance)} (net result ${fx(f.netResult)})`)
+            .join('; ')
+      : 'Next 6 months planned net result (no balance to project from): ' +
+          forecast.map((f) => `${f.label} ${fx(f.netResult)}`).join('; '),
   )
 
   const months = monthsWithData(data)

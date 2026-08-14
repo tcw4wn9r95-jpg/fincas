@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import { useData } from '../store'
 import { CATEGORIES } from '../lib/categorize'
-import { itemAmountForMonth, itemBaseAmountForMonth, planMonths, planSection } from '../lib/forecast'
+import {
+  isPlannedSetAside,
+  itemAmountForMonth,
+  itemBaseAmountForMonth,
+  planMonths,
+  planSection,
+} from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, parseAmount } from '../lib/format'
 import type { Cadence, Flow, RecurringItem } from '../lib/types'
 import { IconPlus, IconTrash, IconEdit, IconMoneyDate } from './icons'
@@ -121,9 +127,13 @@ export function Planner() {
   if (groups.has('Variable') && !ordered.includes('Variable')) ordered.push('Variable')
 
   const sumNow = (items: RecurringItem[]) => items.reduce((s, it) => s + itemAmountForMonth(it, now), 0)
+  // Split the same way the forecast and the money date split it: money put into
+  // a provision is set aside, not spent. Summing it into expenses here was what
+  // made the plan's own total disagree with every figure derived from it.
   const incomeNow = sumNow(income)
-  const expenseNow = sumNow(expense)
-  const netNow = incomeNow - expenseNow
+  const setAsideNow = sumNow(expense.filter(isPlannedSetAside))
+  const expenseNow = sumNow(expense.filter((it) => !isPlannedSetAside(it)))
+  const netNow = incomeNow - expenseNow - setAsideNow
   const fx = (n: number) => formatMoney(n, currency, locale)
 
   const rowProps = {
@@ -186,8 +196,13 @@ export function Planner() {
         <span className="text-muted">
           Expenses <span className="text-ink font-medium tabular-nums">{fx(expenseNow)}</span>/mo
         </span>
+        {setAsideNow > 0.005 && (
+          <span className="text-muted">
+            Set aside <span className="text-ink font-medium tabular-nums">{fx(setAsideNow)}</span>/mo
+          </span>
+        )}
         <span className="text-muted">
-          Net{' '}
+          Net result{' '}
           <span className={classNames('font-medium tabular-nums', netNow >= 0 ? 'text-forest' : 'text-clay')}>
             {fx(netNow)}
           </span>

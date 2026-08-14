@@ -94,9 +94,21 @@ function SubtotalTooltip({
     { label: 'of which fixed', value: -p.fixedExpenses },
     { label: 'of which variable', value: -p.variableExpenses },
     ...(p.setAside > 0.5 ? [{ label: 'Set aside', value: -p.setAside, top: true }] : []),
-    { label: 'Net', value: p.net, strong: true },
+    // Two different figures, named apart so neither can be read as the other:
+    // what the month gained or lost, and what the balance actually did with
+    // money that only moved pocket.
+    { label: 'Net result', value: p.netResult, strong: true },
     ...(showBalance
-      ? [{ label: 'End balance', value: p.balance, color: COLOR.balance, strong: true, top: true }]
+      ? [
+          ...(p.setAside > 0.5 ? [{ label: 'Change in balance', value: p.net, top: true }] : []),
+          {
+            label: 'End balance',
+            value: p.balance,
+            color: COLOR.balance,
+            strong: true,
+            top: p.setAside <= 0.5,
+          },
+        ]
       : []),
   ]
   if (typeof p.scenarioBalance === 'number') {
@@ -138,7 +150,7 @@ function SubtotalTooltip({
               className={classNames(
                 'tabular-nums',
                 r.strong ? 'font-semibold text-ink' : 'text-ink',
-                r.label === 'Net' && (p.net >= 0 ? 'text-forest' : 'text-clay'),
+                r.label === 'Net result' && (p.netResult >= 0 ? 'text-forest' : 'text-clay'),
               )}
             >
               {r.value < 0 ? `−${fx(Math.abs(r.value))}` : fx(r.value)}

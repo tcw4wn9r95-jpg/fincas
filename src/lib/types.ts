@@ -289,7 +289,18 @@ export interface ForecastPoint {
   variableExpenses: number
   /** Planned provisioning: kept out of `expenses`, since it stays in the accounts. */
   setAside: number
+  /**
+   * The change in total balance: income − expenses. Money set aside is *not*
+   * subtracted — it stays in the accounts the balance covers, it just moves
+   * pocket. This is what drives the balance line.
+   */
   net: number
+  /**
+   * income − expenses − setAside: what the month actually gained or lost, once
+   * money committed to future bills is counted as spoken for. The same figure
+   * the money date calls "Net result", so the plan and the review agree.
+   */
+  netResult: number
   /** Projected end-of-month total balance across all accounts. */
   balance: number
   /** True once the month is in the future (projection vs. settled). */

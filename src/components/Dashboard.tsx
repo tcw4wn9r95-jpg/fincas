@@ -108,7 +108,9 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
   // Whole numbers at a glance; cents live in the planner where precision matters.
   const fx = (n: number, opts = {}) => formatMoney(n, currency, locale, { round: true, ...opts })
 
-  const avgNet = forecast.reduce((s, f) => s + f.net, 0) / forecast.length
+  // The same "net result" the plan and the money date report: what a month
+  // gains or loses, with money committed to future bills already spoken for.
+  const avgNet = forecast.reduce((s, f) => s + f.netResult, 0) / forecast.length
   const lowest = forecast.reduce((min, f) => (f.balance < min.balance ? f : min), forecast[0])
   const savingsRate =
     thisMonth && thisMonth.income > 0
@@ -207,9 +209,13 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
         )}
         <Stat
           label="This month net"
-          value={fx(thisMonth?.net ?? 0, { signed: true })}
-          tone={(thisMonth?.net ?? 0) >= 0 ? 'good' : 'warn'}
-          sub={`${fx(thisMonth?.income ?? 0)} in · ${fx(thisMonth?.expenses ?? 0)} out`}
+          value={fx(thisMonth?.netResult ?? 0, { signed: true })}
+          tone={(thisMonth?.netResult ?? 0) >= 0 ? 'good' : 'warn'}
+          sub={
+            (thisMonth?.setAside ?? 0) > 0.5
+              ? `${fx(thisMonth?.income ?? 0)} in · ${fx(thisMonth?.expenses ?? 0)} out · ${fx(thisMonth?.setAside ?? 0)} aside`
+              : `${fx(thisMonth?.income ?? 0)} in · ${fx(thisMonth?.expenses ?? 0)} out`
+          }
         />
         <Stat
           label="Avg monthly net"
@@ -221,7 +227,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           label="Savings rate"
           value={`${savingsRate}%`}
           tone={savingsRate >= 0 ? 'good' : 'warn'}
-          sub="of this month's income"
+          sub="of income kept, set aside included"
         />
       </div>
 
@@ -343,7 +349,10 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
                 <th className="px-4 py-2.5 font-medium text-right">Income</th>
                 <th className="px-4 py-2.5 font-medium text-right">Fixed</th>
                 <th className="px-4 py-2.5 font-medium text-right">Variable</th>
-                <th className="px-4 py-2.5 font-medium text-right">Net</th>
+                {/* The row-to-row change in the balance beside it — which is
+                    the net result plus anything set aside, since that money
+                    stays in the accounts. */}
+                <th className="px-4 py-2.5 font-medium text-right">Change</th>
                 <th className="px-6 py-2.5 font-medium text-right">
                   {anchored ? 'Balance' : 'Running'}
                 </th>

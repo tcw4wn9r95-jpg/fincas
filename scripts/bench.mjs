@@ -568,6 +568,46 @@ console.log('\n── L. The headline chart: six months back, twelve forward ─
   eq('and meets the anchored balance at today', nowPoint.balance, F.startingBalance(d) + nowPoint.net)
 }
 
+console.log('\n── N. Every surface reads the plan the same way ──')
+{
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 9400, asOf: endOf(-1), tracked: true }],
+    recurring: [
+      line({ id: 'r1', label: 'Salary', amount: 4200, flow: 'income', category: 'Income', group: 'Income' }),
+      line({ id: 'r2', label: 'Rent', amount: 1800, flow: 'expense', category: 'Housing', group: 'Fixed monthly' }),
+      line({ id: 'r3', label: 'Groceries', amount: 520, flow: 'expense', category: 'Food', group: 'Variable' }),
+      // The line that used to be counted as spending in the planner and as
+      // money kept everywhere else.
+      line({ id: 'r4', label: 'Tax provisioning', amount: 600, flow: 'expense', category: 'Savings', group: 'Provisions' }),
+    ],
+  })
+  const f = F.buildForecast(d, 1)[0]
+  // What the planner's header adds up, line by line, the way the page does it.
+  const planner = d.recurring.reduce(
+    (acc, it) => {
+      const amt = F.itemAmountForMonth(it, NOW)
+      if (it.flow === 'income') acc.income += amt
+      else if (F.isPlannedSetAside(it)) acc.setAside += amt
+      else acc.expenses += amt
+      return acc
+    },
+    { income: 0, expenses: 0, setAside: 0 },
+  )
+  eq('the planner and the forecast agree on income', planner.income, f.income)
+  eq('… on spending', planner.expenses, f.expenses)
+  eq('… and on what is set aside', planner.setAside, f.setAside)
+  eq('provisioning is not spending', f.expenses, 2320)
+  eq('net result is what the month gains', f.netResult, 1280)
+  eq('the balance change keeps what was set aside', f.net, 1880)
+  eq('the two nets differ by exactly the set-aside', f.net - f.netResult, f.setAside)
+
+  // The money date's "vs plan" column reads the same plan.
+  const r = F.computeReview(d, NOW)
+  eq('the money date plans the same spending', r.plannedExpenses, f.expenses)
+  eq('… the same set-aside', r.plannedSetAside, f.setAside)
+  eq('… and the same net result', r.plannedNet, f.netResult)
+}
+
 console.log(
   `\n${fails === 0 ? `ALL ${checks} CHECKS PASSED` : `${fails} of ${checks} CHECKS FAILED`}`,
 )
