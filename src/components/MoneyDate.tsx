@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { useData } from '../store'
 import {
   computeReview,
+  isCardAccount,
   monthsWithData,
   actualsByCategory,
   itemAmountForMonth,
@@ -20,7 +21,8 @@ import {
   provisionCoveredByCategory,
   type ProvisionStatus,
 } from '../lib/provisions'
-import type { ProvisionAllocation, Transaction } from '../lib/types'
+import type { Account, ProvisionAllocation, Transaction } from '../lib/types'
+import { CardPicker } from './CardPicker'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
@@ -169,6 +171,7 @@ export function MoneyDate({
         .flatMap(([, list]) => list),
     [txByCatKey],
   )
+  const cardAccounts = useMemo(() => data.accounts.filter(isCardAccount), [data.accounts])
   const cardPaymentTotal = useMemo(
     () =>
       internalTxs
@@ -249,6 +252,15 @@ export function MoneyDate({
     } finally {
       setAiBusy(false)
     }
+  }
+
+  /** Aim a card payment at the card it settles — only asked when there are several. */
+  function setTxCard(id: string, cardAccountId: string | undefined) {
+    update((d) => {
+      const t = d.transactions.find((x) => x.id === id)
+      if (t) t.cardAccountId = cardAccountId
+      return d
+    })
   }
 
   function deleteMonth() {
@@ -894,6 +906,8 @@ export function MoneyDate({
                                 locale={locale}
                                 provisions={provisionStatuses}
                                 onSet={setTxCategory}
+                                onSetCard={setTxCard}
+                                cards={cardAccounts}
                                 onTeach={setTeaching}
                                 onProvision={(t) => setProvisioning(t.id)}
                               />
@@ -943,6 +957,8 @@ export function MoneyDate({
                               locale={locale}
                               provisions={provisionStatuses}
                               onSet={setTxCategory}
+                              onSetCard={setTxCard}
+                              cards={cardAccounts}
                               onTeach={setTeaching}
                               onProvision={(t) => setProvisioning(t.id)}
                             />
@@ -988,6 +1004,8 @@ export function MoneyDate({
           currency={currency}
           locale={locale}
           provisions={provisionStatuses}
+          cards={cardAccounts}
+          onSetCard={setTxCard}
           onSetCategory={(id, category) => {
             setTxCategory(id, category)
             setReconciled(id, true)
@@ -1042,7 +1060,9 @@ function DrillList({
   currency,
   locale,
   provisions,
+  cards,
   onSet,
+  onSetCard,
   onTeach,
   onProvision,
 }: {
@@ -1051,8 +1071,10 @@ function DrillList({
   locale: string
   provisions: ProvisionStatus[]
   onSet: (id: string, category: string) => void
+  onSetCard: (id: string, cardAccountId: string | undefined) => void
   onTeach: (t: Transaction) => void
   onProvision: (t: Transaction) => void
+  cards: Account[]
 }) {
   return (
     <div className="bg-canvas/40 px-6 py-2 divide-y divide-line/50">
@@ -1082,6 +1104,7 @@ function DrillList({
               </option>
             ))}
           </select>
+          <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} compact />
           <ProvisionButton
             tx={t}
             provisions={provisions}

@@ -3,11 +3,12 @@ import { CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { type ProvisionStatus } from '../lib/provisions'
 import type { MonthCarryover } from '../lib/funding'
-import type { Transaction } from '../lib/types'
+import type { Account, Transaction } from '../lib/types'
 import { IconClose, IconCheck, IconSparkle, IconHelp } from './icons'
 import { Markdown } from './Markdown'
 import type { StreamHandlers } from '../lib/claude'
 import { Portal } from './Portal'
+import { CardPicker } from './CardPicker'
 import { ProvisionButton } from './ProvisionModal'
 
 /**
@@ -22,7 +23,9 @@ export function ReconcileOverlay({
   currency,
   locale,
   provisions,
+  cards,
   onSetCategory,
+  onSetCard,
   onToggle,
   onConfirmAll,
   onAiCategorize,
@@ -41,7 +44,10 @@ export function ReconcileOverlay({
   currency: string
   locale: string
   provisions: ProvisionStatus[]
+  /** Card accounts, so a card payment can say which one it settles. */
+  cards: Account[]
   onSetCategory: (id: string, category: string) => void
+  onSetCard: (id: string, cardAccountId: string | undefined) => void
   onToggle: (id: string, reconciled: boolean) => void
   onConfirmAll: () => void
   onAiCategorize?: () => void
@@ -268,6 +274,7 @@ export function ReconcileOverlay({
                     )}
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} />
                     <ProvisionButton
                       tx={t}
                       provisions={provisions}

@@ -10,7 +10,7 @@ import {
   ReferenceArea,
   Legend,
 } from 'recharts'
-import type { TooltipProps } from 'recharts'
+import type { CategoricalChartState } from 'recharts/types/chart/types'
 import type { ForecastPoint } from '../lib/types'
 import type { SummaryPoint } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
@@ -30,6 +30,17 @@ interface Props {
    * balance line would be projected from zero and read as fact.
    */
   showBalance?: boolean
+  /**
+   * Given, the whole chart opens something on click — the detail overlay. The
+   * inline chart shows no figures of its own, so the lines stay readable.
+   */
+  onOpen?: () => void
+  /** The month the caller is showing detail for; marked on the chart. */
+  selected?: string
+  /** Called as the reader moves over or clicks a month. */
+  onSelect?: (month: string) => void
+  /** Taller in the overlay, where there is room for it. */
+  height?: number
 }
 
 // Series colors validated against the paper surface (#fbf9f4):
@@ -71,27 +82,23 @@ const prevMonth = (m: string) => {
 const axisMin = (min: number) => (min >= 0 ? 0 : -niceStep(-min))
 const axisMax = (max: number) => (max <= 0 ? 0 : niceStep(max))
 
-function SubtotalTooltip({
-  active,
-  payload,
-  currency,
-  locale,
-  scenarioName,
-  showBalance = true,
-}: TooltipProps<number, string> & {
-  currency: string
-  locale: string
-  scenarioName?: string
-  showBalance?: boolean
-}) {
-  if (!active || !payload?.length) return null
-  const p = payload[0].payload as ChartPoint
-  const fx = (n: number) => formatMoney(n, currency, locale)
+interface DetailRow {
+  label: string
+  value: number
+  color?: string
+  strong?: boolean
+  top?: boolean
+}
 
+/**
+ * One month, read out. Shared so the panel in the overlay and any inline
+ * tooltip say exactly the same thing in the same order.
+ */
+function monthRows(p: ChartPoint, showBalance: boolean, scenarioName?: string): DetailRow[] {
   // A settled month carries what the plan said as well, so the two can be read
-  // off against each other without leaving the tooltip.
+  // off against each other side by side.
   const planned = typeof p.plannedIncome === 'number'
-  const rows: Array<{ label: string; value: number; color?: string; strong?: boolean; top?: boolean }> = [
+  const rows: DetailRow[] = [
     { label: 'Income', value: p.income, color: COLOR.income },
     ...(planned ? [{ label: 'Planned income', value: p.plannedIncome! }] : []),
     { label: 'Expenses', value: -p.expenses, color: COLOR.expenses, top: true },
@@ -126,16 +133,46 @@ function SubtotalTooltip({
       strong: true,
     })
   }
+  return rows
+}
 
+/** The stamp on a month: what it is, not what it holds. */
+export function monthStamp(p: { actual?: boolean; projected: boolean }): string {
+  return p.actual ? 'actual' : p.projected ? 'projected' : 'planned'
+}
+
+/**
+ * A month's figures, laid out. Given room — the overlay's panel — this is the
+ * whole story of a month; squeezed into a floating box over a chart it was
+ * covering the very line it described, which is why the inline chart no longer
+ * shows one.
+ */
+export function MonthDetail({
+  point,
+  currency,
+  locale,
+  showBalance = true,
+  scenarioName,
+  size = 'sm',
+}: {
+  point: SummaryPoint & { scenarioBalance?: number }
+  currency: string
+  locale: string
+  showBalance?: boolean
+  scenarioName?: string
+  size?: 'sm' | 'lg'
+}) {
+  const fx = (n: number) => formatMoney(n, currency, locale)
+  const rows = monthRows(point, showBalance, scenarioName)
   return (
-    <div className="rounded-xl border border-line bg-paper shadow-lift px-4 py-3 text-sm min-w-[220px]">
+    <div className={size === 'lg' ? 'text-sm' : 'text-sm'}>
       <div className="font-medium text-ink mb-2">
-        {formatMonthLabel(p.month, locale)}
+        {formatMonthLabel(point.month, locale)}
         <span className="ml-2 text-[10px] uppercase tracking-wide text-muted">
-          {p.actual ? 'actual' : p.projected ? 'projected' : 'planned'}
+          {monthStamp(point)}
         </span>
       </div>
-      <div className="space-y-1">
+      <div className={size === 'lg' ? 'space-y-1.5' : 'space-y-1'}>
         {rows.map((r) => (
           <div
             key={r.label}
@@ -157,7 +194,7 @@ function SubtotalTooltip({
               className={classNames(
                 'tabular-nums',
                 r.strong ? 'font-semibold text-ink' : 'text-ink',
-                r.label === 'Net result' && (p.netResult >= 0 ? 'text-forest' : 'text-clay'),
+                r.label === 'Net result' && (point.netResult >= 0 ? 'text-forest' : 'text-clay'),
               )}
             >
               {r.value < 0 ? `−${fx(Math.abs(r.value))}` : fx(r.value)}
@@ -169,7 +206,17 @@ function SubtotalTooltip({
   )
 }
 
-export function CashFlowChart({ points, currency, locale, scenario, showBalance = true }: Props) {
+export function CashFlowChart({
+  points,
+  currency,
+  locale,
+  scenario,
+  showBalance = true,
+  onOpen,
+  selected,
+  onSelect,
+  height = 320,
+}: Props) {
   const fxc = (n: number) => formatMoney(n, currency, locale, { compact: true })
 
   // Merged by month, not by position: the baseline can start six months before
@@ -205,8 +252,21 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
   return (
     <div className="overflow-x-auto -mx-2 px-2">
       <div style={{ minWidth: Math.max(320, points.length * 38) }}>
-        <ResponsiveContainer width="100%" height={320}>
-          <ComposedChart data={data} margin={{ top: 10, right: 8, left: 4, bottom: 0 }}>
+        <ResponsiveContainer width="100%" height={height}>
+          <ComposedChart
+            data={data}
+            margin={{ top: 10, right: 8, left: 4, bottom: 0 }}
+            onClick={(e: CategoricalChartState) => {
+              const month = typeof e?.activeLabel === 'string' ? e.activeLabel : undefined
+              if (month) onSelect?.(month)
+              onOpen?.()
+            }}
+            onMouseMove={(e: CategoricalChartState) => {
+              const month = typeof e?.activeLabel === 'string' ? e.activeLabel : undefined
+              if (month) onSelect?.(month)
+            }}
+            style={onOpen ? { cursor: 'pointer' } : undefined}
+          >
             <CartesianGrid stroke="#e6e0d4" vertical={false} />
             <XAxis
               dataKey="month"
@@ -238,17 +298,19 @@ export function CashFlowChart({ points, currency, locale, scenario, showBalance 
               width={showBalance ? 48 : 0}
               tick={showBalance ? { fill: COLOR.balance } : false}
             />
-            <Tooltip
-              cursor={{ stroke: '#c9bfa8', strokeWidth: 1 }}
-              content={
-                <SubtotalTooltip
-                  currency={currency}
-                  locale={locale}
-                  scenarioName={scenario?.name}
-                  showBalance={showBalance}
-                />
-              }
-            />
+            {/* No floating box: the figures live in the overlay's panel, where
+                they don't cover the lines they describe. The cursor line alone
+                says which month is being read. */}
+            <Tooltip cursor={{ stroke: '#c9bfa8', strokeWidth: 1 }} content={() => null} />
+            {selected && (
+              <ReferenceLine
+                yAxisId="flow"
+                x={selected}
+                stroke="#2e5347"
+                strokeWidth={1.5}
+                strokeDasharray="3 3"
+              />
+            )}
             <Legend
               verticalAlign="top"
               iconType="circle"

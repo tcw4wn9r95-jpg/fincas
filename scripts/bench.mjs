@@ -616,6 +616,29 @@ console.log('\n── P. A credit card: charged when spent, settled without spen
   const end = F.accountBalance(d, card, endOf(0))
   eq('the card moves by charges less payments', round(end - start), round(900 - 300))
 
+  // Two cards: a payment has to say which one it settles, or it settles none.
+  const amex = { id: 'amex', name: 'Amex', balance: 0, asOf: `${M(-2)}-01`, kind: 'card' }
+  const two = base({
+    accounts: [cash, card, amex],
+    transactions: [
+      tx({ date: `${M(-1)}-06`, description: 'Big shop', amount: -600, category: 'Shopping', accountId: 'card' }),
+      tx({ date: `${M(-1)}-14`, description: 'Flights', amount: -140, category: 'Travel', accountId: 'amex' }),
+      tx({ date: `${NOW}-03`, description: 'Pago tarjeta', amount: -600, category: 'Card payment', accountId: 'cash' }),
+    ],
+  })
+  eq('an unaimed payment settles neither card', -F.accountBalance(two, card), 600)
+  eq('… nor the other one', -F.accountBalance(two, amex), 140)
+  eq('and the debt still stands at the full amount', F.cardDebt(two), 740)
+
+  const aimed = base({
+    ...two,
+    transactions: two.transactions.map((t) =>
+      t.category === 'Card payment' ? { ...t, cardAccountId: 'card' } : t,
+    ),
+  })
+  eq('naming the card closes that one', -F.accountBalance(aimed, card), 0)
+  eq('… and leaves the other alone', -F.accountBalance(aimed, amex), 140)
+
   // Categorisation reaches for it on its own.
   eq('a card payment is recognised on sight', C.categorize('PAGO TARJETA DE CREDITO', -900), 'Card payment')
   eq('… in English too', C.categorize('CREDIT CARD AUTOPAY', -900), 'Card payment')

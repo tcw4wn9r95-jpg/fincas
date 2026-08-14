@@ -19,6 +19,7 @@ import { provisionCoveredByCategoryRange } from '../lib/provisions'
 import { demoData, importData } from '../lib/storage'
 import { formatMoney, formatMonthLabel, classNames, currentMonth } from '../lib/format'
 import { CashFlowChart } from './CashFlowChart'
+import { ForecastOverlay } from './ForecastOverlay'
 import { HistoryChart } from './HistoryChart'
 import { SankeyChart } from './SankeyChart'
 import { SankeyOverlay } from './SankeyOverlay'
@@ -74,6 +75,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
     [data, year],
   )
   const [sankeyOpen, setSankeyOpen] = useState(false)
+  const [forecastOpen, setForecastOpen] = useState(false)
   const { yearSankey, yearSankeyInsights } = useMemo(() => {
     const { income, expense, setAside } = actualsByCategoryRange(data, yearMonths, {
       splitSavings: true,
@@ -239,7 +241,7 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
               {settledMonths > 0
                 ? `The last ${settledMonths} ${settledMonths === 1 ? 'month' : 'months'} against what you planned, then the next ${SUMMARY_FORWARD} as planned today`
                 : `Money in against money out, as planned · next ${SUMMARY_FORWARD} months`}
-              {!anchored && ' · no balance recorded to project from'}
+              {!anchored && ' · no balance recorded to project from'} · tap for details
             </p>
           </div>
           {anchored && lowest && lowest.balance < balance && (
@@ -264,8 +266,25 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
           locale={locale}
           scenario={scenarioOverlay}
           showBalance={anchored}
+          onOpen={() => setForecastOpen(true)}
         />
       </div>
+
+      {forecastOpen && (
+        <ForecastOverlay
+          points={summary}
+          currency={currency}
+          locale={locale}
+          scenario={scenarioOverlay}
+          showBalance={anchored}
+          subtitle={
+            settledMonths > 0
+              ? `The last ${settledMonths} ${settledMonths === 1 ? 'month' : 'months'} against what you planned, then the next ${SUMMARY_FORWARD} as planned today`
+              : `Money in against money out, as planned · next ${SUMMARY_FORWARD} months`
+          }
+          onClose={() => setForecastOpen(false)}
+        />
+      )}
 
       {history.length > 0 && (
         <div className="card p-6">
