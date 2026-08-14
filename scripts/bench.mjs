@@ -28,9 +28,11 @@ const F = await server.ssrLoadModule('/src/lib/forecast.ts')
 const P = await server.ssrLoadModule('/src/lib/provisions.ts')
 const U = await server.ssrLoadModule('/src/lib/funding.ts')
 const S = await server.ssrLoadModule('/src/lib/storage.ts')
+const C = await server.ssrLoadModule('/src/lib/categorize.ts')
 const fmt = await server.ssrLoadModule('/src/lib/format.ts')
 
 const NOW = fmt.currentMonth()
+const round = (n) => Math.round(n * 100) / 100
 /** The month `n` months from this one — the whole bench is relative to today. */
 const M = (n) => fmt.addMonths(NOW, n)
 /** The last day of month `n` — where a statement's closing balance lands. */
@@ -566,6 +568,58 @@ console.log('\n── L. The headline chart: six months back, twelve forward ─
   ok('the balance runs continuously across the join', continuous)
   const nowPoint = s.find((p) => p.month === NOW)
   eq('and meets the anchored balance at today', nowPoint.balance, F.startingBalance(d) + nowPoint.net)
+}
+
+console.log('\n── P. A credit card: charged when spent, settled without spending again ──')
+{
+  // Last month: €900 charged to the card, nothing paid yet. This month: the
+  // bill is paid from the current account, and €300 more is charged.
+  const cash = { id: 'cash', name: 'S-Bank', balance: 5000, asOf: endOf(0), tracked: true }
+  const card = { id: 'card', name: 'Visa', balance: 0, asOf: `${M(-2)}-01`, kind: 'card' }
+  const d = base({
+    accounts: [cash, card],
+    transactions: [
+      tx({ date: `${M(-1)}-04`, description: 'Salary', amount: 4000, category: 'Income', accountId: 'cash' }),
+      tx({ date: `${M(-1)}-06`, description: 'Big shop', amount: -600, category: 'Shopping', accountId: 'card' }),
+      tx({ date: `${M(-1)}-19`, description: 'Restaurant', amount: -300, category: 'Dining', accountId: 'card' }),
+      tx({ date: `${NOW}-02`, description: 'Salary', amount: 4000, category: 'Income', accountId: 'cash' }),
+      tx({ date: `${NOW}-03`, description: 'Pago tarjeta de credito', amount: -900, category: 'Card payment', accountId: 'cash' }),
+      tx({ date: `${NOW}-08`, description: 'Petrol', amount: -300, category: 'Transport', accountId: 'card' }),
+    ],
+  })
+
+  // The month the charges happened owns the spending.
+  const last = F.computeReview(d, M(-1))
+  eq('card charges are spending the month they happen', last.expenses, 900)
+  eq('net result carries them', last.netResult ?? last.net, 3100)
+  eq('the card owed 900 at the end of that month', -F.accountBalance(d, card, endOf(-1)), 900)
+
+  // The month the bill is paid owns none of it.
+  const nowR = F.computeReview(d, NOW)
+  eq('settling the bill is not spending', nowR.expenses, 300)
+  eq('… and the payment shows as money moved, not spent', nowR.excludedOut, 900)
+  eq('this month’s net result is untouched by it', nowR.net, 3700)
+
+  // The debt closes as the payment lands, and reopens with the new charge.
+  eq('the payment closes the gap', -F.accountBalance(d, card, `${NOW}-03`), 0)
+  eq('… and later charges reopen it', -F.accountBalance(d, card, `${NOW}-31`), 300)
+  eq('card debt is reported as a positive figure', F.cardDebt(d), 300)
+
+  // Liquidity: what you hold, less what you owe.
+  eq('the total nets the debt off the cash', F.totalBalance(d), 5000 - 300)
+  eq('a card is never the forecast’s anchor', F.hasBalanceAnchor(base({ accounts: [card] })), false)
+  eq('… while a cash account is', F.hasBalanceAnchor(d), true)
+
+  // The identity the whole thing rests on: over any month, the change in what
+  // you hold less what you owe is exactly income minus expenses.
+  const start = F.accountBalance(d, card, endOf(-1)) + 0
+  const end = F.accountBalance(d, card, endOf(0))
+  eq('the card moves by charges less payments', round(end - start), round(900 - 300))
+
+  // Categorisation reaches for it on its own.
+  eq('a card payment is recognised on sight', C.categorize('PAGO TARJETA DE CREDITO', -900), 'Card payment')
+  eq('… in English too', C.categorize('CREDIT CARD AUTOPAY', -900), 'Card payment')
+  ok('and it never counts as cash flow', C.NON_CASHFLOW.has('Card payment'))
 }
 
 console.log('\n── O. A provision that starts later ──')

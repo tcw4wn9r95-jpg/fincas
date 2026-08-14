@@ -12,13 +12,25 @@ export type Cadence =
 
 export type Flow = 'income' | 'expense'
 
+export type AccountKind = 'cash' | 'card'
+
 export interface Account {
   id: string
   name: string
-  /** Current balance in the app's base currency. */
+  /**
+   * Cash: what the account holds. Card: what was owed at `asOf` — the *opening*
+   * figure only, since everything charged and paid since is derived from the
+   * transactions themselves. Always read through `accountBalance()`.
+   */
   balance: number
   /** ISO date the balance was last known accurate. Empty on a tracked account awaiting its first statement. */
   asOf: string
+  /**
+   * A card is a debt, not a pot of money: its balance is negative, it is never
+   * an anchor for the forecast, and paying it off is a transfer rather than
+   * spending. Absent means cash — every account written before cards existed.
+   */
+  kind?: AccountKind
   /**
    * Balance is written by the closing figure on imported current-account
    * statements rather than typed, so it moves itself every time a month is
@@ -78,6 +90,12 @@ export interface Transaction {
   provisionAllocations?: ProvisionAllocation[]
   /** Tags this transaction as spending that belongs to a special event. */
   eventId?: string
+  /**
+   * On a `Card payment` line: which card it settles. Left unset when there is
+   * only one card, which is the ordinary case — `cardPaymentTarget()` resolves
+   * it either way.
+   */
+  cardAccountId?: string
   /**
    * Set on the transfer that carries a month's leftover into savings, naming
    * the month (YYYY-MM) it closes. Marks it as bookkeeping rather than a real

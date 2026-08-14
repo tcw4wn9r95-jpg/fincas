@@ -25,6 +25,7 @@ export const CATEGORIES = [
   'Fees',
   'Transfer',
   'Internal',
+  'Card payment',
   'Savings',
   'Other',
 ] as const
@@ -34,7 +35,14 @@ export const CATEGORIES = [
  * out of their finances. Excluded from income, expenses and every average built
  * on them — counting a transfer as spending would report the same euro twice.
  */
-export const NON_CASHFLOW = new Set<string>(['Internal'])
+/**
+ * Paying a credit card settles a debt you already counted as spending when the
+ * charge happened. Counting it again here would charge the same euro twice —
+ * once in the month it was spent, once in the month the bill was paid.
+ */
+export const CARD_PAYMENT_CATEGORY = 'Card payment'
+
+export const NON_CASHFLOW = new Set<string>(['Internal', CARD_PAYMENT_CATEGORY])
 
 /**
  * Money kept rather than spent. Reported on its own line instead of inside
@@ -67,6 +75,13 @@ const RULES: Array<[RegExp, string]> = [
   [/tuition|udemy|coursera|university|course|textbook|colegio|matr[ií]cula|academia|oposici[oó]n|librer[ií]a|escuela\b/i, 'Education'],
   [/hacienda|agencia tributaria|impuesto|\birpf\b|seguridad social|\btgss\b|aut[oó]nomo|\btasa\b|\bdgt\b|\bmulta\b|tributo/i, 'Taxes'],
   [/fee|charge|interest|atm|overdraft|comisi[oó]n|\bcuota\b/i, 'Fees'],
+  // Settling a card bill. Ahead of the transfer rules below, since these lines
+  // are usually worded as a payment or a direct debit and would otherwise be
+  // read as one — and ahead of Fees, which "card" descriptions often trip.
+  [
+    /(pago|liquidaci[oó]n|amortizaci[oó]n|recibo)\s+(de\s+)?(la\s+)?tarjeta|tarjeta\s+de\s+cr[eé]dito|credit ?card (payment|bill|autopay)|card payment|payment to card|\bautopay\b|pay(ment)? ?- ?thank ?you|domiciliaci[oó]n tarjeta/i,
+    CARD_PAYMENT_CATEGORY,
+  ],
   // Money moved between your own accounts (e.g. a top-up to Revolut) — not
   // spending. Kept out of money-date income/expense totals.
   [/\brevolut\b|to my|own account|internal transfer|traspaso interno/i, 'Internal'],

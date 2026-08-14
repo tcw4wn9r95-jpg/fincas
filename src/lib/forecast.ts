@@ -1,5 +1,7 @@
 import type {
+  Account,
   AppData,
+  Transaction,
   RecurringItem,
   ForecastPoint,
   MonthReview,
@@ -15,7 +17,7 @@ import {
 } from './provisions'
 import { allEventStatuses, eventSummaryLine } from './events'
 import { fundingPlan } from './funding'
-import { NON_CASHFLOW, SAVINGS_CATEGORY } from './categorize'
+import { CARD_PAYMENT_CATEGORY, NON_CASHFLOW, SAVINGS_CATEGORY } from './categorize'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -105,8 +107,78 @@ export function itemAmountForMonth(item: RecurringItem, month: string): number {
   return itemBaseAmountForMonth(item, month)
 }
 
+/** Cash accounts hold money; a card holds a debt. Absent kind is cash. */
+export function isCardAccount(a: Account): boolean {
+  return a.kind === 'card'
+}
+
+/**
+ * The card a payment settles. Named on the transaction when there is a choice;
+ * with a single card — the ordinary case — naming it every time would be
+ * ceremony, so an unnamed payment settles the only card there is.
+ */
+export function cardPaymentTarget(data: AppData, t: Transaction): string | undefined {
+  if (t.cardAccountId) return t.cardAccountId
+  const cards = data.accounts.filter(isCardAccount)
+  return cards.length === 1 ? cards[0].id : undefined
+}
+
+/**
+ * What an account holds, as of `through` (default: no limit).
+ *
+ * A cash account states its own balance — the bank's word, from a statement or
+ * typed. A card can't: what you owe is what you have charged less what you have
+ * paid, and the statement's own figure is a snapshot between the two. So a card
+ * carries only an opening balance, and the debt is derived from the charges
+ * filed against it and the payments that settled them — the same
+ * derived-not-stored rule the pots follow, and the reason re-importing a month
+ * can never move it twice.
+ */
+export function accountBalance(data: AppData, account: Account, through?: string): number {
+  if (!isCardAccount(account)) return account.balance
+  let balance = account.balance
+  for (const t of data.transactions) {
+    if (through && t.date > through) continue
+    // Charges on the card deepen the debt; they arrive negative already.
+    if (t.accountId === account.id && t.category !== CARD_PAYMENT_CATEGORY) balance += t.amount
+    // A payment leaves the current account (negative there) and closes the gap
+    // here, so it lifts the debt by its own size.
+    else if (t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(data, t) === account.id) {
+      balance += Math.abs(t.amount)
+    }
+  }
+  return round2(balance)
+}
+
+/**
+ * Everything you hold, less everything you owe on a card, at the point the cash
+ * balances are anchored to.
+ *
+ * Cutting the card at the anchor is what keeps the projection honest: from there
+ * the roll-forward charges card spending as it happens, so counting charges made
+ * after the anchor here as well would take them twice.
+ */
 export function totalBalance(data: AppData): number {
-  return data.accounts.reduce((sum, a) => sum + a.balance, 0)
+  const anchor = latestAsOf(data)
+  return round2(
+    data.accounts.reduce((sum, a) => {
+      const balance = accountBalance(data, a, anchor || undefined)
+      // A card can only ever subtract. Paid past zero it sits in credit with the
+      // issuer, which is not money you hold — and it is more often the sign that
+      // charges were imported without being filed against the card at all.
+      return sum + (isCardAccount(a) ? Math.min(0, balance) : balance)
+    }, 0),
+  )
+}
+
+/** What is owed across every card, as a positive number. */
+export function cardDebt(data: AppData): number {
+  const anchor = latestAsOf(data)
+  return round2(
+    -data.accounts
+      .filter(isCardAccount)
+      .reduce((sum, a) => sum + Math.min(0, accountBalance(data, a, anchor || undefined)), 0),
+  )
 }
 
 /** The account created to follow the current-account statements. */
@@ -128,7 +200,7 @@ export function applyStatementBalance(
   d: AppData,
   statement: { closingBalance: number; asOf: string },
 ): void {
-  let account = d.accounts.find((a) => a.tracked)
+  let account = d.accounts.find((a) => a.tracked && !isCardAccount(a))
   if (!account) {
     account = { id: uid(), name: trackedAccountName, balance: 0, asOf: '', tracked: true }
     d.accounts.push(account)
@@ -146,8 +218,9 @@ export function applyStatementBalance(
  */
 export function hasBalanceAnchor(data: AppData): boolean {
   // A tracked account still waiting for its first statement holds no figure and
-  // no date — it is a promise of a balance, not one.
-  return data.accounts.some((a) => !!a.asOf)
+  // no date — it is a promise of a balance, not one. A card is never an anchor
+  // either: a debt is not a starting point to project from.
+  return data.accounts.some((a) => !!a.asOf && !isCardAccount(a))
 }
 
 /**
@@ -170,10 +243,15 @@ export function anchorMonth(data: AppData): string {
   return next > now ? now : next
 }
 
-/** The latest date any recorded balance is true as of. */
+/**
+ * The latest date any recorded *cash* balance is true as of. A card's date is
+ * only when its opening debt was taken, and everything since is derived, so it
+ * says nothing about how current the picture is.
+ */
 function latestAsOf(data: AppData): string {
   let latest = ''
   for (const a of data.accounts) {
+    if (isCardAccount(a)) continue
     // A tracked account's date is the statement's, which moves as months are
     // imported; a manual one's is whenever it was last typed.
     if (a.asOf && a.asOf > latest) latest = a.asOf
@@ -959,9 +1037,21 @@ export function financialSummary(data: AppData): string {
     lines.push(
       'Accounts: ' +
         data.accounts
-          .map((a) => (a.asOf ? `${a.name} ${fx(a.balance)} as of ${a.asOf}` : `${a.name} (no balance yet)`))
+          .map((a) =>
+            isCardAccount(a)
+              ? `${a.name} (credit card) ${fx(-accountBalance(data, a))} owed`
+              : a.asOf
+                ? `${a.name} ${fx(a.balance)} as of ${a.asOf}`
+                : `${a.name} (no balance yet)`,
+          )
           .join(', '),
     )
+    const debt = cardDebt(data)
+    if (debt > 0.5) {
+      lines.push(
+        `Card debt outstanding: ${fx(debt)}. Card spending is already counted as an expense in the month it was charged, and the payment that settles it is not spending — it only moves cash. The total balance above is already net of this.`,
+      )
+    }
   } else {
     // Saying "€0" here would have the assistant advise against a balance that
     // was never recorded, rather than on flows alone.

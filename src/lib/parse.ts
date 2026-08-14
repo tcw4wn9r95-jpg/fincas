@@ -12,6 +12,11 @@ export interface ParsedResult {
   warnings: string[]
   /** Only set for a current-account statement that states its own balances. */
   statement?: StatementSummary
+  /**
+   * What the document looks like, so an import can preselect the account it
+   * belongs to. A guess for the picker, never a decision about the figures.
+   */
+  source?: 'current' | 'card' | 'revolut'
 }
 
 /**
@@ -189,7 +194,9 @@ export function parseCSV(text: string): ParsedResult {
 }
 
 export async function parseCSVFile(file: File): Promise<ParsedResult> {
-  return parseCSV(await file.text())
+  const text = await file.text()
+  const parsed = parseCSV(text)
+  return { ...parsed, source: sourceHint(text.slice(0, 4000), file.name) }
 }
 
 // ── PDF ──────────────────────────────────────────────────────────
@@ -208,6 +215,12 @@ const LINE_AMOUNT = /[-+(]?\s?[$€£]?\s?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\)?\s*(?
 // before any of it is trusted: a credit-card statement says "New Balance" too,
 // and that number is a debt, not money in an account.
 const STMT_CURRENT = /current account|compte courant|girokonto|cuenta corriente|checking account/i
+/**
+ * What kind of statement this looks like — used only to preselect which account
+ * an import belongs to, never to decide what a figure means.
+ */
+const STMT_CARD = /credit card|tarjeta de cr[eé]dito|carte de cr[eé]dit|kreditkarte|\bvisa\b|mastercard|amex|american express/i
+const STMT_REVOLUT = /\brevolut\b/i
 const STMT_CLOSING = /(new balance|closing balance|nouveau solde|neuer saldo|saldo final)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
 const STMT_OPENING = /(old balance|opening balance|previous balance|ancien solde|alter saldo|saldo anterior)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
 const STMT_PERIOD = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*[-–—]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/
@@ -338,7 +351,20 @@ export async function parsePDFFile(file: File): Promise<ParsedResult> {
   } else {
     warnings.push('PDF parsing is best-effort. Please review the rows and signs before saving.')
   }
-  return { transactions: out, warnings, statement }
+  return { transactions: out, warnings, statement, source: sourceHint(lines.join('\n'), file.name) }
+}
+
+/**
+ * Which account a document is about. The card check comes first: a card
+ * statement issued by the same bank often names the current account it is paid
+ * from, and the card is the more specific claim.
+ */
+function sourceHint(text: string, filename: string): ParsedResult['source'] {
+  const hay = `${filename}\n${text}`
+  if (STMT_CARD.test(hay)) return 'card'
+  if (STMT_REVOLUT.test(hay)) return 'revolut'
+  if (STMT_CURRENT.test(hay)) return 'current'
+  return undefined
 }
 
 export async function parseFile(file: File): Promise<ParsedResult> {

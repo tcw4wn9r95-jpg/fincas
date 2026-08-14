@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
 import { parseFile, type StatementSummary } from '../lib/parse'
-import { applyStatementBalance, trackedAccountName } from '../lib/forecast'
+import { applyStatementBalance, isCardAccount, trackedAccountName } from '../lib/forecast'
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey } from '../lib/format'
 import type { Transaction } from '../lib/types'
@@ -72,7 +72,11 @@ export function ImportModal({
   // see `readStatementSummary`. Held so Save can move the account with it.
   const [statement, setStatement] = useState<StatementSummary | null>(null)
   const [applyBalance, setApplyBalance] = useState(true)
-  const trackedAccount = data.accounts.find((a) => a.tracked)
+  // Which account these lines belong to. It decides what a card statement does
+  // to the debt, so it is asked plainly rather than inferred and hoped for —
+  // the file only preselects.
+  const [accountId, setAccountId] = useState('')
+  const trackedAccount = data.accounts.find((a) => a.tracked && !isCardAccount(a))
   const fx = (n: number) => formatMoney(n, currency, locale)
   const [busy, setBusy] = useState(false)
   const [files, setFiles] = useState<string[]>([])
@@ -136,6 +140,7 @@ export function ImportModal({
     const warns: string[] = []
     const names: string[] = []
     let foundStatement: StatementSummary | null = null
+    let foundSource: 'current' | 'card' | 'revolut' | undefined
     let skipped = 0
     for (const file of picked) {
       names.push(file.name)
@@ -147,6 +152,7 @@ export function ImportModal({
         if (res.statement && (!foundStatement || res.statement.asOf >= foundStatement.asOf)) {
           foundStatement = res.statement
         }
+        if (res.source && !foundSource) foundSource = res.source
         for (const t of res.transactions) {
           // Check against the pre-existing set only — not rows added earlier in
           // THIS batch — so two genuinely identical charges in one statement are
@@ -170,6 +176,17 @@ export function ImportModal({
     if (foundStatement) {
       setStatement(foundStatement)
       setApplyBalance(true)
+    }
+    // Preselect the account the document looks like, but only while the user
+    // hasn't chosen one — their pick always wins over the guess.
+    if (foundSource && !accountId) {
+      const guess =
+        foundSource === 'card'
+          ? data.accounts.find(isCardAccount)
+          : foundSource === 'current'
+            ? trackedAccount ?? data.accounts.find((a) => !isCardAccount(a))
+            : data.accounts.find((a) => !isCardAccount(a) && /revolut/i.test(a.name))
+      if (guess) setAccountId(guess.id)
     }
     if (skipped) warns.unshift(`Skipped ${skipped} row${skipped === 1 ? '' : 's'} already staged.`)
     if (!added.length && !warns.length) warns.push('No new transactions found in that file.')
@@ -248,19 +265,30 @@ export function ImportModal({
 
   function save() {
     if (!rows.length) return
+    // Stamp the account onto every line: a charge only counts against a card's
+    // debt if it says which card it was made on.
+    const tagged = accountId ? rows.map((r) => ({ ...r, accountId })) : rows
     if (onImport) {
-      onImport(rows)
+      onImport(tagged)
     } else if (replaceMonths) {
       // Overwrite every month this import covers with exactly what's reviewed.
-      const monthsCovered = new Set(rows.map((r) => r.month))
+      const monthsCovered = new Set(tagged.map((r) => r.month))
       update((d) => {
-        d.transactions = [...d.transactions.filter((t) => !monthsCovered.has(t.month)), ...rows]
+        // Replacing a month only replaces this account's lines in it — the card
+        // statement and the current-account statement cover the same month and
+        // must not evict each other.
+        d.transactions = [
+          ...d.transactions.filter(
+            (t) => !monthsCovered.has(t.month) || (accountId ? t.accountId !== accountId : false),
+          ),
+          ...tagged,
+        ]
         if (statement && applyBalance) applyStatementBalance(d, statement)
         return d
       })
     } else {
       update((d) => {
-        d.transactions = [...d.transactions, ...rows]
+        d.transactions = [...d.transactions, ...tagged]
         if (statement && applyBalance) applyStatementBalance(d, statement)
         return d
       })
@@ -269,6 +297,7 @@ export function ImportModal({
     onSaved?.()
   }
 
+  const cardChosen = data.accounts.some((a) => a.id === accountId && isCardAccount(a))
   const inCount = rows.filter((r) => r.amount >= 0).length
   const outCount = rows.length - inCount
   const otherCount = rows.filter((r) => r.category === 'Other').length
@@ -457,7 +486,35 @@ export function ImportModal({
             </>
           )}
 
-          {statement && (
+          {rows.length > 0 && data.accounts.length > 0 && (
+            <div className="mt-4 rounded-lg border border-line bg-canvas px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted mr-1">These lines are from</span>
+                {data.accounts.map((a) => (
+                  <button
+                    key={a.id}
+                    className={classNames(
+                      'pill border transition',
+                      accountId === a.id
+                        ? 'bg-forest text-paper border-forest'
+                        : 'border-line text-muted hover:text-forest',
+                    )}
+                    onClick={() => setAccountId(accountId === a.id ? '' : a.id)}
+                  >
+                    {a.name}
+                    {isCardAccount(a) && ' (card)'}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted mt-2">
+                {cardChosen
+                  ? 'Charges on a card are spending the day they happen, and they build up what you owe until a payment closes the gap.'
+                  : 'Naming the account keeps each statement’s lines separate, so a card and a current account covering the same month never overwrite each other.'}
+              </p>
+            </div>
+          )}
+
+          {statement && !cardChosen && (
             <label className="mt-4 flex items-start gap-3 rounded-lg border border-forest/30 bg-forest-tint/30 px-4 py-3 cursor-pointer">
               <input
                 type="checkbox"

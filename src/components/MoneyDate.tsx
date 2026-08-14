@@ -11,7 +11,7 @@ import {
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, todayISO } from '../lib/format'
 import { eventsInMonth } from '../lib/events'
 import { fundingPlan, monthCarryover, carryoverTransaction } from '../lib/funding'
-import { CATEGORIES, withRule } from '../lib/categorize'
+import { CARD_PAYMENT_CATEGORY, CATEGORIES, NON_CASHFLOW, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey, streamTransactionAdvice } from '../lib/claude'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import {
@@ -159,7 +159,23 @@ export function MoneyDate({
     return map
   }, [data, activeMonth])
 
-  const internalTxs = txByCatKey.get('Internal') ?? []
+  // Everything the totals deliberately leave out: transfers between your own
+  // accounts, and card payments — which settle spending already charged in the
+  // month it happened, so counting them here would charge it twice.
+  const internalTxs = useMemo(
+    () =>
+      Array.from(txByCatKey.entries())
+        .filter(([cat]) => NON_CASHFLOW.has(cat))
+        .flatMap(([, list]) => list),
+    [txByCatKey],
+  )
+  const cardPaymentTotal = useMemo(
+    () =>
+      internalTxs
+        .filter((t) => t.category === CARD_PAYMENT_CATEGORY)
+        .reduce((s, t) => s + Math.abs(t.amount), 0),
+    [internalTxs],
+  )
 
   const monthTxs = useMemo(
     () => data.transactions.filter((t) => t.month === activeMonth),
@@ -904,12 +920,15 @@ export function MoneyDate({
                             >
                               ▶
                             </span>
-                            <span className="pill bg-line/60 text-muted">Internal</span>
+                            <span className="pill bg-line/60 text-muted">Not counted</span>
                             <span className="text-xs text-muted">{internalTxs.length}</span>
                           </span>
                         </td>
                         <td className="px-4 py-3 text-xs text-muted" colSpan={3}>
-                          Transfers between your own accounts — not counted
+                          Money moved between your own accounts
+                          {cardPaymentTotal > 0.5
+                            ? `, and ${fx(cardPaymentTotal)} paid off your card — charged when you spent it, not when you settled the bill`
+                            : ' — not counted'}
                         </td>
                         <td className="px-6 py-3 text-right text-muted tabular-nums">
                           {fx(review.excludedIn - review.excludedOut, { signed: true })}

@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
-import { startingBalance, totalBalance, trackedAccountName } from '../lib/forecast'
+import {
+  accountBalance,
+  isCardAccount,
+  startingBalance,
+  totalBalance,
+  trackedAccountName,
+} from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
 import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
@@ -99,13 +105,20 @@ export function Plan() {
   const opening = startingBalance(data)
   const rolled = data.accounts.length > 0 && Math.abs(opening - recorded) > 0.5
   const [acct, setAcct] = useState({ name: '', balance: '' })
-  function addAccount() {
+  /**
+   * `kind` decides what the typed figure means: for cash it is what the account
+   * holds, for a card it is what you owe today — stored negative, since a debt
+   * is negative money and every total in the app can then just add up.
+   */
+  function addAccount(kind: 'cash' | 'card' = 'cash') {
     if (!acct.name.trim()) return
+    const typed = parseAmount(acct.balance) || 0
     const a: Account = {
       id: uid(),
       name: acct.name.trim(),
-      balance: parseAmount(acct.balance) || 0,
+      balance: kind === 'card' ? -Math.abs(typed) : typed,
       asOf: todayISO(),
+      ...(kind === 'card' ? { kind } : {}),
     }
     update((d) => {
       d.accounts.push(a)
@@ -256,11 +269,15 @@ export function Plan() {
 
       <Section
         title="Accounts"
-        desc="Where your money sits. An account whose statements carry a running balance keeps itself current — every import moves it on. Type a balance for anything you don't import, and the forecast rolls it forward through your plan."
+        desc="Where your money sits, and what you owe. An account whose statements carry a running balance keeps itself current — every import moves it on. A card works the other way round: its charges are spending the day they happen, so what you owe is worked out from those charges less every card payment, and paying the bill closes the gap instead of costing you twice."
       >
         <div className="space-y-2 mb-4">
           {data.accounts.map((a) => {
             const awaiting = a.tracked && !a.asOf
+            const card = isCardAccount(a)
+            // A card's figure is worked out from its charges and the payments
+            // that settled them, so it is shown rather than typed.
+            const owed = card ? -accountBalance(data, a) : 0
             return (
               <div
                 key={a.id}
@@ -273,15 +290,31 @@ export function Plan() {
                     onBlur={(e) => editAccount(a.id, { name: e.target.value.trim() || a.name })}
                   />
                   <div className="text-[11px] text-muted">
-                    {a.tracked
-                      ? awaiting
-                        ? 'waiting for its first current-account statement'
-                        : `closing balance from your statement, ${a.asOf}`
-                      : `as of ${formatMonthLabel(a.asOf, locale)}`}
+                    {card
+                      ? `owed — charges since ${formatMonthLabel(a.asOf, locale)}, less what you've paid off`
+                      : a.tracked
+                        ? awaiting
+                          ? 'waiting for its first current-account statement'
+                          : `closing balance from your statement, ${a.asOf}`
+                        : `as of ${formatMonthLabel(a.asOf, locale)}`}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  {a.tracked ? (
+                  {card ? (
+                    <span
+                      className={classNames(
+                        'text-right tabular-nums w-32 shrink-0',
+                        owed > 0.5 ? 'text-clay' : 'text-muted',
+                      )}
+                      title="What you owe: everything charged to this card, less every card payment"
+                    >
+                      {owed > 0.005
+                        ? `${fx(owed)} owed`
+                        : owed < -0.005
+                          ? `${fx(-owed)} in credit`
+                          : fx(0)}
+                    </span>
+                  ) : a.tracked ? (
                     <span
                       className="text-right tabular-nums w-32 shrink-0"
                       title="Written by your statements — import a month and it moves itself"
@@ -354,8 +387,15 @@ export function Plan() {
             value={acct.balance}
             onChange={(e) => setAcct({ ...acct, balance: e.target.value })}
           />
-          <button className="btn-primary" onClick={addAccount}>
+          <button className="btn-primary" onClick={() => addAccount('cash')}>
             <IconPlus width={16} height={16} /> Add
+          </button>
+          <button
+            className="btn-subtle"
+            onClick={() => addAccount('card')}
+            title="A credit card is a debt: charges are spending the day they happen, and paying the bill closes the gap rather than costing you again"
+          >
+            <IconPlus width={16} height={16} /> Add as card
           </button>
         </div>
       </Section>
