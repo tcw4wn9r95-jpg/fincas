@@ -186,7 +186,11 @@ export function ImportModal({
       setApplyBalance(true)
     }
     // Preselect the account the document looks like, but only while the user
-    // hasn't chosen one — their pick always wins over the guess.
+    // hasn't chosen one — their pick always wins over the guess. Tracked
+    // locally rather than read back off the `accountId` state: the `setRows`
+    // update below runs in this same call, before React has re-rendered, so
+    // the state would still read whatever it was when onPick started.
+    let resolvedAccountId = accountId
     if (foundSource === 'card' && foundCardholder && !accountId) {
       // A named cardholder is a stronger signal than "there's a card" — it's
       // what lets two people's cards stay apart. Match on the durable key
@@ -206,6 +210,7 @@ export function ImportModal({
           })
         }
         setAccountId(id)
+        resolvedAccountId = id
       } else {
         const id = uid()
         update((d) => {
@@ -220,6 +225,7 @@ export function ImportModal({
           return d
         })
         setAccountId(id)
+        resolvedAccountId = id
         setAutoCreatedCard(foundCardholder)
       }
     } else if (foundSource && !accountId) {
@@ -229,22 +235,32 @@ export function ImportModal({
           : foundSource === 'current'
             ? trackedAccount ?? data.accounts.find((a) => !isCardAccount(a))
             : data.accounts.find((a) => !isCardAccount(a) && /revolut/i.test(a.name))
-      if (guess) setAccountId(guess.id)
+      if (guess) {
+        setAccountId(guess.id)
+        resolvedAccountId = guess.id
+      }
     }
     if (skipped) warns.unshift(`Skipped ${skipped} row${skipped === 1 ? '' : 's'} already staged.`)
     if (!added.length && !warns.length) warns.push('No new transactions found in that file.')
     setRows((prev) => {
       let next = [...prev, ...added]
-      // Replace mode: fold in the existing transactions for the months this
-      // import touches, so the review shows the whole month and Save can safely
-      // overwrite it without dropping earlier statements.
+      // Replace mode: fold in this same account's own saved rows for the
+      // months this import touches, so re-importing a fuller statement over a
+      // partial earlier one doesn't lose rows the new file doesn't repeat.
+      //
+      // Scoped to this account on purpose. A different account's rows for the
+      // same month are already untouched by Save (it only ever replaces this
+      // account's lines) — echoing them into the review here would make Save
+      // write a second, re-tagged copy of them right back in, duplicating
+      // every other account's month whenever two statements share one.
       if (replaceMonths) {
         const monthsCovered = new Set(next.map((r) => r.month))
         // Avoid re-adding a saved row that a freshly-imported row already covers,
         // but never dedup saved rows against each other (identical pairs survive).
         const importedKeys = new Set(next.map(dupeKey))
         for (const t of savedStream) {
-          if (monthsCovered.has(t.month) && !importedKeys.has(dupeKey(t))) {
+          const sameAccount = resolvedAccountId ? t.accountId === resolvedAccountId : !t.accountId
+          if (sameAccount && monthsCovered.has(t.month) && !importedKeys.has(dupeKey(t))) {
             next.push(t)
           }
         }
@@ -308,9 +324,14 @@ export function ImportModal({
 
   function save() {
     if (!rows.length) return
-    // Stamp the account onto every line: a charge only counts against a card's
-    // debt if it says which card it was made on.
-    const tagged = accountId ? rows.map((r) => ({ ...r, accountId })) : rows
+    // Stamp the account onto a freshly parsed line — a charge only counts
+    // against a card's debt if it says which card it was made on. A row that
+    // already carries an account is one folded in from what's already saved
+    // (replaceMonths, above), shown so its own edits aren't lost on a
+    // re-import; relabelling it to whatever is picked here — including after
+    // the picker is changed by hand, later than the fold-in ran — would write
+    // a second, re-tagged copy of someone else's month back in as this one's.
+    const tagged = accountId ? rows.map((r) => (r.accountId ? r : { ...r, accountId })) : rows
     if (onImport) {
       onImport(tagged)
     } else if (replaceMonths) {
