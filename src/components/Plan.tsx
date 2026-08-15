@@ -25,7 +25,7 @@ import { IconPlus, IconTrash, IconCheck } from './icons'
  * paid, through `provisionRoleFor`.
  */
 const PROVISION_CATS = CATEGORIES.filter(
-  (c) => c !== 'Income' && c !== 'Internal' && c !== 'Transfer' && c !== 'Savings',
+  (c) => c !== 'Income' && c !== 'Internal' && c !== 'Transfer' && c !== 'Savings' && c !== 'Investments',
 )
 
 function Section({

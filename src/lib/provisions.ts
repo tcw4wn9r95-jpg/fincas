@@ -1,5 +1,5 @@
 import type { AppData, Provision, ProvisionAllocation, Transaction } from './types'
-import { NON_CASHFLOW, SAVINGS_CATEGORY } from './categorize'
+import { NON_CASHFLOW, SAVINGS_CATEGORY, INVESTMENTS_CATEGORY } from './categorize'
 
 // Kept free of `forecast.ts` imports (it will import from here) so the two
 // modules never form a cycle — hence the small local month-diff helper below
@@ -39,14 +39,15 @@ export function allocatedTotal(t: Transaction): number {
  * How much of a transaction is money kept rather than money spent — the part
  * that belongs on the savings line instead of inside expenses.
  *
- * A transfer filed under Savings is savings in full. Any other transaction
- * counts only what it actually put into a pot, so an €800 purchase that also
- * set €300 aside still reports €500 of spending. Signed: money coming back out
- * of the Savings category returns a negative, so a month's movements net off.
+ * A transfer filed under Savings or Investments is kept in full. Any other
+ * transaction counts only what it actually put into a pot, so an €800 purchase
+ * that also set €300 aside still reports €500 of spending. Signed: money coming
+ * back out of one of those categories returns a negative, so a month's
+ * movements net off.
  */
 export function setAsideAmount(t: Transaction): number {
   if (NON_CASHFLOW.has(t.category)) return 0
-  if (t.category === SAVINGS_CATEGORY) return round2(-t.amount)
+  if (t.category === SAVINGS_CATEGORY || t.category === INVESTMENTS_CATEGORY) return round2(-t.amount)
   const contributed = transactionAllocations(t)
     .filter((a) => a.role === 'contribution')
     .reduce((s, a) => s + a.amount, 0)

@@ -33,7 +33,11 @@ function monthsBetween(a: string, b: string): number {
 // spending that should be paced by the weekly check-in like any other
 // variable category, not treated as a committed fixed cost.
 const FIXED_CATS = new Set(['Loans', 'Utilities', 'Insurance', 'Subscriptions'])
-const PROVISION_CATS = new Set(['Taxes', 'Provisions', 'Travel'])
+// Investments sits here, not just alongside Savings below: a recurring
+// Investments line should group into the Provisions section of the planner
+// and stay out of the variable-spend pace, the same as any other planned
+// set-aside — not read as discretionary spending because nothing else claimed it.
+const PROVISION_CATS = new Set(['Taxes', 'Provisions', 'Travel', 'Investments'])
 
 export function planSection(item: RecurringItem): string {
   if (item.group) return item.group

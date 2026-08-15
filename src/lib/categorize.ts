@@ -27,6 +27,7 @@ export const CATEGORIES = [
   'Internal',
   'Card payment',
   'Savings',
+  'Investments',
   'Other',
 ] as const
 
@@ -51,6 +52,14 @@ export const NON_CASHFLOW = new Set<string>(['Internal', CARD_PAYMENT_CATEGORY])
  * expensive.
  */
 export const SAVINGS_CATEGORY = 'Savings'
+
+/**
+ * Money moved into investments — treated the same as `SAVINGS_CATEGORY`: kept
+ * rather than spent, and paced as one of the planner's provisioning lines. Its
+ * own category rather than folded into Savings so a transfer to a brokerage
+ * reads as what it is, not as generic saving.
+ */
+export const INVESTMENTS_CATEGORY = 'Investments'
 
 // Rules are tried in order — first match wins, so more specific / higher-priority
 // categories come first. Alongside the US/UK merchants, these cover the Spanish
@@ -86,7 +95,8 @@ const RULES: Array<[RegExp, string]> = [
   // spending. Kept out of money-date income/expense totals.
   [/\brevolut\b|to my|own account|internal transfer|traspaso interno/i, 'Internal'],
   [/transfer|zelle|venmo|paypal|wire|bizum|transferencia|traspaso/i, 'Transfer'],
-  [/savings|vanguard|fidelity|401k|ira|investment|brokerage|ahorro|indexa|myinvestor|fondo indexado/i, 'Savings'],
+  [/vanguard|fidelity|401k|ira|investment|brokerage|indexa|myinvestor|fondo indexado/i, 'Investments'],
+  [/savings|ahorro/i, 'Savings'],
 ]
 
 // Categories that only make sense for money going out. A credit (money in)

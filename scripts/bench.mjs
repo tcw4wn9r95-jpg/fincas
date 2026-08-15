@@ -887,6 +887,30 @@ console.log('\n── T. Closing a provision steps it out of the way, without lo
   ok('… and still lists the open one', summary.includes('Taxes'))
 }
 
+console.log('\n── U. Investments is its own category, and it counts as provisioning ──')
+{
+  eq('a brokerage purchase is read as Investments, not generic Savings', C.categorize('Vanguard brokerage purchase', -500), 'Investments')
+  eq('a plain savings top-up still reads as Savings', C.categorize('Monthly savings top-up', -200), 'Savings')
+
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 5000, asOf: endOf(0), tracked: true }],
+    transactions: [
+      tx({ id: 't1', date: `${M(0)}-05`, description: 'To Vanguard', amount: -400, category: 'Investments', accountId: 'a1' }),
+    ],
+  })
+  const r = F.computeReview(d, M(0))
+  eq('the whole transfer is kept, not spent', r.setAside, 400)
+  eq('so it adds nothing to expenses', r.expenses, 0)
+  ok('and it does not show up as its own expense row — same as Savings', !r.categories.some((c) => c.category === 'Investments'))
+
+  // A recurring Investments line groups with the planner's other provisioning,
+  // not with day-to-day variable spend.
+  const item = line({ id: 'r1', label: 'Index fund', amount: 300, flow: 'expense', category: 'Investments' })
+  eq('it groups into the Provisions section of the planner', F.planSection(item), 'Provisions')
+  ok('the planner treats it as money set aside, not spending', F.isPlannedSetAside(item))
+  ok('… and not as variable spend to pace against', !F.isVariableExpense(item))
+}
+
 console.log('\n── S. The assistant reads individual transactions, not just totals ──')
 {
   const d = base({
