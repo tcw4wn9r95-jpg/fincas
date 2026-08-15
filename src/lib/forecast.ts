@@ -134,16 +134,38 @@ export function cardPaymentTarget(data: AppData, t: Transaction): string | undef
  * derived-not-stored rule the pots follow, and the reason re-importing a month
  * can never move it twice.
  */
+/**
+ * Whether a transaction represents money leaving one of the *cash* accounts —
+ * as opposed to a card's own statement, which usually prints its own line for
+ * the same payment ("payment received, thank you"). Both lines describe the
+ * same real transfer; only the cash side is the source of truth for it, since
+ * that is the account the money actually left. Without this, a card payment
+ * imported from both statements settles the debt twice.
+ */
+function paidFromCash(data: AppData, t: Transaction): boolean {
+  if (!t.accountId) return true
+  const account = data.accounts.find((a) => a.id === t.accountId)
+  return !account || !isCardAccount(account)
+}
+
 export function accountBalance(data: AppData, account: Account, through?: string): number {
   if (!isCardAccount(account)) return account.balance
   let balance = account.balance
   for (const t of data.transactions) {
     if (through && t.date > through) continue
-    // Charges on the card deepen the debt; they arrive negative already.
+    // Charges on the card deepen the debt; they arrive negative already. A row
+    // categorized as a card payment is excluded here even when it is filed
+    // directly against this card, because that is the card's own echo of a
+    // payment already counted below, not a purchase.
     if (t.accountId === account.id && t.category !== CARD_PAYMENT_CATEGORY) balance += t.amount
-    // A payment leaves the current account (negative there) and closes the gap
-    // here, so it lifts the debt by its own size.
-    else if (t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(data, t) === account.id) {
+    // A payment made from a cash account closes the gap, lifting the debt by
+    // its own size. One filed against a card — its own "payment received"
+    // line — is that same echo, so it does nothing here either.
+    else if (
+      t.category === CARD_PAYMENT_CATEGORY &&
+      paidFromCash(data, t) &&
+      cardPaymentTarget(data, t) === account.id
+    ) {
       balance += Math.abs(t.amount)
     }
   }
@@ -162,7 +184,11 @@ export function cardActivity(data: AppData, account: Account): { charged: number
   let paid = 0
   for (const t of data.transactions) {
     if (t.accountId === account.id && t.category !== CARD_PAYMENT_CATEGORY) charged += -t.amount
-    else if (t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(data, t) === account.id) {
+    else if (
+      t.category === CARD_PAYMENT_CATEGORY &&
+      paidFromCash(data, t) &&
+      cardPaymentTarget(data, t) === account.id
+    ) {
       paid += Math.abs(t.amount)
     }
   }

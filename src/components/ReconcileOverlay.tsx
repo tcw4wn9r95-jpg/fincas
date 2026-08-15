@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CARD_PAYMENT_CATEGORY, CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
-import { type ProvisionStatus } from '../lib/provisions'
+import { transactionAllocations, type ProvisionStatus } from '../lib/provisions'
 import type { Account, Transaction } from '../lib/types'
 import { IconClose, IconCheck, IconSparkle, IconHelp } from './icons'
 import { Markdown } from './Markdown'
@@ -120,6 +120,18 @@ export function ReconcileOverlay({
    */
   const unaimed = (t: Transaction) =>
     t.category === CARD_PAYMENT_CATEGORY && cards.length > 1 && !t.cardAccountId
+
+  /**
+   * A spend whose category matches a provision that has money in it, never
+   * linked to any pot. Categorising a bill as "Taxes" doesn't by itself draw
+   * from the tax pot — savings can pay for anything, so the link has to be
+   * made on purpose — but a match this exact is worth naming out loud rather
+   * than leaving the reader to remember the pot exists.
+   */
+  const unlinkedMatch = (t: Transaction) =>
+    t.amount < 0 &&
+    transactionAllocations(t).length === 0 &&
+    provisions.find((p) => p.category === t.category && p.funded > 0.5)
   const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other' && !unaimed(t)).length
   const unreconciled = total - done
   const pct = total ? Math.round((done / total) * 100) : 0
@@ -287,6 +299,19 @@ export function ReconcileOverlay({
                       locale={locale}
                       onOpen={() => onProvision(t)}
                     />
+                    {(() => {
+                      const match = unlinkedMatch(t)
+                      return (
+                        match && (
+                          <button
+                            className="pill bg-gold/15 text-gold hover:bg-gold/25 inline-flex items-center gap-1"
+                            onClick={() => onProvision(t)}
+                          >
+                            Pull from {match.label}?
+                          </button>
+                        )
+                      )
+                    })()}
                     {/* Only while a line is still open: once it's reconciled
                         the decision is made and the question is moot. */}
                     {onAskAdvice && !t.reconciled && (

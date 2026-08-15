@@ -652,6 +652,53 @@ console.log('\n── P. A credit card: charged when spent, settled without spen
   ok('and it never counts as cash flow', C.NON_CASHFLOW.has('Card payment'))
 }
 
+console.log('\n── Q. A card statement echoes its own payment — it must not count twice ──')
+{
+  // A credit card statement typically shows the payment that landed alongside
+  // the new charges, worded exactly like the cash side ("payment received —
+  // thank you"). Importing both statements for the month is the normal
+  // workflow, not a mistake, so both naturally end up staged.
+  const cash = { id: 'cash', name: 'S-Bank', balance: 5000, asOf: endOf(0), tracked: true }
+  const card = { id: 'card', name: 'Visa', balance: -300, asOf: `${M(-1)}-01`, kind: 'card' }
+  const d = base({
+    accounts: [cash, card],
+    transactions: [
+      // The cash side: the real transfer, the source of truth for the payment.
+      tx({
+        date: `${M(0)}-03`,
+        description: 'Pago tarjeta de credito',
+        amount: -300,
+        category: 'Card payment',
+        accountId: 'cash',
+      }),
+      // The card's own statement, echoing the same payment as a credit line —
+      // filed against the card because that's the statement it came from.
+      tx({
+        date: `${M(0)}-03`,
+        description: 'Payment received - thank you',
+        amount: 300,
+        category: 'Card payment',
+        accountId: 'card',
+      }),
+      // New spending since, so the debt isn't just sitting at zero regardless.
+      tx({ date: `${M(0)}-10`, description: 'Groceries', amount: -80, category: 'Food', accountId: 'card' }),
+    ],
+  })
+  eq('the payment is counted once, from the cash side', -F.accountBalance(d, card), 80)
+  const activity = F.cardActivity(d, card)
+  eq('the breakdown agrees: 80 charged', activity.charged, 80)
+  eq('… and 300 paid, not 600', activity.paid, 300)
+  eq('never reads as credit for money that was never really spare', F.cardDebt(d), 80)
+
+  // The card's echo, on its own with no cash-side line at all, must do nothing —
+  // it is not a second, independent payment.
+  const echoOnly = base({
+    accounts: [cash, card],
+    transactions: [d.transactions[1], d.transactions[2]],
+  })
+  eq('the echo alone settles nothing', -F.accountBalance(echoOnly, card), 380)
+}
+
 console.log('\n── O. A provision that starts later ──')
 {
   const p = (over) => ({
