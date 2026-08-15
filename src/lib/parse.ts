@@ -17,6 +17,14 @@ export interface ParsedResult {
    * belongs to. A guess for the picker, never a decision about the figures.
    */
   source?: 'current' | 'card' | 'revolut'
+  /**
+   * The cardholder's name, read off a credit-card statement's own header —
+   * "Titular: MARIA GARCIA", "Cardholder: John Smith". Only ever populated
+   * for something that already looks like a card statement, and only ever
+   * used to name and re-find the card it belongs to — never to decide
+   * anything about the figures.
+   */
+  cardholderName?: string
 }
 
 /**
@@ -221,6 +229,20 @@ const STMT_CURRENT = /current account|compte courant|girokonto|cuenta corriente|
  */
 const STMT_CARD = /credit card|tarjeta de cr[eé]dito|carte de cr[eé]dit|kreditkarte|\bvisa\b|mastercard|amex|american express/i
 const STMT_REVOLUT = /\brevolut\b/i
+
+/**
+ * The label a card statement prints above the cardholder's own name, across
+ * the wordings this app already reads in (English, Spanish, French, German).
+ * Matched loosely — `readCardholderName` decides whether what follows
+ * actually looks like a name.
+ */
+const CARDHOLDER_LABEL =
+  /\b(?:card\s*holder(?:'?s)?(?:\s*name)?|name\s+on\s+card|account\s*holder|titular(?:\s+de\s+la\s+tarjeta)?|nombre\s+del\s+titular|titulaire(?:\s+de\s+la\s+carte)?|karteninhaber(?:in)?)\b\s*[:\-]?\s*(.*)$/i
+// Two to four capitalised words — a plausible full name, whether the
+// statement prints it in Title Case or shouting ALL CAPS. Rejects anything
+// with digits (a card or account number sitting on the same line) or a
+// single word (a stray label the same regex half-matched).
+const NAME_SHAPE = /^[A-ZÀ-ÖØ-Þ][\p{L}'.-]*(?:\s+[A-ZÀ-ÖØ-Þ][\p{L}'.-]*){1,3}$/u
 const STMT_CLOSING = /(new balance|closing balance|nouveau solde|neuer saldo|saldo final)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
 const STMT_OPENING = /(old balance|opening balance|previous balance|ancien solde|alter saldo|saldo anterior)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
 const STMT_PERIOD = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*[-–—]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/
@@ -268,6 +290,42 @@ function readStatementSummary(
         ? undefined
         : Math.abs(openingBalance + rowsTotal - closingBalance) < 0.011,
   }
+}
+
+/** Exported for direct testing — the regex heuristics are the part worth proving. */
+export function looksLikeName(s: string): boolean {
+  const cleaned = s.replace(/[.,;]+$/, '').trim()
+  return cleaned.length >= 3 && cleaned.length <= 60 && NAME_SHAPE.test(cleaned)
+}
+
+/**
+ * Title-cases a name a statement shouted in capitals ("MARIA GARCIA" →
+ * "Maria Garcia") so it reads like an account name. Left exactly as printed
+ * if it isn't all-caps to begin with — no reason to second-guess a statement
+ * that already wrote it in mixed case.
+ */
+export function tidyName(s: string): string {
+  const cleaned = s.replace(/[.,;]+$/, '').trim().replace(/\s+/g, ' ')
+  if (cleaned !== cleaned.toUpperCase()) return cleaned
+  return cleaned.toLowerCase().replace(/(^|[\s'-])\p{L}/gu, (c) => c.toUpperCase())
+}
+
+/**
+ * The cardholder's name off a credit-card statement, if the layout states it
+ * outright. Tried same-line first ("Titular: MARIA GARCIA"), then the next
+ * line down — PDF text extraction often lands the label and the value on
+ * separate visual lines even though the statement prints them together.
+ */
+export function readCardholderName(lines: string[]): string | undefined {
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(CARDHOLDER_LABEL)
+    if (!m) continue
+    const sameLine = m[1]?.trim()
+    if (sameLine && looksLikeName(sameLine)) return tidyName(sameLine)
+    const next = lines[i + 1]?.trim()
+    if (next && looksLikeName(next)) return tidyName(next)
+  }
+  return undefined
 }
 
 export async function parsePDFFile(file: File): Promise<ParsedResult> {
@@ -337,6 +395,11 @@ export async function parsePDFFile(file: File): Promise<ParsedResult> {
   }
 
   const statement = readStatementSummary(lines, out, dayFirst)
+  const source = sourceHint(lines.join('\n'), file.name)
+  // Only trusted on something that already looks like a card statement — the
+  // same word ("Titular", "Holder") shows up on plenty of other documents,
+  // and it should never end up naming an account it has nothing to do with.
+  const cardholderName = source === 'card' ? readCardholderName(lines) : undefined
 
   if (!out.length) {
     warnings.push(
@@ -351,7 +414,7 @@ export async function parsePDFFile(file: File): Promise<ParsedResult> {
   } else {
     warnings.push('PDF parsing is best-effort. Please review the rows and signs before saving.')
   }
-  return { transactions: out, warnings, statement, source: sourceHint(lines.join('\n'), file.name) }
+  return { transactions: out, warnings, statement, source, cardholderName }
 }
 
 /**

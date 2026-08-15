@@ -3,7 +3,7 @@ import { useData } from '../store'
 import { parseFile, type StatementSummary } from '../lib/parse'
 import { applyStatementBalance, isCardAccount, trackedAccountName } from '../lib/forecast'
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
-import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey } from '../lib/format'
+import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey, todayISO } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -76,6 +76,9 @@ export function ImportModal({
   // to the debt, so it is asked plainly rather than inferred and hoped for —
   // the file only preselects.
   const [accountId, setAccountId] = useState('')
+  // Named so the picker can say what just happened — creating an account
+  // silently, the first time, would read as the app guessing at random.
+  const [autoCreatedCard, setAutoCreatedCard] = useState<string | null>(null)
   const trackedAccount = data.accounts.find((a) => a.tracked && !isCardAccount(a))
   const fx = (n: number) => formatMoney(n, currency, locale)
   const [busy, setBusy] = useState(false)
@@ -141,6 +144,10 @@ export function ImportModal({
     const names: string[] = []
     let foundStatement: StatementSummary | null = null
     let foundSource: 'current' | 'card' | 'revolut' | undefined
+    // First one wins, matching foundSource/foundStatement: a batch is staged
+    // against one account, so a card statement further down a mixed drop
+    // can't steal the pick from the first.
+    let foundCardholder: string | undefined
     let skipped = 0
     for (const file of picked) {
       names.push(file.name)
@@ -153,6 +160,7 @@ export function ImportModal({
           foundStatement = res.statement
         }
         if (res.source && !foundSource) foundSource = res.source
+        if (res.cardholderName && !foundCardholder) foundCardholder = res.cardholderName
         for (const t of res.transactions) {
           // Check against the pre-existing set only — not rows added earlier in
           // THIS batch — so two genuinely identical charges in one statement are
@@ -179,7 +187,42 @@ export function ImportModal({
     }
     // Preselect the account the document looks like, but only while the user
     // hasn't chosen one — their pick always wins over the guess.
-    if (foundSource && !accountId) {
+    if (foundSource === 'card' && foundCardholder && !accountId) {
+      // A named cardholder is a stronger signal than "there's a card" — it's
+      // what lets two people's cards stay apart. Match on the durable key
+      // first, falling back to today's display name for a card that predates
+      // this or was added by hand; either way the key gets (re)written so a
+      // later rename can't break the match again.
+      const key = foundCardholder.trim().toLowerCase()
+      let match = data.accounts.find((a) => isCardAccount(a) && a.cardholderKey === key)
+      if (!match) match = data.accounts.find((a) => isCardAccount(a) && a.name.trim().toLowerCase() === key)
+      if (match) {
+        const id = match.id
+        if (match.cardholderKey !== key) {
+          update((d) => {
+            const a = d.accounts.find((x) => x.id === id)
+            if (a) a.cardholderKey = key
+            return d
+          })
+        }
+        setAccountId(id)
+      } else {
+        const id = uid()
+        update((d) => {
+          d.accounts.push({
+            id,
+            name: foundCardholder!,
+            balance: 0,
+            asOf: todayISO(),
+            kind: 'card',
+            cardholderKey: key,
+          })
+          return d
+        })
+        setAccountId(id)
+        setAutoCreatedCard(foundCardholder)
+      }
+    } else if (foundSource && !accountId) {
       const guess =
         foundSource === 'card'
           ? data.accounts.find(isCardAccount)
@@ -507,9 +550,11 @@ export function ImportModal({
                 ))}
               </div>
               <p className="text-xs text-muted mt-2">
-                {cardChosen
-                  ? 'Charges on a card are spending the day they happen, and they build up what you owe until a payment closes the gap.'
-                  : 'Naming the account keeps each statement’s lines separate, so a card and a current account covering the same month never overwrite each other.'}
+                {autoCreatedCard && accountId
+                  ? `Created “${autoCreatedCard}” as a new card, reading the name straight off the statement — a later statement for the same person will find it again on its own.`
+                  : cardChosen
+                    ? 'Charges on a card are spending the day they happen, and they build up what you owe until a payment closes the gap.'
+                    : 'Naming the account keeps each statement’s lines separate, so a card and a current account covering the same month never overwrite each other.'}
               </p>
             </div>
           )}

@@ -30,6 +30,7 @@ const U = await server.ssrLoadModule('/src/lib/funding.ts')
 const S = await server.ssrLoadModule('/src/lib/storage.ts')
 const C = await server.ssrLoadModule('/src/lib/categorize.ts')
 const fmt = await server.ssrLoadModule('/src/lib/format.ts')
+const PA = await server.ssrLoadModule('/src/lib/parse.ts')
 
 const NOW = fmt.currentMonth()
 const round = (n) => Math.round(n * 100) / 100
@@ -697,6 +698,23 @@ console.log('\n── Q. A card statement echoes its own payment — it must not
     transactions: [d.transactions[1], d.transactions[2]],
   })
   eq('the echo alone settles nothing', -F.accountBalance(echoOnly, card), 380)
+}
+
+console.log('\n── R. Reading a cardholder’s name off a statement ──')
+{
+  const N = PA.readCardholderName
+  eq('same line, English', N(['Statement period: 01/06 - 30/06', 'Cardholder: John Smith', 'Card ending 4321']), 'John Smith')
+  eq('same line, Spanish, all caps', N(['Resumen de cuenta', 'Titular: MARIA GARCIA LOPEZ', 'Tarjeta VISA']), 'Maria Garcia Lopez')
+  eq('label alone, name on the next line', N(['Titular de la tarjeta', 'MARIA GARCIA', 'Numero de tarjeta 1234']), 'Maria Garcia')
+  eq('"Name on card" wording', N(['Name on card', 'JANE DOE']), 'Jane Doe')
+  eq('French', N(['Titulaire de la carte : Pierre Dubois']), 'Pierre Dubois')
+  eq('German', N(['Karteninhaber: Anna Schmidt']), 'Anna Schmidt')
+  eq('no label anywhere on the statement', N(['Statement date: 01/06/2026', 'New balance: 300.00']), undefined)
+  eq('a label with no name following it', N(['Cardholder:', '1234 5678 9012 3456']), undefined)
+  eq('a single word is not trusted as a name', N(['Titular: Empresa']), undefined)
+  eq('a card number on the label line is not mistaken for one', N(['Cardholder: 4111 1111 1111 1111']), undefined)
+  eq('mixed case is left exactly as printed', PA.tidyName('Jean-Paul Dubois'), 'Jean-Paul Dubois')
+  eq('shouted capitals are tidied for an account name', PA.tidyName('MARIA-JOSE GARCIA'), 'Maria-Jose Garcia')
 }
 
 console.log('\n── O. A provision that starts later ──')

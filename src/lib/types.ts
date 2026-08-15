@@ -32,6 +32,14 @@ export interface Account {
    */
   kind?: AccountKind
   /**
+   * The cardholder's name off a statement, normalised (trimmed, lower-cased)
+   * for matching future imports back to this same card — kept apart from
+   * `name` so renaming the account to something like "Maria's Visa" doesn't
+   * stop the next statement for the same person from finding it again. Only
+   * ever set by the PDF parser; never shown.
+   */
+  cardholderKey?: string
+  /**
    * Balance is written by the closing figure on imported current-account
    * statements rather than typed, so it moves itself every time a month is
    * added. See `applyStatementBalance`.
