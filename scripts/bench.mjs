@@ -715,6 +715,46 @@ console.log('\n── R. Reading a cardholder’s name off a statement ──')
   eq('a card number on the label line is not mistaken for one', N(['Cardholder: 4111 1111 1111 1111']), undefined)
   eq('mixed case is left exactly as printed', PA.tidyName('Jean-Paul Dubois'), 'Jean-Paul Dubois')
   eq('shouted capitals are tidied for an account name', PA.tidyName('MARIA-JOSE GARCIA'), 'Maria-Jose Garcia')
+
+  // Plenty of issuers never print a label at all — the name is just the
+  // addressee of the letter, sitting above a street line and a postcode.
+  eq(
+    'a plain postal address, no label anywhere',
+    N(['Credit limit: 2,500.00 EUR', 'MARIA GARCIA LOPEZ', '22 Rue de Gasperich', 'L-5826 Hesperange', 'Visa Premier']),
+    'Maria Garcia Lopez',
+  )
+  eq(
+    'the exact shape of a real statement — name and street separated by an unrelated line',
+    N([
+      'For additional repayments, please indicate:',
+      'Account :',
+      'Reference : 924361803',
+      'CASARES SILVA DIEGO FABIAN',
+      'Credit limit : 2.500,00 EUR',
+      '22 RUE DE GASPERICH',
+      'L-5826 HESPERANGE',
+      'Visa Premier',
+      'Statement dated 26/02/2026 Folio 1',
+      'Transaction date Booking date Description Place Currency amount Amount EUR',
+      '05/02/2026 06/02/2026 Goldcar OPORTO - OPO Maia, Oporto -117,46',
+    ]),
+    'Casares Silva Diego Fabian',
+  )
+  eq(
+    'a Spanish postcode reads the same way',
+    N(['JUAN PEREZ MARTIN', 'Calle Mayor 10', '28001 Madrid', 'Movimientos de la tarjeta']),
+    'Juan Perez Martin',
+  )
+  eq(
+    'a name-shaped product line does not fool it without an address after it',
+    N(['Visa Premier', 'Statement dated 26/02/2026 Folio 1', '01/02/2026 Groceries -10.00']),
+    undefined,
+  )
+  eq(
+    'a name-shaped merchant row inside the transaction table is never in play',
+    N(['Statement date: 01/06/2026', '01/06/2026 Mi Tierra Luxembourg -18.80', 'New balance: 300.00']),
+    undefined,
+  )
 }
 
 console.log('\n── O. A provision that starts later ──')

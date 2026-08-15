@@ -243,6 +243,12 @@ const CARDHOLDER_LABEL =
 // with digits (a card or account number sitting on the same line) or a
 // single word (a stray label the same regex half-matched).
 const NAME_SHAPE = /^[A-ZÀ-ÖØ-Þ][\p{L}'.-]*(?:\s+[A-ZÀ-ÖØ-Þ][\p{L}'.-]*){1,3}$/u
+// The line after a name in a plain postal address block — not a label at all,
+// just where a bank addresses the letter. Either a house number opening a
+// street line ("22 Rue de Gasperich") or a postcode opening a city line
+// ("L-5826 Hesperange", "28016 Madrid") — anchored to the start of the line so
+// a date or reference number elsewhere in it can't match.
+const ADDRESS_LINE = /^(?:\d|[A-Z]{0,3}-?\d{3,6}\s+[A-ZÀ-ÖØ-Þ])/
 const STMT_CLOSING = /(new balance|closing balance|nouveau solde|neuer saldo|saldo final)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
 const STMT_OPENING = /(old balance|opening balance|previous balance|ancien solde|alter saldo|saldo anterior)\s*[:.]?\s*([\d.,]+\s*[-+]?)/i
 const STMT_PERIOD = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*[-–—]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/
@@ -316,7 +322,7 @@ export function tidyName(s: string): string {
  * line down — PDF text extraction often lands the label and the value on
  * separate visual lines even though the statement prints them together.
  */
-export function readCardholderName(lines: string[]): string | undefined {
+function readLabelledCardholder(lines: string[]): string | undefined {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(CARDHOLDER_LABEL)
     if (!m) continue
@@ -326,6 +332,29 @@ export function readCardholderName(lines: string[]): string | undefined {
     if (next && looksLikeName(next)) return tidyName(next)
   }
   return undefined
+}
+
+/**
+ * Many card issuers never print a "Cardholder:" label at all — the name is
+ * just the addressee of the letter, sitting above a street line and a
+ * postcode-and-city line the way any posted mail does. Restricted to before
+ * the transaction table starts, because a name-shaped line only means
+ * something there — "Mi Tierra" or "Rituals Luxembourg" read exactly like a
+ * name too, and the statement is full of them further down.
+ */
+function readAddressedCardholder(lines: string[]): string | undefined {
+  const tableStart = lines.findIndex((l) => LINE_DATE.test(l) && LINE_AMOUNT.test(l))
+  const header = tableStart === -1 ? lines : lines.slice(0, tableStart)
+  for (let i = 0; i < header.length; i++) {
+    if (!looksLikeName(header[i])) continue
+    const after = header.slice(i + 1, i + 3)
+    if (after.some((l) => ADDRESS_LINE.test(l.trim()))) return tidyName(header[i])
+  }
+  return undefined
+}
+
+export function readCardholderName(lines: string[]): string | undefined {
+  return readLabelledCardholder(lines) ?? readAddressedCardholder(lines)
 }
 
 export async function parsePDFFile(file: File): Promise<ParsedResult> {
