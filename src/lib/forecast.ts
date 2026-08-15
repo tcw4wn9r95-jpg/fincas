@@ -1221,3 +1221,26 @@ export function financialSummary(data: AppData): string {
   }
   return lines.join('\n')
 }
+
+/**
+ * The individual transaction ledger, newest first, so the assistant can
+ * answer what the aggregated snapshot can't — "how much did I spend at X",
+ * "when did I last pay Y", spotting a specific charge. Capped to the most
+ * recent `months`: the ledger only grows, and a system prompt shouldn't grow
+ * with it forever.
+ */
+export function transactionLedger(data: AppData, months = 18): string {
+  const { currency, locale } = data.settings
+  const fx = (n: number) => new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n)
+  const cutoff = addMonths(currentMonth(), -months)
+  const rows = data.transactions
+    .filter((t) => t.month >= cutoff)
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date))
+  if (!rows.length) return 'No individual transactions recorded yet.'
+  const accountName = (id?: string) => (id && data.accounts.find((a) => a.id === id)?.name) || 'Unlabelled'
+  return (
+    `Individual transactions, newest first (date | account | description | amount | category):\n` +
+    rows.map((t) => `${t.date} | ${accountName(t.accountId)} | ${t.description} | ${fx(t.amount)} | ${t.category}`).join('\n')
+  )
+}

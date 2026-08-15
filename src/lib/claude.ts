@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AppData, ChatMessage, Transaction } from './types'
-import { financialSummary, monthReviewText } from './forecast'
+import { financialSummary, monthReviewText, transactionLedger } from './forecast'
 import { CATEGORIES } from './categorize'
 import { normDescription, todayISO } from './format'
 import {
@@ -22,16 +22,19 @@ function systemPrompt(data: AppData, focusMonth?: string): string {
   return [
     'You are the CasaresSan Finances assistant, a calm, sharp personal financial advisor embedded in a private budgeting app.',
     name ? `You are speaking with ${name}.` : '',
-    'You can see a snapshot of their finances below. Use it to give specific, numbers-grounded answers.',
+    'You can see a snapshot of their finances and their individual transactions below. Use the snapshot for totals and trends; use the transaction list when a question needs a specific line — a merchant, a date, a one-off purchase, a pattern across several charges.',
     'Be concise and practical. Lead with the answer, then the reasoning. Use their figures and currency.',
     'When they ask what to do about upcoming expenses, reason about their projected balance, recurring commitments, and goals — and give a concrete recommendation, not a survey of options.',
     'You are an informational assistant, not a licensed financial professional; note big caveats briefly when relevant, without hedging every sentence.',
-    'If a figure is missing from the snapshot, say so rather than inventing it.',
+    'The transaction list only reaches back so far — if something older is asked about and isn\'t there, say it isn\'t in view rather than guessing. If a figure is missing entirely, say so rather than inventing it.',
     'Format every answer in clean, simple markdown: short paragraphs, **bold** for key figures, and a bullet or numbered list when giving multiple points or steps. Never use tables, nested lists, or block quotes — keep the structure flat and easy to scan on a phone.',
     '',
     '--- FINANCIAL SNAPSHOT ---',
     financialSummary(data),
     '--- END SNAPSHOT ---',
+    '--- TRANSACTIONS ---',
+    transactionLedger(data),
+    '--- END TRANSACTIONS ---',
     focusMonth ? '\nThe user is reviewing this specific month — focus on it:' : '',
     focusMonth ? monthReviewText(data, focusMonth) : '',
   ]
@@ -61,8 +64,9 @@ export async function streamInsights(data: AppData, handlers: StreamHandlers): P
   const system = [
     'You are a calm, sharp personal financial advisor writing a short "insights" briefing.',
     name ? `You are advising ${name}.` : '',
-    'From the snapshot, surface 3–6 specific, actionable insights and recommendations as concise markdown bullets.',
+    'From the snapshot and transaction ledger, surface 3–6 specific, actionable insights and recommendations as concise markdown bullets.',
     'Ground every point in their real figures and currency. Call out trends (rising/falling categories), where they run over plan, their savings rate, and one or two concrete adjustments with rough euro impact.',
+    'The ledger lets you spot things a monthly total can\'t — a specific recurring charge that crept up, a merchant they may not recognise, a category driven by one large purchase rather than a trend. Use it when it sharpens a point, but don\'t just narrate the ledger back to them.',
     'Be direct and practical — no generic advice, no filler, no restating the whole snapshot. Lead each bullet with the takeaway.',
   ]
     .filter(Boolean)
@@ -75,7 +79,7 @@ export async function streamInsights(data: AppData, handlers: StreamHandlers): P
       messages: [
         {
           role: 'user',
-          content: `Here is my financial snapshot:\n\n${financialSummary(data)}\n\nGive me your top insights and recommendations.`,
+          content: `Here is my financial snapshot:\n\n${financialSummary(data)}\n\nHere are my individual transactions:\n\n${transactionLedger(data)}\n\nGive me your top insights and recommendations.`,
         },
       ],
     })

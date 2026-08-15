@@ -839,6 +839,26 @@ console.log('\n── N. Every surface reads the plan the same way ──')
   eq('… and the same net result', r.plannedNet, f.netResult)
 }
 
+console.log('\n── S. The assistant reads individual transactions, not just totals ──')
+{
+  const d = base({
+    settings: { apiKey: '', model: 'm', currency: 'EUR', locale: 'en-GB' },
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 100, asOf: endOf(0), tracked: true }],
+    transactions: [
+      tx({ id: 't1', date: `${M(0)}-05`, description: 'Coffee shop', amount: -4.5, category: 'Food', accountId: 'a1' }),
+      // Well outside the ledger's 18-month window — must not appear.
+      tx({ id: 't2', date: `${M(-30)}-05`, description: 'Ancient purchase', amount: -9, category: 'Food', accountId: 'a1' }),
+    ],
+  })
+  const ledger = F.transactionLedger(d)
+  ok('the recent line is in the ledger', ledger.includes('Coffee shop'))
+  ok('an unlabelled account still gets a line', ledger.includes('S-Bank'))
+  ok('a transaction outside the window is left out', !ledger.includes('Ancient purchase'))
+
+  const empty = F.transactionLedger(base())
+  eq('an empty ledger says so plainly', empty, 'No individual transactions recorded yet.')
+}
+
 console.log(
   `\n${fails === 0 ? `ALL ${checks} CHECKS PASSED` : `${fails} of ${checks} CHECKS FAILED`}`,
 )
