@@ -168,6 +168,12 @@ export interface Provision {
    */
   startDate?: string
   createdAt: string
+  /**
+   * ISO date this provision was closed — used for its purpose and put away.
+   * A closed provision drops out of the plan's active list and stops asking
+   * for money, but its history stays intact and it can be reopened.
+   */
+  closedAt?: string
 }
 
 /**

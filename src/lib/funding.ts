@@ -1,5 +1,5 @@
 import type { AppData } from './types'
-import { allProvisionStatuses, emergencyFundStatus } from './provisions'
+import { allProvisionStatuses, openProvisionStatuses, emergencyFundStatus } from './provisions'
 import { allEventStatuses } from './events'
 
 // One number for a job the app couldn't answer before: at the end of the month,
@@ -80,6 +80,9 @@ const RANK: Record<FundingStatus, number> = {
  * An event that created a provision is represented by that provision alone, so
  * the same trip can never be counted twice; an event without one is added on
  * its own terms, less whatever has already been spent out of pocket.
+ *
+ * A closed provision is left out entirely — it's done with, so it never asks
+ * for another transfer.
  */
 export function fundingPlan(data: AppData, month: string, today: string): FundingPlan {
   const lines: FundingLine[] = []
@@ -97,7 +100,7 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
     (data.events ?? []).filter((e) => e.provisionId).map((e) => [e.provisionId!, e.label]),
   )
 
-  for (const p of allProvisionStatuses(data)) {
+  for (const p of openProvisionStatuses(data)) {
     const remaining = round2(Math.max(0, p.targetAmount - p.funded))
     const dueMonth = p.dueDate?.slice(0, 7)
     // A pot that starts later asks for nothing yet — and then for the whole

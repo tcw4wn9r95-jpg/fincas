@@ -16,7 +16,7 @@ import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
-import { IconPlus, IconTrash } from './icons'
+import { IconPlus, IconTrash, IconCheck } from './icons'
 
 /**
  * What a provision can be for: a bill. Income is what funds one, and the
@@ -201,6 +201,15 @@ export function Plan() {
     startDate: '',
   })
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
+  const openProvisions = useMemo(() => provisionStatuses.filter((p) => !p.closedAt), [provisionStatuses])
+  const closedProvisions = useMemo(
+    () =>
+      provisionStatuses
+        .filter((p) => p.closedAt)
+        .sort((a, b) => (b.closedAt ?? '').localeCompare(a.closedAt ?? '')),
+    [provisionStatuses],
+  )
+  const [showClosed, setShowClosed] = useState(false)
   function addProvision() {
     if (!prov.label.trim() || !parseAmount(prov.target)) return
     const p: Provision = {
@@ -225,6 +234,21 @@ export function Plan() {
       for (const t of d.transactions) {
         dropAllocations(t, (a) => a.provisionId === id)
       }
+      return d
+    })
+  }
+  /** Used for its purpose and put away — its history stays, it just stops asking for money. */
+  function closeProvision(id: string) {
+    update((d) => {
+      const p = d.provisions.find((x) => x.id === id)
+      if (p) p.closedAt = todayISO()
+      return d
+    })
+  }
+  function reopenProvision(id: string) {
+    update((d) => {
+      const p = d.provisions.find((x) => x.id === id)
+      if (p) p.closedAt = undefined
       return d
     })
   }
@@ -504,7 +528,7 @@ export function Plan() {
         desc="Set money aside ahead of a known bill — like a company provisioning for taxes — so it's already covered when the bill lands."
       >
         <div className="space-y-3 mb-4">
-          {provisionStatuses.map((p) => (
+          {openProvisions.map((p) => (
             <div key={p.id} className="rounded-lg bg-canvas px-4 py-3 border border-line">
               <div className="flex items-center justify-between gap-3 mb-1.5">
                 <input
@@ -513,13 +537,23 @@ export function Plan() {
                   placeholder="Untitled provision"
                   onBlur={(e) => editProvision(p.id, { label: e.target.value.trim() || p.label })}
                 />
-                <button
-                  className="text-muted hover:text-clay shrink-0"
-                  onClick={() => removeProvision(p.id)}
-                  aria-label="Delete provision"
-                >
-                  <IconTrash width={16} height={16} />
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    className="text-muted hover:text-forest"
+                    onClick={() => closeProvision(p.id)}
+                    title="Used for its purpose — close it and move it out of the way"
+                    aria-label={`Close ${p.label}`}
+                  >
+                    <IconCheck width={16} height={16} />
+                  </button>
+                  <button
+                    className="text-muted hover:text-clay"
+                    onClick={() => removeProvision(p.id)}
+                    aria-label="Delete provision"
+                  >
+                    <IconTrash width={16} height={16} />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                 <select
@@ -583,8 +617,12 @@ export function Plan() {
               )}
             </div>
           ))}
-          {provisionStatuses.length === 0 && (
-            <p className="text-sm text-muted">No provisions yet — add one for an upcoming bill below.</p>
+          {openProvisions.length === 0 && (
+            <p className="text-sm text-muted">
+              {closedProvisions.length > 0
+                ? 'Nothing active — add one for an upcoming bill below, or reopen a closed one.'
+                : 'No provisions yet — add one for an upcoming bill below.'}
+            </p>
           )}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -639,6 +677,47 @@ export function Plan() {
             <IconPlus width={16} height={16} /> Add
           </button>
         </div>
+
+        {closedProvisions.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-line">
+            <button
+              className="text-sm text-muted hover:text-ink inline-flex items-center gap-1.5"
+              onClick={() => setShowClosed((s) => !s)}
+            >
+              <span className={classNames('transition-transform text-[10px]', showClosed && 'rotate-90')}>▶</span>
+              Closed provisions ({closedProvisions.length})
+            </button>
+            {showClosed && (
+              <div className="space-y-2 mt-3">
+                {closedProvisions.map((p) => (
+                  <div
+                    key={p.id}
+                    className="rounded-lg bg-canvas px-4 py-3 border border-line flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{p.label}</div>
+                      <div className="text-xs text-muted">
+                        {p.category} · {fx(p.funded)} of {fx(p.targetAmount)} funded · closed {p.closedAt}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button className="btn-subtle text-xs" onClick={() => reopenProvision(p.id)}>
+                        Reopen
+                      </button>
+                      <button
+                        className="text-muted hover:text-clay"
+                        onClick={() => removeProvision(p.id)}
+                        aria-label="Delete provision"
+                      >
+                        <IconTrash width={16} height={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       <Section

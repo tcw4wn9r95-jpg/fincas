@@ -115,6 +115,14 @@ export function ProvisionModal({
 }) {
   const total = round2(Math.abs(tx.amount))
 
+  // A closed provision is done with — hide it from new allocations, but keep
+  // showing one this transaction is already split against so that split stays
+  // visible and editable rather than silently disappearing.
+  const allocatable = useMemo(() => {
+    const already = new Set(transactionAllocations(tx).map((a) => a.provisionId))
+    return provisions.filter((p) => !p.closedAt || already.has(p.id))
+  }, [provisions, tx])
+
   // Amounts as raw input strings so a half-typed "1." doesn't fight the user.
   const [amounts, setAmounts] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}
@@ -135,13 +143,13 @@ export function ProvisionModal({
   const [direction, setDirection] = useState<'contribution' | 'drawdown'>(() => {
     const existing = transactionAllocations(tx)[0]
     if (existing) return existing.role
-    return provisions.some((p) => provisionRoleFor(tx.category, p) === 'drawdown')
+    return allocatable.some((p) => provisionRoleFor(tx.category, p) === 'drawdown')
       ? 'drawdown'
       : 'contribution'
   })
   const pulling = direction === 'drawdown'
 
-  const rowIds = useMemo(() => [...provisions.map((p) => p.id), EMERGENCY_FUND_ID], [provisions])
+  const rowIds = useMemo(() => [...allocatable.map((p) => p.id), EMERGENCY_FUND_ID], [allocatable])
   const allocated = useMemo(
     () =>
       round2(
@@ -175,7 +183,7 @@ export function ProvisionModal({
 
   function save() {
     const next: ProvisionAllocation[] = []
-    for (const p of provisions) {
+    for (const p of allocatable) {
       const amount = round2(Math.max(0, parseAmount(amounts[p.id] ?? '') || 0))
       if (amount <= 0) continue
       next.push({ provisionId: p.id, amount, role: direction })
@@ -262,12 +270,12 @@ export function ProvisionModal({
           </div>
 
           <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-2.5">
-            {provisions.length === 0 && (
+            {allocatable.length === 0 && (
               <p className="text-center text-muted text-sm py-4">
                 No provisions yet — add one in your plan, or send this to the emergency fund.
               </p>
             )}
-            {provisions.map((p) => {
+            {allocatable.map((p) => {
               const raw = amounts[p.id] ?? ''
               const value = Math.max(0, parseAmount(raw) || 0)
               const active = value > 0

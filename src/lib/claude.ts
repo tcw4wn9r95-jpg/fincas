@@ -234,7 +234,7 @@ export async function streamTransactionAdvice(
   }
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
   const { currency } = data.settings
-  const provisions = allProvisionStatuses(data)
+  const provisions = allProvisionStatuses(data).filter((p) => !p.closedAt)
   const emergency = emergencyFundStatus(data)
   const events = allEventStatuses(data, todayISO())
   const history = similarHistory(data, tx)

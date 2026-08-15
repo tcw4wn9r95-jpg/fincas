@@ -1162,8 +1162,8 @@ export function financialSummary(data: AppData): string {
     )
   }
 
-  if (data.provisions.length) {
-    const statuses = allProvisionStatuses(data)
+  const statuses = allProvisionStatuses(data).filter((p) => !p.closedAt)
+  if (statuses.length) {
     lines.push(
       'Provisions (money set aside ahead of a known bill, e.g. quarterly taxes): ' +
         statuses

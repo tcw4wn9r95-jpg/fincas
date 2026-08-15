@@ -839,6 +839,54 @@ console.log('\n── N. Every surface reads the plan the same way ──')
   eq('… and the same net result', r.plannedNet, f.netResult)
 }
 
+console.log('\n── T. Closing a provision steps it out of the way, without losing it ──')
+{
+  const closedProv = {
+    id: 'closed1',
+    label: 'Car repair',
+    category: 'Transport',
+    targetAmount: 500,
+    createdAt: `${M(-6)}-01`,
+    closedAt: `${M(0)}-01`,
+  }
+  const openProv = {
+    id: 'open1',
+    label: 'Taxes',
+    category: 'Taxes',
+    targetAmount: 1000,
+    dueDate: `${M(1)}-15`,
+    createdAt: `${M(-2)}-01`,
+  }
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 5000, asOf: endOf(0), tracked: true }],
+    provisions: [closedProv, openProv],
+    transactions: [
+      // Only partly funded before it was closed — it must still not ask for more.
+      tx({ id: 'c1', date: `${M(-3)}-10`, description: 'Into car fund', amount: -200, category: 'Savings', accountId: 'a1', provisionId: 'closed1', provisionRole: 'contribution', provisionAmount: 200 }),
+    ],
+  })
+
+  const statuses = P.allProvisionStatuses(d)
+  const closedStatus = statuses.find((s) => s.id === 'closed1')
+  eq('a closed provision still carries its closedAt', closedStatus.closedAt, closedProv.closedAt)
+  eq('… and its real funded balance', closedStatus.funded, 200)
+
+  const open = P.openProvisionStatuses(d)
+  ok('open statuses drop the closed one', !open.some((s) => s.id === 'closed1'))
+  ok('… and keep the open one', open.some((s) => s.id === 'open1'))
+
+  const funding = U.fundingPlan(d, M(0), `${M(0)}-15`)
+  ok('the closed provision asks for nothing, underfunded or not', !funding.lines.some((l) => l.id === 'closed1') && !funding.settled.some((l) => l.id === 'closed1'))
+  ok('the open provision still asks normally', funding.lines.some((l) => l.id === 'open1'))
+
+  const pots = U.potsCheck(d)
+  eq('but the money it already holds still counts toward the pots check', pots.provisions, 200)
+
+  const summary = F.financialSummary(d)
+  ok('the AI snapshot leaves the closed provision out', !summary.includes('Car repair'))
+  ok('… and still lists the open one', summary.includes('Taxes'))
+}
+
 console.log('\n── S. The assistant reads individual transactions, not just totals ──')
 {
   const d = base({

@@ -150,6 +150,8 @@ export interface ProvisionStatus {
   suggestedMonthly: number | null
   /** Drawn more than was ever contributed — the shortfall came from somewhere else, not this pot. */
   overdrawn: number
+  /** Set once the provision has been used for its purpose and closed. */
+  closedAt?: string
 }
 
 /** A provision's accrued balance and progress, derived live from tagged transactions. */
@@ -201,11 +203,17 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
     monthsRemaining,
     suggestedMonthly,
     overdrawn,
+    closedAt: p.closedAt,
   }
 }
 
 export function allProvisionStatuses(data: AppData): ProvisionStatus[] {
   return data.provisions.map((p) => provisionStatus(data, p))
+}
+
+/** Provisions still doing their job — excludes anything closed. */
+export function openProvisionStatuses(data: AppData): ProvisionStatus[] {
+  return allProvisionStatuses(data).filter((p) => !p.closedAt)
 }
 
 /**
