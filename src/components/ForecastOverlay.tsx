@@ -103,7 +103,15 @@ export function ForecastOverlay({
                   </tr>
                 </thead>
                 <tbody>
-                  {points.map((p) => (
+                  {points.map((p) => {
+                    // Compact breakdown under the total — only worth a second
+                    // line when more than one kind of set-aside actually moved.
+                    const setAsideParts = [
+                      p.setAsideProvisions > 0.5 && `${fx(p.setAsideProvisions)} prov`,
+                      p.setAsideInvestments > 0.5 && `${fx(p.setAsideInvestments)} inv`,
+                      p.setAsideSavings > 0.5 && `${fx(p.setAsideSavings)} sav`,
+                    ].filter((s): s is string => Boolean(s))
+                    return (
                     <tr
                       key={p.month}
                       className={classNames(
@@ -121,7 +129,18 @@ export function ForecastOverlay({
                       <td className="py-2 px-3 text-right tabular-nums text-muted">{fx(p.income)}</td>
                       <td className="py-2 px-3 text-right tabular-nums text-muted">{fx(p.expenses)}</td>
                       <td className="py-2 px-3 text-right tabular-nums text-muted">
-                        {p.setAside > 0.5 ? fx(p.setAside) : '—'}
+                        {p.setAside > 0.5 ? (
+                          <>
+                            {fx(p.setAside)}
+                            {setAsideParts.length > 1 && (
+                              <div className="text-[10px] text-muted/80 font-normal">
+                                {setAsideParts.join(' · ')}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td
                         className={classNames(
@@ -135,7 +154,8 @@ export function ForecastOverlay({
                         <td className="py-2 pl-3 text-right tabular-nums">{fx(p.balance)}</td>
                       )}
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

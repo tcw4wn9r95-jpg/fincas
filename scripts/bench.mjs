@@ -939,6 +939,46 @@ console.log('\n── V. The balance chart doesn’t dip twice for a bill a pot 
   eq('the headline "Total balance" figure is untouched by the smoothing', F.startingBalance(d), 9000)
 }
 
+console.log('\n── W. Set aside splits into provisions, investments and savings ──')
+{
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 5000, asOf: endOf(0), tracked: true }],
+    provisions: [{ id: 'p1', label: 'Car fund', category: 'Transport', targetAmount: 2000, createdAt: `${M(0)}-01` }],
+    recurring: [
+      line({ id: 'r1', label: 'Car fund transfer', amount: 300, flow: 'expense', category: 'Transport', group: 'Provisions' }),
+      line({ id: 'r2', label: 'Index fund', amount: 200, flow: 'expense', category: 'Investments' }),
+      line({ id: 'r3', label: 'Savings top-up', amount: 100, flow: 'expense', category: 'Savings' }),
+    ],
+    transactions: [
+      tx({
+        id: 't1', date: `${M(0)}-05`, description: 'To car fund', amount: -300, category: 'Transport', accountId: 'a1',
+        provisionAllocations: [{ provisionId: 'p1', amount: 300, role: 'contribution' }],
+      }),
+      tx({ id: 't2', date: `${M(0)}-06`, description: 'Vanguard', amount: -200, category: 'Investments', accountId: 'a1' }),
+      tx({ id: 't3', date: `${M(0)}-07`, description: 'To savings', amount: -100, category: 'Savings', accountId: 'a1' }),
+    ],
+  })
+
+  const r = F.computeReview(d, M(0))
+  eq('provision contributions land in their own bucket', r.setAsideProvisions, 300)
+  eq('Investments transactions land in their own bucket', r.setAsideInvestments, 200)
+  eq('Savings transactions land in their own bucket', r.setAsideSavings, 100)
+  eq('the three sum to the total set aside', round(r.setAsideProvisions + r.setAsideInvestments + r.setAsideSavings), r.setAside)
+  eq('planned provisions matches the recurring line', r.plannedSetAsideProvisions, 300)
+  eq('planned investments matches the recurring line', r.plannedSetAsideInvestments, 200)
+  eq('planned savings matches the recurring line', r.plannedSetAsideSavings, 100)
+  eq('the three planned buckets sum to the planned total', round(r.plannedSetAsideProvisions + r.plannedSetAsideInvestments + r.plannedSetAsideSavings), r.plannedSetAside)
+
+  const forecastPoint = F.buildForecast(d, 1)[0]
+  eq('the forecast carries the same planned breakdown for provisions', forecastPoint.setAsideProvisions, 300)
+  eq('… investments', forecastPoint.setAsideInvestments, 200)
+  eq('… and savings', forecastPoint.setAsideSavings, 100)
+
+  const summary = F.buildSummary(d, 0, 1)
+  const thisMonth = summary.find((p) => p.month === M(0))
+  eq('the summary chart carries the same planned breakdown', thisMonth.setAsideProvisions, 300)
+}
+
 console.log('\n── U. Investments is its own category, and it counts as provisioning ──')
 {
   eq('a brokerage purchase is read as Investments, not generic Savings', C.categorize('Vanguard brokerage purchase', -500), 'Investments')

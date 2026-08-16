@@ -54,6 +54,22 @@ export function setAsideAmount(t: Transaction): number {
   return round2(Math.min(Math.max(0, -t.amount), contributed))
 }
 
+export type SetAsideBucket = 'provisions' | 'investments' | 'savings'
+
+/**
+ * Which of the three kinds of set-aside money a transaction's kept amount
+ * belongs to — the same distinction `setAsideAmount` draws, named so a caller
+ * that wants the breakdown (not just the total) doesn't have to re-derive it.
+ * Anything not filed under Savings or Investments is a provision contribution
+ * by elimination: `setAsideAmount`'s own fallback path only ever counts money
+ * held for a named pot or the emergency fund.
+ */
+export function setAsideBucket(t: Transaction): SetAsideBucket {
+  if (t.category === SAVINGS_CATEGORY) return 'savings'
+  if (t.category === INVESTMENTS_CATEGORY) return 'investments'
+  return 'provisions'
+}
+
 /** What's still free to assign — the "500 left" of a €1,000 transfer split €500 to taxes. */
 export function unallocatedAmount(t: Transaction): number {
   return round2(Math.max(0, Math.abs(t.amount) - allocatedTotal(t)))

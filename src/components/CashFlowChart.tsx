@@ -108,6 +108,11 @@ function monthRows(p: ChartPoint, showBalance: boolean, scenarioName?: string): 
     { label: 'of which fixed', value: -p.fixedExpenses },
     { label: 'of which variable', value: -p.variableExpenses },
     ...(p.setAside > 0.5 ? [{ label: 'Set aside', value: -p.setAside, top: true }] : []),
+    // Same "of which" pattern as the expense split above — what kind of kept
+    // money this month's set-aside actually was.
+    ...(p.setAsideProvisions > 0.5 ? [{ label: 'of which provisions', value: -p.setAsideProvisions }] : []),
+    ...(p.setAsideInvestments > 0.5 ? [{ label: 'of which investments', value: -p.setAsideInvestments }] : []),
+    ...(p.setAsideSavings > 0.5 ? [{ label: 'of which savings', value: -p.setAsideSavings }] : []),
     // Two different figures, named apart so neither can be read as the other:
     // what the month gained or lost, and what the balance actually did with
     // money that only moved pocket.

@@ -20,6 +20,8 @@ import {
   allProvisionStatuses,
   emergencyFundStatus,
   provisionCoveredByCategory,
+  setAsideAmount,
+  setAsideBucket,
   type ProvisionStatus,
 } from '../lib/provisions'
 import type { Account, ProvisionAllocation, Transaction } from '../lib/types'
@@ -339,6 +341,24 @@ export function MoneyDate({
     .sort((a, b) => a.variance - b.variance)
     .slice(0, 2)
 
+  // Money kept, broken into what it was kept for. These transactions never
+  // appear as a category row above — their net is zero, since the money never
+  // left the accounts this balance covers — so they get their own section
+  // instead, shown only for a bucket that actually moved.
+  const setAsideRows = useMemo(() => {
+    const buckets: Array<{ key: 'provisions' | 'investments' | 'savings'; label: string; planned: number; actual: number }> = [
+      { key: 'provisions', label: 'Provisions', planned: review.plannedSetAsideProvisions, actual: review.setAsideProvisions },
+      { key: 'investments', label: 'Investments', planned: review.plannedSetAsideInvestments, actual: review.setAsideInvestments },
+      { key: 'savings', label: 'Savings', planned: review.plannedSetAsideSavings, actual: review.setAsideSavings },
+    ]
+    return buckets
+      .filter((b) => Math.abs(b.planned) > 0.5 || Math.abs(b.actual) > 0.5)
+      .map((b) => ({
+        ...b,
+        txs: monthTxs.filter((t) => setAsideAmount(t) !== 0 && setAsideBucket(t) === b.key),
+      }))
+  }, [review, monthTxs])
+
   // Closing the loop: how far this month's plan still differs from its actuals,
   // over the categories that actually have transactions.
   const reconcileGap = useMemo(() => {
@@ -539,6 +559,11 @@ export function MoneyDate({
                   ? `planned ${fx(review.plannedSetAside)}`
                   : 'into provisions & savings'}
               </div>
+              {setAsideRows.length > 1 && (
+                <div className="text-xs text-muted mt-1.5 pt-1.5 border-t border-line">
+                  {setAsideRows.map((r) => `${fx(r.actual)} ${r.label.toLowerCase()}`).join(' · ')}
+                </div>
+              )}
             </div>
             {/* Two nets, because they answer different questions: what the
                 month left behind, and how the month itself went once the pots
@@ -860,6 +885,81 @@ export function MoneyDate({
                             <td colSpan={5} className="p-0 border-b border-line/60">
                               <DrillList
                                 txs={txs}
+                                currency={currency}
+                                locale={locale}
+                                provisions={provisionStatuses}
+                                onSet={setTxCategory}
+                                onSetCard={setTxCard}
+                                cards={cardAccounts}
+                                onTeach={setTeaching}
+                                onProvision={(t) => setProvisioning(t.id)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+
+                  {setAsideRows.map((r) => {
+                    const variance = r.actual - r.planned
+                    const unfavourable = variance < -0.5
+                    const label = r.planned > 0.5 ? (variance >= -0.5 ? 'above' : 'below') : undefined
+                    const key = `setaside-${r.key}`
+                    const isOpen = openCat === key
+                    return (
+                      <Fragment key={key}>
+                        <tr
+                          className={classNames(
+                            'border-b border-line/60',
+                            r.txs.length > 0 && 'cursor-pointer hover:bg-canvas/50',
+                          )}
+                          onClick={() => r.txs.length > 0 && setOpenCat(isOpen ? null : key)}
+                        >
+                          <td className="px-6 py-3">
+                            <span className="inline-flex items-center gap-1.5">
+                              {r.txs.length > 0 && (
+                                <span
+                                  className={classNames(
+                                    'text-muted transition-transform text-[10px]',
+                                    isOpen && 'rotate-90',
+                                  )}
+                                >
+                                  ▶
+                                </span>
+                              )}
+                              <span className="pill bg-forest-tint text-forest">{r.label}</span>
+                              {r.txs.length > 0 && (
+                                <span className="text-xs text-muted">{r.txs.length}</span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <VarianceBar planned={r.planned} actual={r.actual} />
+                          </td>
+                          <td className="px-4 py-3 text-right text-muted">{fx(r.planned)}</td>
+                          <td className="px-4 py-3 text-right font-medium">{fx(r.actual)}</td>
+                          <td
+                            className={classNames(
+                              'px-6 py-3 text-right font-medium',
+                              label ? (unfavourable ? 'text-clay' : 'text-forest') : 'text-muted',
+                            )}
+                          >
+                            {label ? (
+                              <>
+                                {fx(Math.abs(variance), { signed: false })}
+                                <span className="text-xs ml-1 text-muted">{label}</span>
+                              </>
+                            ) : (
+                              <span className="text-xs">kept, not spent</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr>
+                            <td colSpan={5} className="p-0 border-b border-line/60">
+                              <DrillList
+                                txs={r.txs}
                                 currency={currency}
                                 locale={locale}
                                 provisions={provisionStatuses}

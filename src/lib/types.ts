@@ -331,6 +331,10 @@ export interface ForecastPoint {
   variableExpenses: number
   /** Planned provisioning: kept out of `expenses`, since it stays in the accounts. */
   setAside: number
+  /** `setAside`, split by kind — the three always sum to it. */
+  setAsideProvisions: number
+  setAsideInvestments: number
+  setAsideSavings: number
   /**
    * The change in total balance: income − expenses. Money set aside is *not*
    * subtracted — it stays in the accounts the balance covers, it just moves
@@ -370,6 +374,10 @@ export interface MonthReview {
   expenses: number
   /** Money kept: paid into provisions, the emergency fund, or plain savings. */
   setAside: number
+  /** `setAside`, split by kind — the three always sum to it. */
+  setAsideProvisions: number
+  setAsideInvestments: number
+  setAsideSavings: number
   /** income − expenses − setAside: what the month actually gained or lost. */
   net: number
   /** The same figure before any money was committed to a pot. */
@@ -379,6 +387,10 @@ export interface MonthReview {
   plannedIncome: number
   plannedExpenses: number
   plannedSetAside: number
+  /** `plannedSetAside`, split by kind — the three always sum to it. */
+  plannedSetAsideProvisions: number
+  plannedSetAsideInvestments: number
+  plannedSetAsideSavings: number
   plannedNet: number
   categories: CategoryActual[]
   transactionCount: number
