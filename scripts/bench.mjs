@@ -887,6 +887,58 @@ console.log('\n── T. Closing a provision steps it out of the way, without lo
   ok('… and still lists the open one', summary.includes('Taxes'))
 }
 
+console.log('\n── V. The balance chart doesn’t dip twice for a bill a pot already paid ──')
+{
+  // Three months funding a Taxes provision via a "flexible pot" transfer
+  // (Internal, so it never really leaves the tracked total), then the bill
+  // lands: the pot's money comes back (Internal) and pays it (a drawdown).
+  const txs = []
+  for (const n of [-3, -2, -1]) {
+    txs.push(tx({ date: `${M(n)}-02`, description: 'Salary', amount: 3000, category: 'Income', accountId: 'a1' }))
+    txs.push(tx({ date: `${M(n)}-03`, description: 'Rent', amount: -1800, category: 'Housing', accountId: 'a1' }))
+    txs.push(
+      tx({
+        date: `${M(n)}-05`,
+        description: 'To flexible pot',
+        amount: -1200,
+        category: 'Internal',
+        accountId: 'a1',
+        provisionAllocations: [{ provisionId: 'p1', amount: 1200, role: 'contribution' }],
+      }),
+    )
+  }
+  txs.push(tx({ date: `${M(-1)}-15`, description: 'From flexible pot', amount: 3600, category: 'Internal', accountId: 'a1' }))
+  txs.push(
+    tx({
+      date: `${M(-1)}-16`,
+      description: 'Hacienda quarterly tax',
+      amount: -3600,
+      category: 'Taxes',
+      accountId: 'a1',
+      provisionAllocations: [{ provisionId: 'p1', amount: 3600, role: 'drawdown' }],
+    }),
+  )
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 9000, asOf: endOf(-1), tracked: true }],
+    provisions: [{ id: 'p1', label: 'Taxes', category: 'Taxes', targetAmount: 3600, dueDate: `${M(-1)}-16`, createdAt: `${M(-3)}-01` }],
+    transactions: txs,
+  })
+
+  const summary = F.buildSummary(d, 4, 0)
+  const [may, jun, jul] = summary.map((p) => p.net)
+  eq('a funding month nets salary minus rent, same as any other', may, 1200)
+  eq('… every funding month alike', jun, 1200)
+  eq('and the month the bill actually lands is not singled out for a second hit', jul, 1200)
+  eq('the balance still climbs to the real, statement-confirmed figure', summary[summary.length - 1].balance, 9000)
+  eq('… not a crash-and-recover shape along the way', summary[summary.length - 2].balance, 7800)
+
+  const ledger = F.buildLedger(d)
+  const ledgerJul = ledger.find((p) => p.month === M(-1))
+  eq('the ledger table agrees with the chart', ledgerJul.net, 1200)
+
+  eq('the headline "Total balance" figure is untouched by the smoothing', F.startingBalance(d), 9000)
+}
+
 console.log('\n── U. Investments is its own category, and it counts as provisioning ──')
 {
   eq('a brokerage purchase is read as Investments, not generic Savings', C.categorize('Vanguard brokerage purchase', -500), 'Investments')

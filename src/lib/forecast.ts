@@ -561,8 +561,16 @@ export interface LedgerPoint extends ForecastPoint {
  * has been imported, the plan otherwise.
  *
  * Money set aside is kept out of `expenses` on both sides — it stays inside the
- * accounts this balance covers. A bill a provision paid for is left in, because
- * that money really did leave.
+ * accounts this balance covers.
+ *
+ * A bill a provision paid for is, by default, left in as a real expense: that
+ * money did leave the account, on the day it left. `smoothProvisioned` is for
+ * callers drawing a line through months that were never independently
+ * confirmed with their own statement — there, showing the funding months
+ * flat and then the whole bill landing in one go draws a dip that never
+ * happened to the money itself, only to which bucket it sat in; charging it to
+ * the months that funded it instead, the same way `computeReview` already
+ * does, keeps that line matching the story the money date already tells.
  *
  * Both the roll-forward in `startingBalance` and the ledger read months through
  * here, so the balance the plan page quotes and the one the ledger draws are the
@@ -574,17 +582,20 @@ function monthFlows(
   withData: Set<string>,
   now: string,
   fixedCats: Set<string>,
+  smoothProvisioned = false,
 ) {
   if (month < now && withData.has(month)) {
     const { income, expense, setAside } = actualsByCategory(data, month, { splitSavings: true })
+    const covered = smoothProvisioned ? provisionCoveredByCategoryRange(data, [month]) : {}
     const inc = Object.values(income).reduce((a, b) => a + b, 0)
     let fixed = 0
     let variable = 0
     for (const [cat, amt] of Object.entries(expense)) {
-      if (expenseCategoryIsVariable(fixedCats, cat)) variable += amt
-      else fixed += amt
+      const net = round2(Math.max(0, amt - Math.min(amt, round2(covered[cat] ?? 0))))
+      if (expenseCategoryIsVariable(fixedCats, cat)) variable += net
+      else fixed += net
     }
-    const expenses = fixed + variable
+    const expenses = round2(fixed + variable)
     return { month, income: inc, fixed, variable, expenses, setAside, net: inc - expenses, actual: true }
   }
   const { income, fixed, variable, expenses, setAside } = plannedFlowsForMonth(data, month)
@@ -612,8 +623,11 @@ export function buildLedger(data: AppData): LedgerPoint[] {
   const months: string[] = []
   for (let m = start; m <= lastMonth; m = addMonths(m, 1)) months.push(m)
 
-  // Per-month figures: real actuals for past months that have data, else the plan.
-  const rows = months.map((month) => monthFlows(data, month, withData, now, fixedCategories(data)))
+  // Per-month figures: real actuals for past months that have data, else the
+  // plan. Smoothed so a bill a provision already paid for doesn't draw a dip
+  // in a month that funded it, not the one the money moved.
+  const fixedCats = fixedCategories(data)
+  const rows = months.map((month) => monthFlows(data, month, withData, now, fixedCats, true))
 
   // Anchor: startingBalance is the balance at the start of `now`. Roll back over
   // the shown past months so the running total lands exactly there.
@@ -678,7 +692,7 @@ export function buildSummary(data: AppData, back = 6, forward = 12): SummaryPoin
   for (let i = 0; i < forward; i++) months.push(addMonths(now, i))
 
   const fixedCats = fixedCategories(data)
-  const rows = months.map((m) => monthFlows(data, m, withData, now, fixedCats))
+  const rows = months.map((m) => monthFlows(data, m, withData, now, fixedCats, true))
   // startingBalance is the balance at the start of `now`; roll back over the
   // months shown before it so the run lands exactly there.
   const netBeforeNow = rows.filter((r) => r.month < now).reduce((s, r) => s + r.net, 0)
