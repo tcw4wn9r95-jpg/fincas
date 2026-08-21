@@ -15,8 +15,9 @@ import {
   emergencyFundStatus,
   setAsideAmount,
   setAsideBucket,
+  transactionAllocations,
 } from './provisions'
-import { allEventStatuses, eventSummaryLine } from './events'
+import { allEventStatuses, eventSummaryLine, eventBudgetForMonth } from './events'
 import { fundingPlan } from './funding'
 import { CARD_PAYMENT_CATEGORY, NON_CASHFLOW, SAVINGS_CATEGORY, INVESTMENTS_CATEGORY } from './categorize'
 
@@ -956,6 +957,21 @@ export function computeReview(data: AppData, month: string): MonthReview {
   const actualIncomeByCat: Record<string, number> = {}
   const actualExpenseByCat: Record<string, number> = {}
 
+  /**
+   * A planned event gets its own line in the month it runs, and its spending is
+   * filed there instead of under Dining or Travel. Instead, not as well: the
+   * same euro on both lines would count twice in the month's total. The event
+   * is the more useful of the two — three days of restaurants in Lisbon read as
+   * a trip, not as a sudden appetite — and the event screen still breaks it
+   * back down by real category.
+   *
+   * Keyed by id rather than label so two trips called "Weekend away" stay apart.
+   */
+  const eventsById = new Map((data.events ?? []).map((e) => [e.id, e]))
+  const eventKey = (id: string) => `event:${id}`
+  const budgetKey = (t: Transaction) =>
+    t.eventId && eventsById.has(t.eventId) ? eventKey(t.eventId) : t.category
+
   // Net positives and negatives within each category first, so a refund offsets
   // the spend it belongs to (e.g. a reimbursed Health cost shows its net).
   const netByCat: Record<string, number> = {}
@@ -976,15 +992,31 @@ export function computeReview(data: AppData, month: string): MonthReview {
       else if (bucket === 'investments') setAsideInvestments += aside
       else setAsideProvisions += aside
     }
-    netByCat[t.category] = (netByCat[t.category] ?? 0) + t.amount + aside
+    const key = budgetKey(t)
+    netByCat[key] = (netByCat[key] ?? 0) + t.amount + aside
   }
   setAside = round2(setAside)
   setAsideProvisions = round2(setAsideProvisions)
   setAsideInvestments = round2(setAsideInvestments)
   setAsideSavings = round2(setAsideSavings)
 
-  // Bills a provision paid for, per category.
-  const provisionCovered = provisionCoveredByCategoryRange(data, [month])
+  // Bills a provision paid for, per category — re-keyed the same way, so a
+  // pre-funded event's drawdown lands against the event's own line rather than
+  // against a category its spending is no longer filed under.
+  const provisionCoveredRaw = provisionCoveredByCategoryRange(data, [month])
+  const provisionCovered: Record<string, number> = {}
+  for (const t of txs) {
+    const key = budgetKey(t)
+    if (key === t.category) continue
+    for (const a of transactionAllocations(t)) {
+      if (a.role !== 'drawdown') continue
+      provisionCovered[key] = round2((provisionCovered[key] ?? 0) + a.amount)
+      provisionCoveredRaw[t.category] = round2((provisionCoveredRaw[t.category] ?? 0) - a.amount)
+    }
+  }
+  for (const [cat, amt] of Object.entries(provisionCoveredRaw)) {
+    if (amt > 0.005) provisionCovered[cat] = round2((provisionCovered[cat] ?? 0) + amt)
+  }
 
   for (const [cat, n] of Object.entries(netByCat)) {
     const net = round2(n)
@@ -1049,6 +1081,22 @@ export function computeReview(data: AppData, month: string): MonthReview {
     } else plannedExpenseByCat[cat] = budget
   }
 
+  // An event running in this month books its share of its budget here, split by
+  // the days it runs (a trip over a month end belongs to both months, not twice
+  // to either).
+  //
+  // Except when a provision is saving for it. Then the cost is charged to the
+  // months that funded the pot and deliberately left out of the month the bill
+  // lands in — budgeting for it here as well would ask the same month to afford
+  // something it has already paid for in instalments. The line still appears,
+  // so the spending has somewhere honest to sit; it just carries no plan.
+  for (const e of data.events ?? []) {
+    const share = e.provisionId && data.provisions.some((p) => p.id === e.provisionId)
+      ? 0
+      : eventBudgetForMonth(e, month)
+    if (share > 0.005) plannedExpenseByCat[eventKey(e.id)] = share
+  }
+
   const plannedIncome = Object.values(plannedIncomeByCat).reduce((a, b) => a + b, 0)
   const plannedExpenses = Object.values(plannedExpenseByCat).reduce((a, b) => a + b, 0)
 
@@ -1074,13 +1122,19 @@ export function computeReview(data: AppData, month: string): MonthReview {
   for (const cat of expenseCats) {
     const planned = plannedExpenseByCat[cat] ?? 0
     const actual = actualExpenseByCat[cat] ?? 0
+    // An event row is keyed by id but shown by name, so two trips sharing a
+    // label stay separate rows rather than collapsing into one.
+    const eventId = cat.startsWith('event:') ? cat.slice(6) : undefined
+    const event = eventId ? eventsById.get(eventId) : undefined
+    if (eventId && !event) continue
     categories.push({
-      category: cat,
+      category: event ? event.label : cat,
       flow: 'expense',
       planned,
       actual,
       variance: actual - planned,
       provisionCovered: provisionCovered[cat] ?? 0,
+      ...(event ? { eventId } : {}),
     })
   }
 

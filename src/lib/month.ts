@@ -159,6 +159,8 @@ export interface CategoryPulse {
    * rent to cover a restaurant is the one suggestion this screen must never make.
    */
   committed: boolean
+  /** Set when this row is a planned event rather than a spending category. */
+  eventId?: string
 }
 
 /** How many previous months a category's "usual" is averaged over. */
@@ -451,7 +453,10 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
         average,
         vsAverage: round2(c.actual - average),
         paceTarget,
-        committed: committedCats.has(c.category),
+        // An event is a lump with dates, not a habit to pace — treated as
+        // committed so its unspent budget never reads as everyday slack.
+        committed: !!c.eventId || committedCats.has(c.category),
+        ...(c.eventId ? { eventId: c.eventId } : {}),
       }
     })
     .sort((a, b) => b.actual - a.actual)
@@ -461,8 +466,14 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   // bill already paid can't be counted as still coming and an overspent
   // category can't lend its excess back.
   const committedLeft = round2(categories.reduce((s, c) => s + c.left, 0))
-  const everydaySpent = round2(Math.max(0, review.expenses - discreteArrived))
-  const everydayPlan = round2(Math.max(0, review.plannedExpenses - discretePlan))
+  // Events come out of both sides of the pace question too: three days of a
+  // trip is not a habit, and leaving it in would swamp the one measure that
+  // says whether ordinary spending is under control.
+  const eventRows = categories.filter((c) => c.eventId)
+  const eventPlan = round2(eventRows.reduce((s, c) => s + c.planned, 0))
+  const eventSpent = round2(eventRows.reduce((s, c) => s + c.actual, 0))
+  const everydaySpent = round2(Math.max(0, review.expenses - discreteArrived - eventSpent))
+  const everydayPlan = round2(Math.max(0, review.plannedExpenses - discretePlan - eventPlan))
   const everydayRate = elapsed > 0 ? everydaySpent / elapsed : 0
 
   return {
@@ -558,6 +569,22 @@ export function monthPulseText(data: AppData, month = currentMonth()): string {
   )
 
   if (p.categories.length) {
+    const events = p.categories.filter((c) => c.eventId)
+    if (events.length) {
+      lines.push(
+        'Planned events running this month, each carrying its share of its own budget for the days it runs ' +
+          '(a trip over a month end is split between both months, not charged whole to either). Spending tagged ' +
+          'to an event is counted here instead of under Dining or Travel, so it appears once: ' +
+          events
+            .map(
+              (c) =>
+                `${c.category} ${fx(c.actual)} spent of ${fx(c.planned)} budgeted here` +
+                (c.over > 0.5 ? ` (${fx(c.over)} OVER)` : ` (${fx(c.left)} left)`),
+            )
+            .join('; ') +
+          '.',
+      )
+    }
     lines.push(
       'By category this month (spent / planned / left · usual monthly average): ' +
         p.categories

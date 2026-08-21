@@ -134,8 +134,13 @@ export function MoneyDate({
   // category with spends and refunds shows them all when expanded).
   const txByCatKey = useMemo(() => {
     const map = new Map<string, Transaction[]>()
+    // Lines tagged to an event are counted on that event's own row, so they
+    // belong in its drill-down and not in the category they happen to be filed
+    // under — otherwise Dining reads €40 and then opens on two restaurants.
+    const eventIds = new Set((data.events ?? []).map((e) => e.id))
     for (const t of data.transactions) {
       if (t.month !== activeMonth) continue
+      if (t.eventId && eventIds.has(t.eventId)) continue
       const list = map.get(t.category)
       if (list) list.push(t)
       else map.set(t.category, [t])
@@ -820,9 +825,15 @@ export function MoneyDate({
                               ? 'prefunded'
                               : 'on plan'
                     const displayVariance = c.flow === 'expense' ? effVariance : c.variance
-                    const key = `${c.flow}-${c.category}`
-                    const txs = txByCatKey.get(c.category) ?? []
-                    const isOpen = openCat === c.category
+                    // Keyed by id for an event: two trips can share a name, and
+                    // an event's lines are the ones tagged to it rather than
+                    // everything filed under some category.
+                    const rowKey = c.eventId ? `event:${c.eventId}` : c.category
+                    const key = `${c.flow}-${rowKey}`
+                    const txs = c.eventId
+                      ? monthTxs.filter((t) => t.eventId === c.eventId)
+                      : txByCatKey.get(c.category) ?? []
+                    const isOpen = openCat === rowKey
                     return (
                       <Fragment key={key}>
                         <tr
@@ -830,7 +841,7 @@ export function MoneyDate({
                             'border-b border-line/60',
                             txs.length > 0 && 'cursor-pointer hover:bg-canvas/50',
                           )}
-                          onClick={() => txs.length > 0 && setOpenCat(isOpen ? null : c.category)}
+                          onClick={() => txs.length > 0 && setOpenCat(isOpen ? null : rowKey)}
                         >
                           <td className="px-6 py-3">
                             <span className="inline-flex items-center gap-1.5">
@@ -847,13 +858,18 @@ export function MoneyDate({
                               <span
                                 className={classNames(
                                   'pill',
-                                  c.flow === 'income'
-                                    ? 'bg-forest-tint text-forest'
-                                    : 'bg-clay/10 text-clay',
+                                  c.eventId
+                                    ? 'bg-gold/15 text-gold'
+                                    : c.flow === 'income'
+                                      ? 'bg-forest-tint text-forest'
+                                      : 'bg-clay/10 text-clay',
                                 )}
                               >
                                 {c.category}
                               </span>
+                              {c.eventId && (
+                                <span className="text-[10px] uppercase tracking-wide text-muted">event</span>
+                              )}
                               {txs.length > 0 && (
                                 <span className="text-xs text-muted">{txs.length}</span>
                               )}

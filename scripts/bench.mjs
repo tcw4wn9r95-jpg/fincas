@@ -32,6 +32,7 @@ const C = await server.ssrLoadModule('/src/lib/categorize.ts')
 const fmt = await server.ssrLoadModule('/src/lib/format.ts')
 const PA = await server.ssrLoadModule('/src/lib/parse.ts')
 const MO = await server.ssrLoadModule('/src/lib/month.ts')
+const EV = await server.ssrLoadModule('/src/lib/events.ts')
 
 const NOW = fmt.currentMonth()
 const round = (n) => Math.round(n * 100) / 100
@@ -1109,6 +1110,79 @@ console.log('\n── Y. Fixed costs are assumed paid; the rest get a button ─
     ],
   })
   eq('an unrelated spend of similar size is left alone', MO.duplicatePairs(unrelated, M(0)).length, 0)
+}
+
+console.log('\n── Z. A planned event books its own line, prorated across the months it runs ──')
+{
+  const ev = {
+    id: 'e1',
+    label: 'Lisbon trip',
+    kind: 'travel',
+    // Four days in this month, five in the next: 9 days in all.
+    startDate: `${M(0)}-28`,
+    endDate: `${M(1)}-05`,
+    budget: 900,
+    category: 'Travel',
+    expenses: [],
+    createdAt: `${M(0)}-01`,
+  }
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 5000, asOf: endOf(0), tracked: true }],
+    events: [ev],
+    recurring: [line({ id: 'r1', label: 'Dining out', amount: 200, flow: 'expense', category: 'Dining' })],
+    transactions: [
+      tx({ id: 'x1', date: `${M(0)}-29`, description: 'Restaurante Lisboa', amount: -120, category: 'Dining', accountId: 'a1', eventId: 'e1' }),
+      tx({ id: 'x2', date: `${M(1)}-02`, description: 'Hotel', amount: -300, category: 'Travel', accountId: 'a1', eventId: 'e1' }),
+      // Ordinary spending, untagged — must stay in its own category.
+      tx({ id: 'x3', date: `${M(0)}-10`, description: 'Local bistro', amount: -40, category: 'Dining', accountId: 'a1' }),
+    ],
+  })
+
+  eq('the budget splits by the days it runs in each month', EV.eventBudgetForMonth(ev, M(0)), 400)
+  eq('… and the rest belongs to the next', EV.eventBudgetForMonth(ev, M(1)), 500)
+  eq('the two shares are the whole budget, counted once', EV.eventBudgetForMonth(ev, M(0)) + EV.eventBudgetForMonth(ev, M(1)), 900)
+  eq('a month it never touches gets nothing', EV.eventBudgetForMonth(ev, M(-1)), 0)
+
+  const r0 = F.computeReview(d, M(0))
+  const row = r0.categories.find((c) => c.eventId === 'e1')
+  eq('the event gets a line of its own, named after it', row.category, 'Lisbon trip')
+  eq('… budgeted at this month\'s share', row.planned, 400)
+  eq('… carrying the spending tagged to it', row.actual, 120)
+
+  // The tagged restaurant must have left Dining, or the month counts it twice.
+  const dining = r0.categories.find((c) => c.category === 'Dining')
+  eq('tagged spending leaves its ordinary category', dining.actual, 40)
+  eq('… so the month total still counts every euro exactly once', r0.expenses, 160)
+  eq('and the plan carries the event share on top of the ordinary budget', r0.plannedExpenses, 600)
+
+  // The next month picks up the rest of the trip.
+  const r1 = F.computeReview(d, M(1))
+  const row1 = r1.categories.find((c) => c.eventId === 'e1')
+  eq('the following month books the remaining share', row1.planned, 500)
+  eq('… and the spending that happened in it', row1.actual, 300)
+
+  // The event's own screen is unchanged: it still sees the whole trip.
+  const status = EV.eventStatus(d, ev, `${M(1)}-10`)
+  eq('the event still tallies its whole budget', status.budget, 900)
+  eq('… and everything spent on it, across both months', status.spent, 420)
+
+  // Pace is about habits; three days of a trip is not one.
+  const p = MO.computeMonthPulse(d, M(0), `${M(0)}-29`)
+  eq('the event is out of the day-to-day budget', p.everydayPlan, 200)
+  eq('… and out of day-to-day spending', p.everydaySpent, 40)
+  ok('its row is never offered as everyday slack', p.categories.find((c) => c.eventId === 'e1').committed)
+
+  // A trip a provision is already saving for is charged to the funding months,
+  // so budgeting for it here as well would ask this month to afford it twice.
+  const funded = base({
+    ...d,
+    provisions: [{ id: 'pv', label: 'Lisbon', category: 'Travel', targetAmount: 900, createdAt: `${M(-3)}-01` }],
+    events: [{ ...ev, provisionId: 'pv' }],
+  })
+  const fr = F.computeReview(funded, M(0))
+  const frow = fr.categories.find((c) => c.eventId === 'e1')
+  eq('a pre-funded event still gets its line', frow.category, 'Lisbon trip')
+  eq('… but carries no plan, since the pot already paid for it', frow.planned, 0)
 }
 
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')

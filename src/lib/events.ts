@@ -10,7 +10,53 @@ import { provisionStatus } from './provisions'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number)
+  const [by, bm, bd] = b.split('-').map(Number)
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000)
+}
+
 export type EventSource = 'month' | 'week'
+
+function daysInMonth(month: string): number {
+  const [y, m] = month.split('-').map(Number)
+  return new Date(y, m, 0).getDate()
+}
+
+/** Every YYYY-MM an event touches, in order. */
+export function eventMonths(e: Pick<SpecialEvent, 'startDate' | 'endDate'>): string[] {
+  const out: string[] = []
+  const last = e.endDate.slice(0, 7)
+  let m = e.startDate.slice(0, 7)
+  // A malformed range (end before start) would otherwise spin forever.
+  for (let guard = 0; m <= last && guard < 120; guard++) {
+    out.push(m)
+    const [y, mm] = m.split('-').map(Number)
+    const d = new Date(y, mm, 1)
+    m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }
+  return out
+}
+
+/**
+ * The share of an event's budget that belongs to one month, split by the days
+ * it actually runs there. A trip from the 28th to the 5th is mostly next
+ * month's problem, and charging either month the whole budget would say the
+ * same money is due twice.
+ */
+export function eventBudgetForMonth(
+  e: Pick<SpecialEvent, 'startDate' | 'endDate' | 'budget'>,
+  month: string,
+): number {
+  if (month < e.startDate.slice(0, 7) || month > e.endDate.slice(0, 7)) return 0
+  const first = e.startDate > `${month}-01` ? e.startDate : `${month}-01`
+  const monthEnd = `${month}-${String(daysInMonth(month)).padStart(2, '0')}`
+  const last = e.endDate < monthEnd ? e.endDate : monthEnd
+  const here = daysBetween(first, last) + 1
+  const total = daysBetween(e.startDate, e.endDate) + 1
+  if (total <= 0 || here <= 0) return 0
+  return round2((e.budget * here) / total)
+}
 
 /** Same spend seen twice — used to keep the weekly sample from double-counting the statement. */
 const dedupeKey = (t: Transaction) => `${t.date}|${t.amount}`
@@ -71,12 +117,6 @@ export interface EventStatus {
   byCategory: { category: string; amount: number }[]
   txCount: number
   pendingCount: number
-}
-
-function daysBetween(a: string, b: string): number {
-  const [ay, am, ad] = a.split('-').map(Number)
-  const [by, bm, bd] = b.split('-').map(Number)
-  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000)
 }
 
 export function eventStatus(data: AppData, e: SpecialEvent, today: string): EventStatus {

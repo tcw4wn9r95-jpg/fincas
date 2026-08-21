@@ -372,6 +372,13 @@ export interface CategoryActual {
   variance: number // actual - planned (signed in plain terms)
   /** Portion of this month's actual already funded by a provision drawdown. */
   provisionCovered?: number
+  /**
+   * Set when this row is a planned event rather than a spending category:
+   * `category` then holds the event's name. Its spending is filed here instead
+   * of under Dining or Travel, so the month counts it once and reads it as the
+   * trip it was.
+   */
+  eventId?: string
 }
 
 export interface MonthReview {

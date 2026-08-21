@@ -504,16 +504,29 @@ export function CurrentMonth({
                   // would put a warning on every fixed cost all month.
                   const aheadOfPace = !c.committed && c.planned > 0 && c.actual > c.paceTarget + 1
                   return (
-                    <tr key={c.category} className="border-b border-line/60">
+                    <tr key={c.eventId ?? c.category} className="border-b border-line/60">
                       <td className="px-6 py-3">
-                        <span className="pill bg-canvas text-ink">{c.category}</span>
-                        {c.committed && (
+                        <span
+                          className={classNames('pill', c.eventId ? 'bg-gold/15 text-gold' : 'bg-canvas text-ink')}
+                        >
+                          {c.category}
+                        </span>
+                        {c.eventId ? (
                           <span
                             className="ml-1.5 text-[10px] uppercase tracking-wide text-muted"
-                            title="A bill, not a budget — what's left here is already spoken for"
+                            title="A planned event — its share of the budget for the days it runs this month"
                           >
-                            bill
+                            event
                           </span>
+                        ) : (
+                          c.committed && (
+                            <span
+                              className="ml-1.5 text-[10px] uppercase tracking-wide text-muted"
+                              title="A bill, not a budget — what's left here is already spoken for"
+                            >
+                              bill
+                            </span>
+                          )
                         )}
                       </td>
                       <td className="px-4 py-3 min-w-[110px]">
