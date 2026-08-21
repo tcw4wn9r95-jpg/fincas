@@ -6,8 +6,8 @@ import {
   eventCandidates,
   eventStatus,
   eventTransactions,
-  matchingExpense,
   pendingExpenses,
+  tagTransactionToEvent,
   type EventStatus,
 } from '../lib/events'
 import { formatMoney, classNames, parseAmount, todayISO, uid } from '../lib/format'
@@ -177,21 +177,7 @@ export function Events() {
    */
   function tagTransaction(eventId: string, txId: string, tagged: boolean) {
     update((d) => {
-      const e = d.events?.find((x) => x.id === eventId)
-      if (!e) return d
-      const lists = [d.transactions, d.sampleTransactions ?? []]
-      for (const list of lists) {
-        for (const t of list) {
-          if (t.id !== txId) continue
-          t.eventId = tagged ? eventId : undefined
-          if (tagged) {
-            const match = matchingExpense(e, t)
-            if (match) match.matchedTxId = t.id
-          } else {
-            for (const x of e.expenses) if (x.matchedTxId === txId) x.matchedTxId = undefined
-          }
-        }
-      }
+      tagTransactionToEvent(d, tagged ? eventId : undefined, txId)
       return d
     })
   }

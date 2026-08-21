@@ -2,12 +2,13 @@ import { useMemo, useState } from 'react'
 import { CARD_PAYMENT_CATEGORY, CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { transactionAllocations, type ProvisionStatus } from '../lib/provisions'
-import type { Account, Transaction } from '../lib/types'
+import type { Account, EventExpense, SpecialEvent, Transaction } from '../lib/types'
 import { IconClose, IconCheck, IconSparkle, IconHelp } from './icons'
 import { Markdown } from './Markdown'
 import type { StreamHandlers } from '../lib/claude'
 import { Portal } from './Portal'
 import { CardPicker } from './CardPicker'
+import { EventPicker } from './EventPicker'
 import { ProvisionButton } from './ProvisionModal'
 
 /**
@@ -23,8 +24,12 @@ export function ReconcileOverlay({
   locale,
   provisions,
   cards,
+  events,
   onSetCategory,
   onSetCard,
+  onSetEvent,
+  eventQuestion,
+  onAnswerEventQuestion,
   onToggle,
   onConfirmAll,
   onAiCategorize,
@@ -39,6 +44,16 @@ export function ReconcileOverlay({
   currency: string
   locale: string
   provisions: ProvisionStatus[]
+  events: SpecialEvent[]
+  /** Tag (or untag) a line to an event. */
+  onSetEvent: (txId: string, eventId: string | undefined) => void
+  /**
+   * A line just tagged to an event that a hand-logged spend nearly — but not
+   * exactly — answers to. Asked rather than resolved: the disagreement is the
+   * interesting part.
+   */
+  eventQuestion?: { tx: Transaction; event: SpecialEvent; logged: EventExpense } | null
+  onAnswerEventQuestion?: (same: boolean) => void
   /** Card accounts, so a card payment can say which one it settles. */
   cards: Account[]
   onSetCategory: (id: string, category: string) => void
@@ -292,6 +307,7 @@ export function ReconcileOverlay({
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} />
+                    <EventPicker tx={t} events={events} onPick={(e) => onSetEvent(t.id, e)} />
                     <ProvisionButton
                       tx={t}
                       provisions={provisions}
@@ -328,6 +344,33 @@ export function ReconcileOverlay({
                       </button>
                     )}
                   </div>
+                  {/* The disagreement, asked where it happened. Your own tally
+                      said one thing and the statement says another; which is
+                      right is a judgement only you can make. */}
+                  {eventQuestion?.tx.id === t.id && (
+                    <div className="mt-2 rounded-lg border border-gold/40 bg-gold/5 px-3 py-2.5 text-sm">
+                      <div className="text-ink/80">
+                        During <span className="font-medium">{eventQuestion.event.label}</span> you logged{' '}
+                        <span className="font-medium">{eventQuestion.logged.label}</span> at{' '}
+                        {formatMoney(eventQuestion.logged.amount, currency, locale)} on{' '}
+                        {eventQuestion.logged.date.slice(5)}. Is this that spend?
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <button
+                          className="btn-primary text-xs"
+                          onClick={() => onAnswerEventQuestion?.(true)}
+                        >
+                          Yes — it was {formatMoney(Math.abs(t.amount), currency, locale)}
+                        </button>
+                        <button
+                          className="btn-subtle text-xs"
+                          onClick={() => onAnswerEventQuestion?.(false)}
+                        >
+                          No, separate spends
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {adviceFor === t.id && (
                     <div className="mt-2 rounded-lg border border-forest/25 bg-forest-tint/30 p-3">
                       {adviceError ? (

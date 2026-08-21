@@ -11,7 +11,7 @@ import {
   streak,
 } from '../lib/forecast'
 import { formatMoney, formatMonthLabel, shortMonth, classNames, currentMonth, addMonths, uid, txMatchKey, todayISO } from '../lib/format'
-import { eventsInMonth } from '../lib/events'
+import { eventsInMonth, nearMatchExpense, tagTransactionToEvent } from '../lib/events'
 import { fundingPlan } from '../lib/funding'
 import { CARD_PAYMENT_CATEGORY, CATEGORIES, NON_CASHFLOW, withRule } from '../lib/categorize'
 import { aiCategorize, hasApiKey, streamTransactionAdvice } from '../lib/claude'
@@ -24,8 +24,9 @@ import {
   setAsideBucket,
   type ProvisionStatus,
 } from '../lib/provisions'
-import type { Account, ProvisionAllocation, Transaction } from '../lib/types'
+import type { Account, EventExpense, ProvisionAllocation, SpecialEvent, Transaction } from '../lib/types'
 import { CardPicker } from './CardPicker'
+import { EventPicker } from './EventPicker'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
@@ -106,6 +107,14 @@ export function MoneyDate({
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
+  // Which pots are a trip's fund, so allocating to one says so.
+  const eventFunds = useMemo(
+    () =>
+      Object.fromEntries(
+        (data.events ?? []).filter((e) => e.provisionId).map((e) => [e.provisionId!, e.label]),
+      ),
+    [data.events],
+  )
   const emergency = useMemo(() => emergencyFundStatus(data), [data])
   const monthEvents = useMemo(
     () => eventsInMonth(data, activeMonth, todayISO()),
@@ -270,6 +279,38 @@ export function MoneyDate({
       // hold that screen's separate sample of the same month. Leaving it behind
       // is how a month you deleted keeps turning up.
       d.sampleTransactions = (d.sampleTransactions ?? []).filter((t) => t.month !== activeMonth)
+      return d
+    })
+  }
+
+  /**
+   * Tag a line to an event. An exact hand-logged counterpart retires itself; a
+   * near-miss is put to the user instead of being resolved behind their back.
+   */
+  const [eventQuestion, setEventQuestion] = useState<{
+    tx: Transaction
+    event: SpecialEvent
+    logged: EventExpense
+  } | null>(null)
+  function setTxEvent(txId: string, eventId: string | undefined) {
+    const tx = data.transactions.find((t) => t.id === txId)
+    const event = eventId ? data.events?.find((e) => e.id === eventId) : undefined
+    update((d) => {
+      tagTransactionToEvent(d, eventId, txId)
+      return d
+    })
+    if (tx && event) {
+      const near = nearMatchExpense(event, tx)
+      setEventQuestion(near ? { tx, event, logged: near } : null)
+    } else setEventQuestion(null)
+  }
+  /** Yes: the logged line was this spend, whatever it said. No: leave it standing. */
+  function answerEventQuestion(same: boolean) {
+    const q = eventQuestion
+    setEventQuestion(null)
+    if (!q || !same) return
+    update((d) => {
+      tagTransactionToEvent(d, q.event.id, q.tx.id, q.logged.id)
       return d
     })
   }
@@ -913,6 +954,8 @@ export function MoneyDate({
                                 cards={cardAccounts}
                                 onTeach={setTeaching}
                                 onProvision={(t) => setProvisioning(t.id)}
+                                onSetEvent={setTxEvent}
+                                events={data.events ?? []}
                               />
                             </td>
                           </tr>
@@ -988,6 +1031,8 @@ export function MoneyDate({
                                 cards={cardAccounts}
                                 onTeach={setTeaching}
                                 onProvision={(t) => setProvisioning(t.id)}
+                                onSetEvent={setTxEvent}
+                                events={data.events ?? []}
                               />
                             </td>
                           </tr>
@@ -1039,6 +1084,8 @@ export function MoneyDate({
                               cards={cardAccounts}
                               onTeach={setTeaching}
                               onProvision={(t) => setProvisioning(t.id)}
+                              onSetEvent={setTxEvent}
+                              events={data.events ?? []}
                             />
                           </td>
                         </tr>
@@ -1083,6 +1130,10 @@ export function MoneyDate({
           locale={locale}
           provisions={provisionStatuses}
           cards={cardAccounts}
+          events={data.events ?? []}
+          onSetEvent={setTxEvent}
+          eventQuestion={eventQuestion}
+          onAnswerEventQuestion={answerEventQuestion}
           onSetCard={setTxCard}
           onSetCategory={(id, category) => {
             setTxCategory(id, category)
@@ -1118,6 +1169,7 @@ export function MoneyDate({
           emergency={emergency}
           currency={currency}
           locale={locale}
+          eventFunds={eventFunds}
           onSave={(allocations) => setTxAllocations(provisioningTx.id, allocations)}
           onClose={() => setProvisioning(null)}
         />
@@ -1148,6 +1200,8 @@ function DrillList({
   onSetCard,
   onTeach,
   onProvision,
+  onSetEvent,
+  events,
 }: {
   txs: Transaction[]
   currency: string
@@ -1157,6 +1211,8 @@ function DrillList({
   onSetCard: (id: string, cardAccountId: string | undefined) => void
   onTeach: (t: Transaction) => void
   onProvision: (t: Transaction) => void
+  onSetEvent: (txId: string, eventId: string | undefined) => void
+  events: SpecialEvent[]
   cards: Account[]
 }) {
   return (
@@ -1188,6 +1244,7 @@ function DrillList({
             ))}
           </select>
           <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} compact />
+          <EventPicker tx={t} events={events} onPick={(e) => onSetEvent(t.id, e)} compact />
           <ProvisionButton
             tx={t}
             provisions={provisions}

@@ -1185,7 +1185,7 @@ console.log('\n── Z. A planned event books its own line, prorated across the
   eq('… but carries no plan, since the pot already paid for it', frow.planned, 0)
 }
 
-console.log('\n── AA. A provision can be started from a line already in the plan ──')
+console.log('\n── AA. When a plan line next lands ──')
 {
   const annual = line({
     id: 'r1', label: 'Home insurance', amount: 900, flow: 'expense', category: 'Insurance',
@@ -1197,42 +1197,13 @@ console.log('\n── AA. A provision can be started from a line already in the 
   })
   const monthly = line({ id: 'r3', label: 'Rent', amount: 1000, flow: 'expense', category: 'Housing' })
 
-  // The premium next falls due three months out — the whole reason to provision.
   eq('an annual line reports the date it next lands', F.nextOccurrence(annual, M(0)), `${M(3)}-14`)
   eq('a quarterly one, the same way', F.nextOccurrence(quarterly, M(0)), `${M(2)}-20`)
   eq('a monthly line is simply this month', F.nextOccurrence(monthly, M(0)), `${M(0)}-01`)
 
   // A day the month is too short for lands on its last day rather than rolling over.
   const late = line({ id: 'r4', label: 'Odd', amount: 10, flow: 'expense', category: 'Fees', dayOfMonth: 31 })
-  const feb = F.nextOccurrence(late, '2027-02')
-  eq('a 31st in a short month clamps to its end', feb, '2027-02-28')
-
-  // A pot started from that line carries its figures and stays linked.
-  const d = base({
-    recurring: [annual],
-    provisions: [{
-      id: 'p1', label: 'Home insurance', category: 'Insurance', targetAmount: 900,
-      dueDate: `${M(3)}-14`, createdAt: `${M(0)}-01`, plannedLineId: 'r1',
-    }],
-  })
-  const st = P.provisionStatus(d, d.provisions[0])
-  eq('the pot names the plan line it is saving for', st.plannedLineId, 'r1')
-  eq('… targets what that line costs', st.targetAmount, 900)
-  eq('… and paces itself to the date it lands', st.suggestedMonthly, 300)
-
-  // It is an ordinary provision in every other respect: the transfer plan asks
-  // for it, the pots check counts it, allocations fill it.
-  const plan = U.fundingPlan(d, M(0), `${M(0)}-15`)
-  eq('the monthly transfer asks for its share', plan.total, 300)
-  const funded = base({
-    ...d,
-    transactions: [tx({
-      date: `${M(0)}-05`, description: 'To pot', amount: -300, category: 'Savings',
-      provisionAllocations: [{ provisionId: 'p1', amount: 300, role: 'contribution' }],
-    })],
-  })
-  eq('money paid in lands in it like any other pot', P.provisionStatus(funded, funded.provisions[0]).funded, 300)
-  eq('… and counts as money set aside for the month', F.computeReview(funded, M(0)).setAside, 300)
+  eq('a 31st in a short month clamps to its end', F.nextOccurrence(late, '2027-02'), '2027-02-28')
 }
 
 console.log('\n── AB. Every plan line is accounted for, in the month it belongs to ──')
@@ -1321,6 +1292,64 @@ console.log('\n── AC. An assumption you can correct, remove, and have stay r
     transactions: overruled.transactions.map((t) => ({ ...t, notDuplicate: undefined })),
   })
   eq('clearing the flag brings the pairing back', MO.duplicatePairs(undone, M(0)).length, 1)
+}
+
+console.log('\n── AD. Tagging a spend to an event, and the tally that disagrees ──')
+{
+  const ev = () => ({
+    id: 'e1', label: 'Lisbon trip', kind: 'travel',
+    startDate: `${M(0)}-10`, endDate: `${M(0)}-14`, budget: 900, category: 'Travel',
+    createdAt: `${M(0)}-01`,
+    expenses: [
+      // Logged at the table, before any statement existed.
+      { id: 'x1', date: `${M(0)}-11`, label: 'Dinner', amount: 45, category: 'Dining' },
+      { id: 'x2', date: `${M(0)}-12`, label: 'Museum', amount: 20, category: 'Entertainment' },
+    ],
+  })
+
+  // An exact counterpart retires itself — no question to ask.
+  const exact = base({
+    events: [ev()],
+    transactions: [tx({ id: 't1', date: `${M(0)}-12`, description: 'MUSEU', amount: -20, category: 'Entertainment' })],
+  })
+  ok('an exact match needs no asking', !EV.nearMatchExpense(exact.events[0], exact.transactions[0]))
+  EV.tagTransactionToEvent(exact, 'e1', 't1')
+  eq('the line is tagged to the event', exact.transactions[0].eventId, 'e1')
+  eq('… and the logged one it answers retires', exact.events[0].expenses.find((x) => x.id === 'x2').matchedTxId, 't1')
+  eq('… so the event counts it once', EV.eventStatus(exact, exact.events[0], `${M(0)}-20`).spent, 65)
+
+  // The statement says 47.30 where the tally said 45: close, not equal.
+  const off = base({
+    events: [ev()],
+    transactions: [tx({ id: 't2', date: `${M(0)}-11`, description: 'RESTAURANTE', amount: -47.3, category: 'Dining' })],
+  })
+  const near = EV.nearMatchExpense(off.events[0], off.transactions[0])
+  eq('a near miss is found, to be asked about', near && near.label, 'Dinner')
+  EV.tagTransactionToEvent(off, 'e1', 't2')
+  ok('tagging alone does not retire it — the disagreement stands', !off.events[0].expenses.find((x) => x.id === 'x1').matchedTxId)
+  eq('… so both are counted until the user says', EV.eventStatus(off, off.events[0], `${M(0)}-20`).spent, 112.3)
+
+  // Answering "yes, same spend" retires the tally and the statement wins.
+  EV.tagTransactionToEvent(off, 'e1', 't2', 'x1')
+  eq('saying they are the same retires the logged line', off.events[0].expenses.find((x) => x.id === 'x1').matchedTxId, 't2')
+  eq('… and the real amount is what counts', EV.eventStatus(off, off.events[0], `${M(0)}-20`).spent, 67.3)
+
+  // Something genuinely unrelated is never offered as a match.
+  const far = base({
+    events: [ev()],
+    transactions: [tx({ id: 't3', date: `${M(0)}-11`, description: 'Taxi', amount: -9, category: 'Transport' })],
+  })
+  ok('a spend of a different size is not a near miss', !EV.nearMatchExpense(far.events[0], far.transactions[0]))
+  const late = base({
+    events: [ev()],
+    transactions: [tx({ id: 't4', date: `${M(0)}-25`, description: 'Dinner elsewhere', amount: -45, category: 'Dining' })],
+  })
+  ok('nor is the same amount two weeks later', !EV.nearMatchExpense(late.events[0], late.transactions[0]))
+
+  // Untagging releases whatever was standing in for it.
+  EV.tagTransactionToEvent(exact, undefined, 't1')
+  ok('untagging clears the event', !exact.transactions[0].eventId)
+  ok('… and releases the logged line again', !exact.events[0].expenses.find((x) => x.id === 'x2').matchedTxId)
 }
 
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')

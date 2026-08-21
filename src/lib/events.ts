@@ -211,6 +211,70 @@ export function matchingExpense(e: SpecialEvent, tx: Transaction): EventExpense 
   return pendingExpenses(e).find((x) => Math.abs(x.amount - amount) < 0.005)
 }
 
+/**
+ * A line logged during the event that looks like this transaction but does not
+ * agree with it — the tip you added, the round someone else put in, the rate
+ * the card actually settled at. Close enough to be worth asking about, never
+ * close enough to retire silently: the whole point of the logged tally is that
+ * it is your own account of what happened, and quietly overwriting it with a
+ * statement that differs would lose the disagreement rather than surface it.
+ *
+ * Only offered when nothing matches exactly, since an exact match is not a
+ * discrepancy and needs no question.
+ */
+export function nearMatchExpense(e: SpecialEvent, tx: Transaction): EventExpense | undefined {
+  if (matchingExpense(e, tx)) return undefined
+  const amount = round2(Math.abs(tx.amount))
+  let best: EventExpense | undefined
+  let bestGap = Infinity
+  for (const x of pendingExpenses(e)) {
+    const gap = Math.abs(x.amount - amount)
+    // Within a quarter of the size, or a tenner, and within a few days.
+    if (gap > Math.max(10, amount * 0.25)) continue
+    if (Math.abs(daysBetween(x.date, tx.date)) > 3) continue
+    if (gap < bestGap) {
+      best = x
+      bestGap = gap
+    }
+  }
+  return best
+}
+
+/**
+ * Claim a real transaction for an event, in place on a store draft. A line
+ * logged by hand for the same amount retires rather than double-counting;
+ * untagging releases it again.
+ *
+ * Lives here rather than in the events screen because the same thing has to
+ * happen from reconcile, where most transactions are actually seen for the
+ * first time.
+ */
+export function tagTransactionToEvent(
+  d: AppData,
+  eventId: string | undefined,
+  txId: string,
+  /** Retire this logged line as the transaction's counterpart, whatever it says. */
+  matchExpenseId?: string,
+): void {
+  const lists = [d.transactions, d.sampleTransactions ?? []]
+  for (const list of lists) {
+    for (const t of list) {
+      if (t.id !== txId) continue
+      // Leaving an event releases whatever was standing in for this line.
+      const previous = t.eventId ? d.events?.find((x) => x.id === t.eventId) : undefined
+      if (previous) for (const x of previous.expenses) if (x.matchedTxId === txId) x.matchedTxId = undefined
+      t.eventId = eventId
+      if (!eventId) continue
+      const e = d.events?.find((x) => x.id === eventId)
+      if (!e) continue
+      const chosen = matchExpenseId
+        ? e.expenses.find((x) => x.id === matchExpenseId)
+        : matchingExpense(e, t)
+      if (chosen) chosen.matchedTxId = t.id
+    }
+  }
+}
+
 /** Events overlapping a YYYY-MM month — the money date's "how did the trip go". */
 export function eventsInMonth(data: AppData, month: string, today: string): EventStatus[] {
   const first = `${month}-01`

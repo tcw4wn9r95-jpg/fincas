@@ -104,6 +104,7 @@ export function ProvisionModal({
   onSave,
   onClose,
   emergency,
+  eventFunds,
 }: {
   tx: Transaction
   provisions: ProvisionStatus[]
@@ -112,6 +113,13 @@ export function ProvisionModal({
   onSave: (allocations: ProvisionAllocation[]) => void
   onClose: () => void
   emergency: EmergencyFundStatus
+  /**
+   * Pot id → the event it is saving for. An event's fund is an ordinary
+   * provision, which makes it indistinguishable here from a pot for the car —
+   * so putting money towards a trip you have not taken yet looked like
+   * provisioning for something else entirely.
+   */
+  eventFunds?: Record<string, string>
 }) {
   const total = round2(Math.abs(tx.amount))
 
@@ -292,7 +300,20 @@ export function ProvisionModal({
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="font-medium truncate">{p.label}</div>
+                      <div className="font-medium truncate">
+                        {p.label}
+                        {/* Creating an event names its pot after it, so the
+                            two usually read the same — "Lisbon tripLisbon
+                            trip" says nothing twice. Name the event only when
+                            it is not already the name on the row. */}
+                        {eventFunds?.[p.id] && (
+                          <span className="ml-1.5 pill bg-forest-tint text-forest align-middle">
+                            {eventFunds[p.id].trim().toLowerCase() === p.label.trim().toLowerCase()
+                              ? 'event fund'
+                              : `for ${eventFunds[p.id]}`}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-muted">
                         {pulling
                           ? `${fx(p.funded)} available`
