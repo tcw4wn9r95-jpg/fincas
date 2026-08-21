@@ -1235,6 +1235,52 @@ console.log('\n── AA. A provision can be started from a line already in the 
   eq('… and counts as money set aside for the month', F.computeReview(funded, M(0)).setAside, 300)
 }
 
+console.log('\n── AB. Every plan line is accounted for, in the month it belongs to ──')
+{
+  // The four fixed-cost categories are automatic by declaration. History must
+  // not be able to talk the app out of it: an insurance line planned monthly
+  // against a history of quarterly charges matches nothing, and used to be
+  // demoted to a spread budget — never written in, never even listed.
+  const awkward = base({
+    recurring: [line({ id: 'i1', label: 'Home insurance', amount: 40, flow: 'expense', category: 'Insurance', dayOfMonth: 20 })],
+    transactions: [tx({ date: `${M(-1)}-20`, description: 'MAPFRE', amount: -120, category: 'Insurance' })],
+  })
+  const written = MO.autoPayTransactions(awkward, M(0), `${M(0)}-10`)
+  eq('a fixed cost is written in whatever its history looks like', written.map((t) => t.label ?? t.description).join(','), 'Home insurance')
+  eq('… at the planned amount', written[0].amount, -40)
+
+  // The same must hold for the other three.
+  for (const [cat, label] of [['Loans', 'Car loan'], ['Utilities', 'Water'], ['Subscriptions', 'Spotify']]) {
+    const d = base({
+      recurring: [line({ id: 'x', label, amount: 30, flow: 'expense', category: cat })],
+      transactions: [tx({ date: `${M(-1)}-09`, description: 'odd', amount: -7, category: cat })],
+    })
+    ok(`${cat} is automatic too, regardless of history`, MO.autoPayTransactions(d, M(0), `${M(0)}-10`).length === 1)
+  }
+
+  // A cost that is not due this month is in no figure — and says so.
+  const annual = base({
+    recurring: [
+      line({ id: 'a1', label: 'Home insurance', amount: 900, flow: 'expense', category: 'Insurance', cadence: 'annual', startDate: `${M(-9)}-14` }),
+      line({ id: 'a2', label: 'Groceries', amount: 400, flow: 'expense', category: 'Food' }),
+    ],
+  })
+  const p = MO.computeMonthPulse(annual, M(0), `${M(0)}-10`)
+  eq('an annual premium costs this month nothing', p.plannedSpend, 400)
+  ok('… so it is not written in as paid', MO.autoPayTransactions(annual, M(0), `${M(0)}-10`).length === 0)
+  ok('… and not waiting to land either', !p.pending.some((b) => b.category === 'Insurance'))
+  eq('… but it is named as coming, with the month it lands', p.upcoming.map((b) => `${b.label}@${b.month}`).join(','), `Home insurance@${M(3)}`)
+  eq('… at what it will cost', p.upcoming[0].amount, 900)
+  ok('a monthly line is never "upcoming" — it is due now', !p.upcoming.some((b) => b.label === 'Groceries'))
+
+  // Come the month it lands, it stops being upcoming and becomes automatic.
+  const due = MO.computeMonthPulse(annual, M(3), `${M(3)}-01`)
+  ok('in its own month it is gone from the upcoming list', !due.upcoming.some((b) => b.label === 'Home insurance'))
+  eq('… and is written in like any other fixed cost', MO.autoPayTransactions(annual, M(3), `${M(3)}-01`).length, 1)
+
+  ok('the assistant is told what is not due yet', MO.monthPulseText(annual, M(0)).includes('not due this month'))
+}
+
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')
 {
   const d = base({

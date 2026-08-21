@@ -4,6 +4,7 @@ import {
   isPlannedSetAside,
   itemAmountForMonth,
   actualsByCategoryRange,
+  nextOccurrence,
   FIXED_COST_CATEGORIES,
 } from './forecast'
 import { NON_CASHFLOW } from './categorize'
@@ -120,6 +121,13 @@ const SPREAD_CATEGORIES = new Set([
  * a plan that has not run a month yet.
  */
 function looksDiscrete(data: AppData, item: RecurringItem, amount: number, month: string): boolean {
+  // A loan, a utility, an insurance premium and a subscription are bills by
+  // declaration — they are the four the month assumes paid without being asked.
+  // History gets no say over that: an insurance line planned at €40 a month
+  // against a history of €120 quarterly charges matched nothing, so the guess
+  // below called it a spread budget and the one category the user had most
+  // explicitly asked to be automatic was never written in at all.
+  if (FIXED_COST_CATEGORIES.has(item.category)) return true
   if (historyDays(data, item, amount, month).length > 0) return true
   const seenCategory = data.transactions.some(
     (t) => t.month < month && t.category === item.category && t.amount < 0,
@@ -137,6 +145,16 @@ function typicalDayFor(data: AppData, item: RecurringItem, amount: number, month
     return planned > 0 ? planned : 1
   }
   return days[Math.floor(days.length / 2)]
+}
+
+export interface UpcomingBill {
+  id: string
+  label: string
+  category: string
+  amount: number
+  /** The month it next lands, and the full date within it. */
+  month: string
+  date: string
 }
 
 export interface CategoryPulse {
@@ -352,6 +370,14 @@ export interface MonthPulse {
   pending: PendingBill[]
   pendingTotal: number
   /**
+   * Plan lines that cost nothing this month but land in a later one — an annual
+   * premium, a quarterly tax. Deliberately absent from every figure here: this
+   * month does not owe them, and budgeting a €900 premium in each of the twelve
+   * months it is not due would be nonsense. Listed only so the answer to "where
+   * is my insurance?" is on the screen rather than a puzzle.
+   */
+  upcoming: UpcomingBill[]
+  /**
    * Everything the plan still expects to go out this month: each category's
    * plan less what it has already spent. Wider than `pendingTotal`, which only
    * names the discrete bills — this also carries the unspent half of a
@@ -417,6 +443,26 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   }
   pending.sort((a, b) => a.typicalDay - b.typicalDay || b.amount - a.amount)
   const pendingTotal = round2(pending.reduce((s, p) => s + p.amount, 0))
+
+  // Costs the plan carries that simply are not due this month.
+  const upcoming: UpcomingBill[] = []
+  for (const item of data.recurring) {
+    if (item.flow !== 'expense' || NON_CASHFLOW.has(item.category) || isPlannedSetAside(item)) continue
+    if (itemAmountForMonth(item, month) > 0.5) continue
+    const date = nextOccurrence(item, addMonths(month, 1))
+    if (!date) continue
+    // Beyond half a year it stops being useful context and starts being a list.
+    if (date.slice(0, 7) > addMonths(month, 6)) continue
+    upcoming.push({
+      id: item.id,
+      label: item.label,
+      category: item.category,
+      amount: round2(itemAmountForMonth(item, date.slice(0, 7))),
+      month: date.slice(0, 7),
+      date,
+    })
+  }
+  upcoming.sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount)
 
   // Income still to arrive, on the same "has it shown up yet" footing.
   let incomeExpected = 0
@@ -492,6 +538,7 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     everydayPaceMonthEnd: round2(everydayRate * total),
     pending,
     pendingTotal,
+    upcoming,
     committedLeft,
     setAside: review.setAside,
     plannedSetAside: review.plannedSetAside,
@@ -561,6 +608,13 @@ export function monthPulseText(data: AppData, month = currentMonth()): string {
     lines.push('Every committed bill for this month has already shown up — only variable budgets are left to spend.')
   }
 
+  if (p.upcoming.length) {
+    lines.push(
+      'Planned costs not due this month, so deliberately in none of the figures above: ' +
+        p.upcoming.map((b) => `${b.label} ${fx(b.amount)} [${b.category}] lands ${b.month}`).join('; ') +
+        '. Worth raising if the user is deciding what they can afford and one of these is close.',
+    )
+  }
   lines.push(
     `Free to spend: ${fx(p.freeToSpend)}. That is money in (arrived plus still expected) less what has gone out, ` +
       'less everything the plan still expects to go out, less the pots still to be filled. When asked whether something is affordable, ' +

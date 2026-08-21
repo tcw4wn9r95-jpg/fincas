@@ -473,6 +473,39 @@ export function CurrentMonth({
         </div>
       )}
 
+      {/* Costs the plan carries that simply are not due yet — the answer to
+          "where is my insurance?" when the premium is annual. Never in any
+          figure above: this month does not owe them. */}
+      {pulse.upcoming.length > 0 && (
+        <div className="card p-5">
+          <h3 className="text-lg">Not this month</h3>
+          <p className="text-sm text-muted mb-3">
+            Planned costs that aren't due in {formatMonthLabel(`${activeMonth}-01`, locale)} — they land in a
+            later month, so nothing above budgets for them. Start a pot in your plan and you can put them by a
+            month at a time instead of taking them whole.
+          </p>
+          <div className="space-y-2">
+            {pulse.upcoming.map((b) => (
+              <div
+                key={b.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-line bg-canvas px-4 py-2.5"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{b.label}</div>
+                  <div className="text-xs text-muted">
+                    {b.category} · lands {formatMonthLabel(b.date, locale)}
+                  </div>
+                </div>
+                <span className="tabular-nums text-muted shrink-0">{fx(b.amount)}</span>
+              </div>
+            ))}
+          </div>
+          <button className="btn-subtle text-xs mt-3" onClick={onGoToPlan}>
+            Save up for these in your plan
+          </button>
+        </div>
+      )}
+
       {/* ── By category ── */}
       {pulse.categories.length > 0 ? (
         <div className="card overflow-hidden">
