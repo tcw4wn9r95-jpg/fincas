@@ -1,6 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
-import { computeMonthPulse, monthPulseText, type DuplicatePair } from '../lib/month'
+import {
+  computeMonthPulse,
+  monthPulseText,
+  autoPayTransactions,
+  plannedPayment,
+  type DuplicatePair,
+  type PendingBill,
+} from '../lib/month'
 import { monthsWithData } from '../lib/forecast'
 import { eventsInRange } from '../lib/events'
 import { CATEGORIES, NON_CASHFLOW } from '../lib/categorize'
@@ -116,6 +123,41 @@ export function CurrentMonth({
     setDraft({ description: '', amount: '', category: draft.category, date })
   }
 
+  // Fixed costs leave whether or not anyone remembers them, so the month starts
+  // with them already counted rather than listing them for a whole month
+  // waiting to be ticked off. Written once per month: the rows satisfy the same
+  // "has this line arrived" test that selected them, so this settles on the
+  // next pass. Only ever for the month being lived in — browsing back to March
+  // should not invent transactions in it.
+  const autoPaidFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (activeMonth !== currentMonth() || autoPaidFor.current === activeMonth) return
+    const rows = autoPayTransactions(data, activeMonth)
+    autoPaidFor.current = activeMonth
+    if (!rows.length) return
+    update((d) => {
+      // Re-checked inside the update: two renders could otherwise each decide
+      // the same bill was missing and write it twice.
+      const already = new Set(
+        d.transactions.filter((t) => t.month === activeMonth && t.plannedLineId).map((t) => t.plannedLineId),
+      )
+      d.transactions.push(...rows.filter((r) => !already.has(r.plannedLineId)))
+      return d
+    })
+  }, [data, activeMonth, update])
+
+  /** Tick a planned bill off by hand — the same row auto-pay would have written. */
+  function markPaid(bill: PendingBill) {
+    const item = data.recurring.find((r) => r.id === bill.id)
+    if (!item) return
+    const tx = plannedPayment(data, item, activeMonth)
+    if (!tx) return
+    update((d) => {
+      d.transactions.push(tx)
+      return d
+    })
+  }
+
   function removeTx(id: string) {
     update((d) => {
       d.transactions = d.transactions.filter((t) => t.id !== id)
@@ -189,11 +231,16 @@ export function CurrentMonth({
       {pulse.duplicates.length > 0 && (
         <div className="card p-5 border-gold/50 bg-gold/5">
           <h3 className="text-lg">
-            {pulse.duplicates.length} {pulse.duplicates.length === 1 ? 'spend looks' : 'spends look'} logged twice
+            {pulse.duplicates.length} {pulse.duplicates.length === 1 ? 'spend is' : 'spends are'} counted twice
           </h3>
           <p className="text-sm text-muted mb-3">
-            You logged these by hand and an import has since brought in the same day and amount. Both are
-            counting, so the month is overstated by{' '}
+            An import has brought in the real version of{' '}
+            {pulse.duplicates.every((p) => p.kind === 'assumed')
+              ? 'bills this month had assumed were paid'
+              : pulse.duplicates.every((p) => p.kind === 'logged')
+                ? 'spends you logged by hand'
+                : 'spends that were already standing in for them'}
+            . Both are counting, so the month is overstated by{' '}
             {fx(pulse.duplicates.reduce((s, p) => s + Math.abs(p.manual.amount), 0))} until you pick one.
           </p>
           <div className="space-y-2">
@@ -208,7 +255,9 @@ export function CurrentMonth({
                     <span className="font-medium">{fx(Math.abs(p.manual.amount))}</span>
                   </div>
                   <div className="text-xs text-muted truncate">
-                    yours: “{p.manual.description}” · statement: “{p.imported.description}”
+                    {p.kind === 'assumed' ? 'assumed' : 'yours'}: “{p.manual.description}”{' '}
+                    {fx(Math.abs(p.manual.amount))} · statement: “{p.imported.description}”{' '}
+                    {fx(Math.abs(p.imported.amount))}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -216,7 +265,7 @@ export function CurrentMonth({
                     <IconCheck width={14} height={14} /> Keep the statement
                   </button>
                   <button className="btn-subtle text-xs" onClick={() => resolveDuplicate(p, 'manual')}>
-                    Keep mine
+                    {p.kind === 'assumed' ? 'Keep the assumed one' : 'Keep mine'}
                   </button>
                   <button className="btn-subtle text-xs" onClick={() => keepBoth(p)} title="They really were two separate spends">
                     Both real
@@ -352,12 +401,23 @@ export function CurrentMonth({
         {pulse.manualTxs.length > 0 && (
           <div className="mt-4 pt-4 border-t border-line space-y-1.5">
             <div className="label mb-1">
-              Logged by hand this month · {fx(pulse.manualTxs.reduce((s, t) => s + Math.abs(Math.min(0, t.amount)), 0))}
+              Logged or assumed this month ·{' '}
+              {fx(pulse.manualTxs.reduce((s, t) => s + Math.abs(Math.min(0, t.amount)), 0))}
             </div>
             {pulse.manualTxs.map((t) => (
               <div key={t.id} className="flex items-center gap-3 text-sm py-1">
                 <span className="text-muted w-12 shrink-0 tabular-nums">{t.date.slice(5)}</span>
                 <span className="flex-1 min-w-0 truncate">{t.description}</span>
+                {/* Say plainly which rows nobody observed — these are the app's
+                    assumption that a bill was paid, not a record that it was. */}
+                {t.plannedLineId && (
+                  <span
+                    className="pill bg-gold/15 text-gold shrink-0"
+                    title="Counted from your plan, not seen on a statement yet"
+                  >
+                    assumed
+                  </span>
+                )}
                 <span className="pill bg-canvas text-muted shrink-0">{t.category}</span>
                 <span className="tabular-nums w-20 text-right shrink-0">
                   {formatMoney(t.amount, currency, locale, { signed: true })}
@@ -381,7 +441,8 @@ export function CurrentMonth({
           <h3 className="text-lg">Still to land this month</h3>
           <p className="text-sm text-muted mb-3">
             Planned lines nothing has matched yet, with the day of the month they usually arrive. This is the
-            money that isn't free even though it's still in the account.
+            money that isn't free even though it's still in the account. Loans, utilities, insurance and
+            subscriptions are counted automatically at the start of the month and never wait here.
           </p>
           <div className="space-y-2">
             {pulse.pending.map((b) => (
@@ -396,7 +457,16 @@ export function CurrentMonth({
                     {b.overdue && <span className="text-clay"> · that day has passed</span>}
                   </div>
                 </div>
-                <span className="tabular-nums shrink-0">{fx(b.amount)}</span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="tabular-nums">{fx(b.amount)}</span>
+                  <button
+                    className="btn-subtle text-xs"
+                    onClick={() => markPaid(b)}
+                    title={`Count ${b.label} as paid at ${fx(b.amount)} on the ${b.typicalDay}`}
+                  >
+                    <IconCheck width={14} height={14} /> Mark as paid
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -429,7 +499,10 @@ export function CurrentMonth({
                   const pct = c.planned > 0 ? Math.min(100, Math.round((c.actual / c.planned) * 100)) : 0
                   const pacePct =
                     c.planned > 0 ? Math.min(100, Math.round((c.paceTarget / c.planned) * 100)) : 0
-                  const aheadOfPace = c.planned > 0 && c.actual > c.paceTarget + 1
+                  // Pace is meaningless for a bill: one paid on the 5th is
+                  // 100% "used" by the 6th, and colouring that as running hot
+                  // would put a warning on every fixed cost all month.
+                  const aheadOfPace = !c.committed && c.planned > 0 && c.actual > c.paceTarget + 1
                   return (
                     <tr key={c.category} className="border-b border-line/60">
                       <td className="px-6 py-3">
@@ -453,10 +526,12 @@ export function CurrentMonth({
                               )}
                               style={{ width: `${pct}%` }}
                             />
-                            <div
-                              className="absolute inset-y-0 w-0.5 bg-ink/50"
-                              style={{ left: `${pacePct}%` }}
-                            />
+                            {!c.committed && (
+                              <div
+                                className="absolute inset-y-0 w-0.5 bg-ink/50"
+                                style={{ left: `${pacePct}%` }}
+                              />
+                            )}
                           </div>
                         ) : (
                           <span className="text-xs text-muted">no plan line</span>

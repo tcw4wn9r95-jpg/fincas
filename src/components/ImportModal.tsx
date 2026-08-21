@@ -9,6 +9,7 @@ import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
 import { CategorizeOverlay } from './CategorizeOverlay'
 import { Portal } from './Portal'
+import { bestStandInMatch } from '../lib/month'
 
 // Exact duplicates (date+amount+description) are skipped on import. These helpers
 // catch the softer case: same date and amount, description merely similar — e.g.
@@ -322,24 +323,44 @@ export function ImportModal({
     setRows((prev) => prev.filter((r) => !suspectIds.has(r.id)))
   }
 
-  // Spends the user logged by hand before the statement existed, that this file
-  // is now bringing in properly. Matched on date and amount alone: a typed
-  // "Lunch" never resembles a card statement's merchant string, so asking the
-  // descriptions to agree would find none of them. The imported line is the
-  // better record — it carries the real merchant — so the default is to let it
-  // replace the hand-logged guess rather than have both count.
+  // Stand-ins this file is now bringing in for real: spends typed before the
+  // statement existed, and bills the month assumed were paid. Either way the
+  // imported line is the better record — it carries the real merchant, date and
+  // amount — so the default is to let it replace the placeholder rather than
+  // have both count.
   const manualDupes = useMemo(() => {
     const claimed = new Set<string>()
-    const pairs: Array<{ rowId: string; manual: Transaction }> = []
-    const manuals = savedStream.filter((t) => t.source === 'manual')
-    if (!manuals.length) return pairs
+    const pairs: Array<{ rowId: string; manual: Transaction; kind: 'logged' | 'assumed' }> = []
+    const standIns = savedStream.filter((t) => t.source === 'manual')
+    if (!standIns.length) return pairs
+
+    // Plan stand-ins first, on the loosest rule — see `standInMatchScore`. One
+    // was never a record of anything, only the plan's guess at a bill, so
+    // insisting on the exact day and cent would leave the placeholder sitting
+    // beside the charge it stands for. Matched from the stand-in's side so the
+    // best-fitting row wins rather than the first one scanned.
+    const takenRows = new Set<string>()
+    for (const standIn of standIns) {
+      if (!standIn.plannedLineId) continue
+      const hit = bestStandInMatch(standIn, rows, takenRows)
+      if (hit) {
+        takenRows.add(hit.id)
+        claimed.add(standIn.id)
+        pairs.push({ rowId: hit.id, manual: standIn, kind: 'assumed' })
+      }
+    }
     for (const r of rows) {
-      const hit = manuals.find(
-        (m) => !claimed.has(m.id) && m.date === r.date && Math.abs(m.amount - r.amount) < 0.005,
+      if (pairs.some((x) => x.rowId === r.id)) continue
+      const hit = standIns.find(
+        (m) =>
+          !m.plannedLineId &&
+          !claimed.has(m.id) &&
+          m.date === r.date &&
+          Math.abs(m.amount - r.amount) < 0.005,
       )
       if (hit) {
         claimed.add(hit.id)
-        pairs.push({ rowId: r.id, manual: hit })
+        pairs.push({ rowId: r.id, manual: hit, kind: 'logged' })
       }
     }
     return pairs
@@ -482,22 +503,28 @@ export function ImportModal({
               {manualDupes.length > 0 && (
                 <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm">
                   <div className="text-ink/80">
-                    {manualDupes.length} of these {manualDupes.length === 1 ? 'is a spend you' : 'are spends you'}{' '}
-                    already logged by hand — same day, same amount.{' '}
+                    {manualDupes.length} of these {manualDupes.length === 1 ? 'is' : 'are'} already standing in
+                    for {manualDupes.length === 1 ? 'this spend' : 'these spends'}
+                    {manualDupes.every((p) => p.kind === 'assumed')
+                      ? ' — bills counted automatically at the start of the month'
+                      : manualDupes.every((p) => p.kind === 'logged')
+                        ? ' — spends you logged by hand'
+                        : ' — some logged by hand, some counted automatically'}
+                    .{' '}
                     {keepManual
                       ? 'Both will be kept, so this month will count them twice.'
-                      : 'Your hand-logged version will be dropped as this saves, so nothing counts twice.'}
+                      : 'The stand-in will be dropped as this saves, so nothing counts twice.'}
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
                     <button className="btn-subtle text-xs" onClick={() => setKeepManual((k) => !k)}>
-                      {keepManual ? 'Drop my hand-logged copies' : 'Keep both anyway'}
+                      {keepManual ? 'Drop the stand-ins' : 'Keep both anyway'}
                     </button>
                     <span className="text-xs text-muted">
                       {manualDupes
                         .slice(0, 3)
-                        .map((p) => `${p.manual.date.slice(5)} ${fx(Math.abs(p.manual.amount))} “${p.manual.description}”`)
-                        .join(' · ')}
-                      {manualDupes.length > 3 ? ` · +${manualDupes.length - 3} more` : ''}
+                        .map((p) => `${p.manual.date.slice(5)} ${fx(Math.abs(p.manual.amount))} \u201C${p.manual.description}\u201D`)
+                        .join(' \u00b7 ')}
+                      {manualDupes.length > 3 ? ` \u00b7 +${manualDupes.length - 3} more` : ''}
                     </span>
                   </div>
                 </div>

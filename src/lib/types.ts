@@ -89,6 +89,14 @@ export interface Transaction {
   /** Marked true once reviewed/confirmed in the reconcile flow. */
   reconciled?: boolean
   /**
+   * Set when this row stands in for a plan line rather than recording something
+   * observed: a fixed cost assumed paid at the start of the month, or a bill
+   * ticked off by hand on "This month". Names the `RecurringItem` it came from,
+   * so the statement that eventually carries the real charge can replace it
+   * instead of counting alongside it.
+   */
+  plannedLineId?: string
+  /**
    * How this transaction is split across provision buckets. One transaction
    * can feed several pots (a €1,000 transfer: €500 to taxes, €300 to the
    * car, €200 left unallocated), so this is a list, not a single link.

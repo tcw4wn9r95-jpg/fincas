@@ -34,6 +34,12 @@ function monthsBetween(a: string, b: string): number {
 // spending that should be paced by the weekly check-in like any other
 // variable category, not treated as a committed fixed cost.
 const FIXED_CATS = new Set(['Loans', 'Utilities', 'Insurance', 'Subscriptions'])
+/**
+ * The committed costs that arrive whether or not you think about them. Exported
+ * because "This month" assumes them paid at the start of the month rather than
+ * leaving them sitting in a list waiting to be ticked off by hand.
+ */
+export const FIXED_COST_CATEGORIES: ReadonlySet<string> = FIXED_CATS
 // Investments sits here, not just alongside Savings below: a recurring
 // Investments line should group into the Provisions section of the planner
 // and stay out of the variable-spend pace, the same as any other planned

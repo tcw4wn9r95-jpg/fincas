@@ -1024,6 +1024,93 @@ console.log('\n── X. The month in progress: what is left once what is coming
   ok('an unpaid rent is never offered as movable', !movable.includes('Housing'))
 }
 
+console.log('\n── Y. Fixed costs are assumed paid; the rest get a button ──')
+{
+  const today = `${M(0)}-10`
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 4000, asOf: today, tracked: true }],
+    recurring: [
+      line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' }),
+      line({ id: 'r2', label: 'Car loan', amount: 300, flow: 'expense', category: 'Loans', dayOfMonth: 5 }),
+      line({ id: 'r3', label: 'Electricity', amount: 60, flow: 'expense', category: 'Utilities', dayOfMonth: 12 }),
+      line({ id: 'r4', label: 'Home insurance', amount: 40, flow: 'expense', category: 'Insurance', dayOfMonth: 20 }),
+      line({ id: 'r5', label: 'Netflix', amount: 12, flow: 'expense', category: 'Subscriptions', dayOfMonth: 2 }),
+      // Not a fixed cost: rent has to be ticked off by hand.
+      line({ id: 'r6', label: 'Rent', amount: 1200, flow: 'expense', category: 'Housing', dayOfMonth: 3 }),
+    ],
+  })
+
+  const before = MO.computeMonthPulse(d, M(0), today)
+  eq('every planned bill starts out waiting', before.pending.length, 5)
+  eq(
+    'the four fixed-cost categories are the ones marked automatic',
+    before.pending.filter((b) => b.autoPaid).map((b) => b.category).sort().join(','),
+    'Insurance,Loans,Subscriptions,Utilities',
+  )
+  ok('rent is not', !before.pending.find((b) => b.label === 'Rent').autoPaid)
+
+  const auto = MO.autoPayTransactions(d, M(0), today)
+  eq('only the fixed costs are written in', auto.map((t) => t.description).sort().join(','), 'Car loan,Electricity,Home insurance,Netflix')
+  eq('… at their planned size, as money out', auto.reduce((s, t) => s + t.amount, 0), -412)
+  eq('… dated the day the plan says they land', auto.find((t) => t.description === 'Electricity').date, `${M(0)}-12`)
+  ok('… and marked as standing in for a plan line', auto.every((t) => t.plannedLineId))
+
+  const paid = base({ ...d, transactions: auto })
+  const after = MO.computeMonthPulse(paid, M(0), today)
+  eq('they stop waiting to be ticked off', after.pending.map((b) => b.label).join(','), 'Rent')
+  eq('… and count as spent', after.spent, 412)
+  eq('what is free is unchanged — the money was always committed', after.freeToSpend, before.freeToSpend)
+  eq('running it again writes nothing', MO.autoPayTransactions(paid, M(0), today).length, 0)
+
+  // The button, on the one bill that has no automatic rule.
+  const rentTx = MO.plannedPayment(paid, paid.recurring.find((r) => r.id === 'r6'), M(0))
+  eq('marking rent paid dates it to its own day', rentTx.date, `${M(0)}-03`)
+  eq('… at the planned amount', rentTx.amount, -1200)
+  const allPaid = base({ ...paid, transactions: [...auto, rentTx] })
+  ok('nothing is left waiting', MO.computeMonthPulse(allPaid, M(0), today).pending.length === 0)
+
+  // The statement finally arrives, and the real electricity bill is not the
+  // guess: two days later and a euro forty more.
+  const real = base({
+    ...paid,
+    transactions: [
+      ...auto,
+      tx({ id: 'real', date: `${M(0)}-14`, description: 'EDP ENERGIA', amount: -61.4, category: 'Utilities', accountId: 'a1' }),
+    ],
+  })
+  const pairs = MO.duplicatePairs(real, M(0))
+  eq('the stand-in is paired with the charge it stood for', pairs.length, 1)
+  eq('… named as an assumption rather than something logged', pairs[0].kind, 'assumed')
+  eq('… the assumed row being the one to drop', pairs[0].manual.description, 'Electricity')
+  eq('… and the statement line the one to keep', pairs[0].imported.id, 'real')
+
+  // The importer files a line by guesswork long before anyone reconciles it, so
+  // an incoming charge very often does not yet carry the right category. It
+  // still has to be recognised, or the real bill lands beside the stand-in and
+  // the month counts it twice.
+  const miscategorised = base({
+    ...paid,
+    transactions: [
+      ...auto,
+      tx({ id: 'edp', date: `${M(0)}-14`, description: 'EDP ENERGIA', amount: -61.4, category: 'Other', accountId: 'a1' }),
+    ],
+  })
+  const loose = MO.duplicatePairs(miscategorised, M(0))
+  eq('a charge filed as Other is still matched to the bill it settles', loose.length, 1)
+  eq('… the electricity stand-in being the one to drop', loose[0].manual.description, 'Electricity')
+
+  // But not anything of roughly that size: a restaurant weeks away is not the
+  // electricity bill.
+  const unrelated = base({
+    ...paid,
+    transactions: [
+      ...auto,
+      tx({ id: 'din', date: `${M(0)}-28`, description: 'Restaurant', amount: -55, category: 'Dining', accountId: 'a1' }),
+    ],
+  })
+  eq('an unrelated spend of similar size is left alone', MO.duplicatePairs(unrelated, M(0)).length, 0)
+}
+
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')
 {
   const d = base({
