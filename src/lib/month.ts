@@ -224,7 +224,7 @@ export function bestStandInMatch(
   let best: Transaction | null = null
   let bestScore = Infinity
   for (const c of candidates) {
-    if (claimed.has(c.id)) continue
+    if (claimed.has(c.id) || c.notDuplicate) continue
     const score = standInMatchScore(standIn, c)
     if (score !== null && score < bestScore) {
       best = c
@@ -268,7 +268,7 @@ export function duplicatePairs(data: AppData, month: string): DuplicatePair[] {
   // hand-logged match claim the same imported row first would leave the
   // stand-in stranded and still double-counting.
   for (const assumed of monthTxs) {
-    if (!assumed.plannedLineId) continue
+    if (!assumed.plannedLineId || assumed.notDuplicate) continue
     const hit = bestStandInMatch(assumed, imported, claimed)
     if (hit) {
       claimed.add(hit.id)
@@ -277,7 +277,7 @@ export function duplicatePairs(data: AppData, month: string): DuplicatePair[] {
   }
 
   for (const manual of monthTxs) {
-    if (manual.source !== 'manual' || manual.plannedLineId) continue
+    if (manual.source !== 'manual' || manual.plannedLineId || manual.notDuplicate) continue
     const hit = imported.find(
       (t) => !claimed.has(t.id) && t.date === manual.date && Math.abs(t.amount - manual.amount) < 0.005,
     )
@@ -321,13 +321,19 @@ export function plannedPayment(data: AppData, item: RecurringItem, month: string
  *
  * Returns nothing once they are in, so calling it repeatedly is safe: the rows
  * it wrote satisfy the same "has this line arrived" test that put them here.
+ * A bill the user has removed for this month is left alone — see
+ * `AppData.autoPaySkips`.
  */
 export function autoPayTransactions(data: AppData, month: string, today = todayISO()): Transaction[] {
   const pulse = computeMonthPulse(data, month, today)
   const byId = new Map(data.recurring.map((r) => [r.id, r]))
+  const skipped = new Set(data.autoPaySkips ?? [])
   const out: Transaction[] = []
   for (const bill of pulse.pending) {
     if (!bill.autoPaid) continue
+    // Removed by hand for this month — writing it back would make deleting it
+    // impossible rather than merely temporary.
+    if (skipped.has(`${month}:${bill.id}`)) continue
     const item = byId.get(bill.id)
     if (!item) continue
     const tx = plannedPayment(data, item, month)

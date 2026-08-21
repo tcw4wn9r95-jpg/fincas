@@ -104,6 +104,15 @@ export interface Transaction {
    * legacy single-link fields below still resolve.
    */
   provisionAllocations?: ProvisionAllocation[]
+  /**
+   * Set when a pairing this app proposed was wrong and the user said so: two
+   * spends really did happen on the same day for the same amount. Stops it
+   * being offered as a duplicate again. Reversible — it is a judgement, not a
+   * fact, and the earlier version of this recorded it by editing the
+   * description, which could not be undone and left "(confirmed separate)"
+   * stuck on the row for good.
+   */
+  notDuplicate?: boolean
   /** Tags this transaction as spending that belongs to a special event. */
   eventId?: string
   /**
@@ -271,6 +280,14 @@ export interface AppData {
    * what is really sitting there.
    */
   provisionAccountId?: string
+  /**
+   * `month:lineId` for every fixed cost the user removed after the month
+   * assumed it paid. Without this, deleting one only made it come back: the
+   * next visit found the bill missing again and wrote it straight back in.
+   * Deleting is how you say the assumption was wrong, so it has to stick — the
+   * line returns to the waiting list, where it can be ticked off by hand.
+   */
+  autoPaySkips?: string[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */

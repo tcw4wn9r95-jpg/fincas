@@ -331,7 +331,8 @@ export function ImportModal({
   const manualDupes = useMemo(() => {
     const claimed = new Set<string>()
     const pairs: Array<{ rowId: string; manual: Transaction; kind: 'logged' | 'assumed' }> = []
-    const standIns = savedStream.filter((t) => t.source === 'manual')
+    // A row the user has already said is not a duplicate stays out of it.
+    const standIns = savedStream.filter((t) => t.source === 'manual' && !t.notDuplicate)
     if (!standIns.length) return pairs
 
     // Plan stand-ins first, on the loosest rule — see `standInMatchScore`. One

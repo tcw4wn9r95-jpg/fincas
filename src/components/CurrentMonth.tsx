@@ -158,9 +158,31 @@ export function CurrentMonth({
     })
   }
 
+  /**
+   * Removing a stand-in the app wrote has to stick, or deleting it is only
+   * temporary: the next visit would find the bill missing and assume it paid
+   * all over again. The line goes back to the waiting list, where it can be
+   * ticked off by hand if it does turn up.
+   */
   function removeTx(id: string) {
     update((d) => {
-      d.transactions = d.transactions.filter((t) => t.id !== id)
+      const t = d.transactions.find((x) => x.id === id)
+      if (t?.plannedLineId) {
+        const key = `${t.month}:${t.plannedLineId}`
+        d.autoPaySkips = Array.from(new Set([...(d.autoPaySkips ?? []), key]))
+      }
+      d.transactions = d.transactions.filter((x) => x.id !== id)
+      return d
+    })
+  }
+
+  /** Correct a row in place — an assumption is a guess, and guesses are wrong. */
+  function editTx(id: string, fields: Partial<Transaction>) {
+    update((d) => {
+      const t = d.transactions.find((x) => x.id === id)
+      if (!t) return d
+      Object.assign(t, fields)
+      if (fields.date) t.month = fields.date.slice(0, 7)
       return d
     })
   }
@@ -173,12 +195,15 @@ export function CurrentMonth({
       return d
     })
   }
+  /**
+   * The pairing was wrong: two spends really did happen. Recorded as a flag so
+   * it can be taken back — this used to rewrite the description, which stuck
+   * "(confirmed separate)" on the row for good and lost the original wording.
+   */
   function keepBoth(pair: DuplicatePair) {
-    // Nothing to change in the data — the pair simply stops being a pair once
-    // the hand-logged line says it is deliberate.
     update((d) => {
       const t = d.transactions.find((x) => x.id === pair.manual.id)
-      if (t) t.description = `${t.description} (confirmed separate)`
+      if (t) t.notDuplicate = true
       return d
     })
   }
@@ -244,30 +269,42 @@ export function CurrentMonth({
             {fx(pulse.duplicates.reduce((s, p) => s + Math.abs(p.manual.amount), 0))} until you pick one.
           </p>
           <div className="space-y-2">
+            {/* The two candidates get a line each. Squeezed onto one they were
+                truncated on a phone at exactly the moment you need to read both
+                to decide which is real. */}
             {pulse.duplicates.map((p) => (
-              <div
-                key={p.manual.id}
-                className="rounded-lg border border-line bg-canvas px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <div className="text-sm">
-                    <span className="tabular-nums text-muted">{p.manual.date.slice(5)}</span>{' '}
-                    <span className="font-medium">{fx(Math.abs(p.manual.amount))}</span>
+              <div key={p.manual.id} className="rounded-lg border border-line bg-canvas px-4 py-3">
+                <div className="grid gap-1 mb-2.5">
+                  <div className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="min-w-0 break-words">
+                      <span className="text-muted text-xs">
+                        {p.kind === 'assumed' ? 'assumed · ' : 'yours · '}
+                        {p.manual.date.slice(5)}{' '}
+                      </span>
+                      {p.manual.description}
+                    </span>
+                    <span className="tabular-nums shrink-0">{fx(Math.abs(p.manual.amount))}</span>
                   </div>
-                  <div className="text-xs text-muted truncate">
-                    {p.kind === 'assumed' ? 'assumed' : 'yours'}: “{p.manual.description}”{' '}
-                    {fx(Math.abs(p.manual.amount))} · statement: “{p.imported.description}”{' '}
-                    {fx(Math.abs(p.imported.amount))}
+                  <div className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="min-w-0 break-words">
+                      <span className="text-muted text-xs">statement · {p.imported.date.slice(5)} </span>
+                      {p.imported.description}
+                    </span>
+                    <span className="tabular-nums shrink-0">{fx(Math.abs(p.imported.amount))}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <button className="btn-primary text-xs" onClick={() => resolveDuplicate(p, 'imported')}>
                     <IconCheck width={14} height={14} /> Keep the statement
                   </button>
                   <button className="btn-subtle text-xs" onClick={() => resolveDuplicate(p, 'manual')}>
                     {p.kind === 'assumed' ? 'Keep the assumed one' : 'Keep mine'}
                   </button>
-                  <button className="btn-subtle text-xs" onClick={() => keepBoth(p)} title="They really were two separate spends">
+                  <button
+                    className="btn-subtle text-xs"
+                    onClick={() => keepBoth(p)}
+                    title="They really were two separate spends — this can be undone from the row below"
+                  >
                     Both real
                   </button>
                 </div>
@@ -404,28 +441,69 @@ export function CurrentMonth({
               Logged or assumed this month ·{' '}
               {fx(pulse.manualTxs.reduce((s, t) => s + Math.abs(Math.min(0, t.amount)), 0))}
             </div>
+            {/* Every field here is editable. An assumed row is the app's guess
+                at a bill it has not seen, and a guess you cannot correct is
+                worse than no guess at all. */}
             {pulse.manualTxs.map((t) => (
-              <div key={t.id} className="flex items-center gap-3 text-sm py-1">
-                <span className="text-muted w-12 shrink-0 tabular-nums">{t.date.slice(5)}</span>
-                <span className="flex-1 min-w-0 truncate">{t.description}</span>
-                {/* Say plainly which rows nobody observed — these are the app's
-                    assumption that a bill was paid, not a record that it was. */}
+              <div key={t.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm py-1.5 border-b border-line/40 last:border-0">
+                <input
+                  type="date"
+                  className="bg-transparent text-muted text-xs outline-none focus:text-forest shrink-0"
+                  aria-label={`Date of ${t.description}`}
+                  value={t.date}
+                  onChange={(e) => e.target.value && editTx(t.id, { date: e.target.value })}
+                />
+                <input
+                  className="bg-transparent outline-none flex-1 min-w-[6rem] focus:text-forest"
+                  aria-label={`Description of ${t.description}`}
+                  defaultValue={t.description}
+                  onBlur={(e) => editTx(t.id, { description: e.target.value.trim() || t.description })}
+                />
                 {t.plannedLineId && (
                   <span
                     className="pill bg-gold/15 text-gold shrink-0"
-                    title="Counted from your plan, not seen on a statement yet"
+                    title="Counted from your plan, not seen on a statement yet — correct it or remove it if it's wrong"
                   >
                     assumed
                   </span>
                 )}
-                <span className="pill bg-canvas text-muted shrink-0">{t.category}</span>
-                <span className="tabular-nums w-20 text-right shrink-0">
-                  {formatMoney(t.amount, currency, locale, { signed: true })}
-                </span>
+                {t.notDuplicate && (
+                  <button
+                    className="pill bg-canvas text-muted shrink-0 hover:text-ink"
+                    title="You said this wasn't a duplicate. Click to let it be checked again."
+                    onClick={() => editTx(t.id, { notDuplicate: undefined })}
+                  >
+                    kept separate ×
+                  </button>
+                )}
+                <select
+                  className="bg-transparent text-xs text-muted outline-none focus:text-forest shrink-0 max-w-[7rem]"
+                  aria-label={`Category of ${t.description}`}
+                  value={t.category}
+                  onChange={(e) => editTx(t.id, { category: e.target.value })}
+                >
+                  {QUICK_CATS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className="bg-transparent tabular-nums w-20 text-right outline-none focus:text-forest shrink-0"
+                  aria-label={`Amount of ${t.description}`}
+                  defaultValue={Math.abs(t.amount)}
+                  onBlur={(e) => {
+                    const v = parseAmount(e.target.value)
+                    if (v) editTx(t.id, { amount: t.amount < 0 ? -Math.abs(v) : Math.abs(v) })
+                  }}
+                />
                 <button
                   className="text-muted hover:text-clay shrink-0"
                   onClick={() => removeTx(t.id)}
                   aria-label={`Delete ${t.description}`}
+                  title={t.plannedLineId ? "Remove it — it won't be assumed again this month" : 'Delete'}
                 >
                   <IconTrash width={15} height={15} />
                 </button>
@@ -442,7 +520,8 @@ export function CurrentMonth({
           <p className="text-sm text-muted mb-3">
             Planned lines nothing has matched yet, with the day of the month they usually arrive. This is the
             money that isn't free even though it's still in the account. Loans, utilities, insurance and
-            subscriptions are counted automatically at the start of the month and never wait here.
+            subscriptions are counted automatically at the start of the month, so they only appear here if
+            you removed one.
           </p>
           <div className="space-y-2">
             {pulse.pending.map((b) => (
@@ -649,8 +728,8 @@ export function CurrentMonth({
                 className="w-full text-left rounded-lg border border-line bg-canvas px-4 py-3 hover:bg-forest-tint/40 transition"
                 onClick={onGoToEvents}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium truncate">{e.label}</span>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-medium min-w-0 break-words">{e.label}</span>
                   <span className={classNames('text-sm tabular-nums shrink-0', e.over && 'text-clay')}>
                     {fx(e.spent)} of {fx(e.budget)}
                   </span>

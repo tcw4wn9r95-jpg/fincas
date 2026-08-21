@@ -682,8 +682,11 @@ export function MoneyDate({
                     className="w-full text-left rounded-lg border border-line bg-canvas px-4 py-3 hover:bg-forest-tint/40 transition"
                     onClick={onGoToEvents}
                   >
-                    <div className="flex items-center justify-between gap-3 mb-1.5">
-                      <span className="font-medium truncate">{e.label}</span>
+                    {/* Wraps rather than truncates: on a phone the figure took
+                        most of the row and left "Lisbon weeken…", which names
+                        nothing. */}
+                    <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                      <span className="font-medium min-w-0 break-words">{e.label}</span>
                       <span
                         className={classNames('text-sm tabular-nums shrink-0', e.over && 'text-clay')}
                       >

@@ -1281,6 +1281,48 @@ console.log('\n── AB. Every plan line is accounted for, in the month it belo
   ok('the assistant is told what is not due yet', MO.monthPulseText(annual, M(0)).includes('not due this month'))
 }
 
+console.log('\n── AC. An assumption you can correct, remove, and have stay removed ──')
+{
+  const today = `${M(0)}-10`
+  const d = base({
+    recurring: [line({ id: 'u1', label: 'Electricity', amount: 60, flow: 'expense', category: 'Utilities', dayOfMonth: 12 })],
+  })
+  const [written] = MO.autoPayTransactions(d, M(0), today)
+  const paid = base({ ...d, transactions: [written] })
+  eq('the month assumes the bill paid', MO.computeMonthPulse(paid, M(0), today).spent, 60)
+
+  // Removing it has to stick, or deleting it is only ever temporary.
+  const removed = base({
+    ...d,
+    transactions: [],
+    autoPaySkips: [`${M(0)}:u1`],
+  })
+  eq('once removed, it is not assumed again', MO.autoPayTransactions(removed, M(0), today).length, 0)
+  eq('… and returns to the list to be ticked off by hand', MO.computeMonthPulse(removed, M(0), today).pending.map((b) => b.label).join(','), 'Electricity')
+  eq('… only for the month it was removed from', MO.autoPayTransactions(removed, M(1), `${M(1)}-10`).length, 1)
+
+  // A wrong pairing can be overruled, and the overruling taken back.
+  const withReal = base({
+    ...d,
+    transactions: [
+      written,
+      tx({ id: 'r', date: `${M(0)}-14`, description: 'EDP', amount: -61.4, category: 'Utilities' }),
+    ],
+  })
+  eq('the stand-in is paired with the real charge', MO.duplicatePairs(withReal, M(0)).length, 1)
+  const overruled = base({
+    ...withReal,
+    transactions: withReal.transactions.map((t) => (t.plannedLineId ? { ...t, notDuplicate: true } : t)),
+  })
+  eq('saying they are separate stops it being offered', MO.duplicatePairs(overruled, M(0)).length, 0)
+  ok('… and the description is left exactly as it was', overruled.transactions.every((t) => !t.description.includes('confirmed separate')))
+  const undone = base({
+    ...overruled,
+    transactions: overruled.transactions.map((t) => ({ ...t, notDuplicate: undefined })),
+  })
+  eq('clearing the flag brings the pairing back', MO.duplicatePairs(undone, M(0)).length, 1)
+}
+
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')
 {
   const d = base({
