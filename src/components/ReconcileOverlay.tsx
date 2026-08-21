@@ -8,7 +8,6 @@ import { Markdown } from './Markdown'
 import type { StreamHandlers } from '../lib/claude'
 import { Portal } from './Portal'
 import { CardPicker } from './CardPicker'
-import { EventPicker } from './EventPicker'
 import { ProvisionButton } from './ProvisionModal'
 
 /**
@@ -27,7 +26,6 @@ export function ReconcileOverlay({
   events,
   onSetCategory,
   onSetCard,
-  onSetEvent,
   eventQuestion,
   onAnswerEventQuestion,
   onToggle,
@@ -44,9 +42,8 @@ export function ReconcileOverlay({
   currency: string
   locale: string
   provisions: ProvisionStatus[]
+  /** Trips and parties, so a tagged line can say which one it belongs to. */
   events: SpecialEvent[]
-  /** Tag (or untag) a line to an event. */
-  onSetEvent: (txId: string, eventId: string | undefined) => void
   /**
    * A line just tagged to an event that a hand-logged spend nearly — but not
    * exactly — answers to. Asked rather than resolved: the disagreement is the
@@ -72,6 +69,10 @@ export function ReconcileOverlay({
 }) {
   // Advice is asked for one line at a time and streams in place; opening a
   // different line replaces it, so the card never carries a stale answer.
+  const eventLabels = useMemo(
+    () => Object.fromEntries(events.map((e) => [e.id, e.label])),
+    [events],
+  )
   const [adviceFor, setAdviceFor] = useState<string | null>(null)
   const [advice, setAdvice] = useState('')
   const [adviceError, setAdviceError] = useState('')
@@ -307,13 +308,13 @@ export function ReconcileOverlay({
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} />
-                    <EventPicker tx={t} events={events} onPick={(e) => onSetEvent(t.id, e)} />
                     <ProvisionButton
                       tx={t}
                       provisions={provisions}
                       currency={currency}
                       locale={locale}
                       onOpen={() => onProvision(t)}
+                      eventLabel={eventLabels[t.eventId ?? '']}
                     />
                     {(() => {
                       const match = unlinkedMatch(t)

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { formatMoney, classNames, parseAmount } from '../lib/format'
+import { NON_CASHFLOW } from '../lib/categorize'
 import {
   provisionRoleFor,
   suggestProvisionAmount,
@@ -10,7 +11,7 @@ import {
   type EmergencyFundStatus,
   type ProvisionStatus,
 } from '../lib/provisions'
-import type { ProvisionAllocation, Transaction } from '../lib/types'
+import type { ProvisionAllocation, SpecialEvent, Transaction } from '../lib/types'
 import { IconClose, IconProvision } from './icons'
 import { Portal } from './Portal'
 
@@ -28,6 +29,7 @@ export function ProvisionButton({
   locale,
   onOpen,
   compact,
+  eventLabel,
 }: {
   tx: Transaction
   provisions: ProvisionStatus[]
@@ -35,6 +37,8 @@ export function ProvisionButton({
   locale: string
   onOpen: () => void
   compact?: boolean
+  /** The event this line is tagged to, if any — visible without opening. */
+  eventLabel?: string
 }) {
   const labels = new Map<string, string>([
     ...provisions.map((p) => [p.id, p.label] as const),
@@ -55,17 +59,26 @@ export function ProvisionButton({
       <button
         className={classNames(
           'btn-subtle text-xs shrink-0 inline-flex items-center gap-1.5',
-          allocs.length > 0 && 'text-forest',
+          (allocs.length > 0 || eventLabel) && 'text-forest',
         )}
         onClick={(e) => {
           e.stopPropagation()
           onOpen()
         }}
-        title={allocs.length ? summary : 'Allocate this transaction to your provisions'}
+        title={
+          [eventLabel && `Part of ${eventLabel}`, allocs.length ? summary : '']
+            .filter(Boolean)
+            .join(' · ') || 'Allocate this transaction to a pot or an event'
+        }
       >
         <IconProvision width={14} height={14} />
         {allocs.length ? `Provisioned${compact ? ` (${allocs.length})` : ''}` : 'Provision'}
       </button>
+      {eventLabel && (
+        <span className="pill bg-forest-tint text-forest shrink-0 max-w-[9rem] overflow-hidden">
+          {eventLabel}
+        </span>
+      )}
       {!compact &&
         allocs.map((a) => (
           <span
@@ -105,14 +118,23 @@ export function ProvisionModal({
   onClose,
   emergency,
   eventFunds,
+  events = [],
 }: {
   tx: Transaction
   provisions: ProvisionStatus[]
   currency: string
   locale: string
-  onSave: (allocations: ProvisionAllocation[]) => void
+  /**
+   * Both answers at once: how the money splits across pots, and which event —
+   * if any — the spend belongs to. One Save, because a trip expense paid out of
+   * the trip's own pot is both at the same time, and making that two trips
+   * through the same pop-up would be a way of asking the user to remember.
+   */
+  onSave: (allocations: ProvisionAllocation[], eventId: string | undefined) => void
   onClose: () => void
   emergency: EmergencyFundStatus
+  /** Trips and parties this spend could belong to. */
+  events?: SpecialEvent[]
   /**
    * Pot id → the event it is saving for. An event's fund is an ordinary
    * provision, which makes it indistinguishable here from a pot for the car —
@@ -157,6 +179,31 @@ export function ProvisionModal({
   })
   const pulling = direction === 'drawdown'
 
+  /**
+   * Which question is on screen. The first two also set `direction`; the third
+   * is a different axis entirely — where the spend belongs, not where the money
+   * moved — so it leaves the split alone and Save applies both.
+   */
+  const [tab, setTab] = useState<'contribution' | 'drawdown' | 'event'>(() =>
+    tx.eventId && events.some((e) => e.id === tx.eventId) ? 'event' : direction,
+  )
+  const [eventId, setEventId] = useState<string | undefined>(() =>
+    tx.eventId && events.some((e) => e.id === tx.eventId) ? tx.eventId : undefined,
+  )
+  // Money in is not event spending, and a transfer between your own accounts is
+  // not spending at all — the same rule the picker on a row applies.
+  const canTagEvent = events.length > 0 && tx.amount < 0 && !NON_CASHFLOW.has(tx.category)
+  const onEventTab = tab === 'event' && canTagEvent
+  const during = (e: SpecialEvent) => tx.date >= e.startDate && tx.date <= e.endDate
+  const orderedEvents = useMemo(
+    () =>
+      [...events].sort(
+        (a, b) => Number(during(b)) - Number(during(a)) || a.startDate.localeCompare(b.startDate),
+      ),
+    // `during` only reads tx.date, which cannot change while this is open.
+    [events, tx.date],
+  )
+
   const rowIds = useMemo(() => [...allocatable.map((p) => p.id), EMERGENCY_FUND_ID], [allocatable])
   const allocated = useMemo(
     () =>
@@ -198,7 +245,7 @@ export function ProvisionModal({
     }
     const toFund = round2(Math.max(0, parseAmount(amounts[EMERGENCY_FUND_ID] ?? '') || 0))
     if (toFund > 0) next.push({ provisionId: EMERGENCY_FUND_ID, amount: toFund, role: direction })
-    onSave(next)
+    onSave(next, canTagEvent ? eventId : tx.eventId)
     onClose()
   }
 
@@ -217,33 +264,46 @@ export function ProvisionModal({
               </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-1 p-1 bg-canvas rounded-xl border border-line">
+            <div
+              className={classNames(
+                'mt-4 grid gap-1 p-1 bg-canvas rounded-xl border border-line',
+                canTagEvent ? 'grid-cols-3' : 'grid-cols-2',
+              )}
+            >
               {(
                 [
                   ['contribution', 'Set aside', 'Money going into your pots'],
                   ['drawdown', 'Pull from savings', 'This was paid for out of a pot'],
+                  ['event', 'Event', 'This spend belongs to a trip or party'],
                 ] as const
-              ).map(([d, title, hint]) => (
-                <button
-                  key={d}
-                  onClick={() => setDirection(d)}
-                  className={classNames(
-                    'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    direction === d ? 'bg-forest text-paper' : 'text-muted hover:text-ink',
-                  )}
-                  title={hint}
-                >
-                  {title}
-                </button>
-              ))}
+              )
+                .filter(([d]) => d !== 'event' || canTagEvent)
+                .map(([d, title, hint]) => (
+                  <button
+                    key={d}
+                    onClick={() => {
+                      setTab(d)
+                      if (d !== 'event') setDirection(d)
+                    }}
+                    className={classNames(
+                      'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                      tab === d ? 'bg-forest text-paper' : 'text-muted hover:text-ink',
+                    )}
+                    title={hint}
+                  >
+                    {title}
+                  </button>
+                ))}
             </div>
             <p className="text-xs text-muted mt-2">
-              {pulling
-                ? `Reduces the pots below by what you take out. ${tx.category} stays the reason for the spend — this only says where the money came from.`
-                : 'Adds to the pots below, saving up for what they’re for.'}
+              {onEventTab
+                ? 'Counts this spend against the event’s budget as well as the month’s — filed under the event rather than its category, so it is only ever counted once.'
+                : pulling
+                  ? `Reduces the pots below by what you take out. ${tx.category} stays the reason for the spend — this only says where the money came from.`
+                  : 'Adds to the pots below, saving up for what they’re for.'}
             </p>
 
-            <div className="mt-4 flex items-end justify-between gap-3">
+            <div className={classNames('mt-4 flex items-end justify-between gap-3', onEventTab && 'hidden')}>
               <div>
                 <div className="label">Transaction</div>
                 <div className="tabular-nums font-medium">{fx(total)}</div>
@@ -264,13 +324,18 @@ export function ProvisionModal({
                 </div>
               </div>
             </div>
-            <div className="mt-2 h-1.5 rounded-full bg-line overflow-hidden">
+            <div
+              className={classNames(
+                'mt-2 h-1.5 rounded-full bg-line overflow-hidden',
+                onEventTab && 'hidden',
+              )}
+            >
               <div
                 className={classNames('h-full rounded-full transition-all', over ? 'bg-clay' : 'bg-forest')}
                 style={{ width: `${over ? 100 : pct}%` }}
               />
             </div>
-            {over && (
+            {over && !onEventTab && (
               <p className="text-xs text-clay mt-2">
                 That's {fx(Math.abs(remaining))} more than this transaction — trim a bucket before saving.
               </p>
@@ -278,6 +343,56 @@ export function ProvisionModal({
           </div>
 
           <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-2.5">
+            {onEventTab ? (
+              <>
+                <button
+                  className={classNames(
+                    'w-full text-left rounded-xl border p-3.5 transition',
+                    !eventId ? 'border-forest/40 bg-forest-tint/20' : 'border-line hover:bg-canvas',
+                  )}
+                  onClick={() => setEventId(undefined)}
+                >
+                  <div className="font-medium">No event</div>
+                  <div className="text-xs text-muted">
+                    Ordinary spending, counted under {tx.category} like anything else.
+                  </div>
+                </button>
+                {orderedEvents.map((e) => {
+                  const picked = eventId === e.id
+                  return (
+                    <button
+                      key={e.id}
+                      className={classNames(
+                        'w-full text-left rounded-xl border p-3.5 transition',
+                        picked ? 'border-forest/40 bg-forest-tint/20' : 'border-line hover:bg-canvas',
+                      )}
+                      onClick={() => setEventId(e.id)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium break-words">{e.label}</div>
+                          <div className="text-xs text-muted">
+                            {e.startDate} → {e.endDate} · {fx(e.budget)} budget
+                          </div>
+                        </div>
+                        {/* Says plainly when a spend sits outside the dates —
+                            a deposit paid early still belongs to the trip, but
+                            picking one by accident should be obvious. */}
+                        <span
+                          className={classNames(
+                            'pill shrink-0',
+                            during(e) ? 'bg-forest-tint text-forest' : 'bg-canvas text-muted',
+                          )}
+                        >
+                          {during(e) ? 'during' : 'other dates'}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </>
+            ) : (
+              <>
             {allocatable.length === 0 && (
               <p className="text-center text-muted text-sm py-4">
                 No provisions yet — add one in your plan, or send this to the emergency fund.
@@ -475,17 +590,25 @@ export function ProvisionModal({
                 </div>
               )
             })()}
+              </>
+            )}
           </div>
 
           <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-line">
-            <button className="btn-subtle text-xs" onClick={() => setAmounts({})}>
-              Clear all
-            </button>
+            {onEventTab ? (
+              <span className="text-xs text-muted">
+                {eventId ? 'Saved against this event' : 'No event — ordinary spending'}
+              </span>
+            ) : (
+              <button className="btn-subtle text-xs" onClick={() => setAmounts({})}>
+                Clear all
+              </button>
+            )}
             <div className="flex items-center gap-3">
               <button className="btn-ghost" onClick={onClose}>
                 Cancel
               </button>
-              <button className="btn-primary" onClick={save} disabled={over}>
+              <button className="btn-primary" onClick={save} disabled={over && !onEventTab}>
                 Save
               </button>
             </div>

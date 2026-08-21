@@ -26,7 +26,6 @@ import {
 } from '../lib/provisions'
 import type { Account, EventExpense, ProvisionAllocation, SpecialEvent, Transaction } from '../lib/types'
 import { CardPicker } from './CardPicker'
-import { EventPicker } from './EventPicker'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
@@ -108,6 +107,10 @@ export function MoneyDate({
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
   // Which pots are a trip's fund, so allocating to one says so.
+  const eventLabels = useMemo(
+    () => Object.fromEntries((data.events ?? []).map((e) => [e.id, e.label])),
+    [data.events],
+  )
   const eventFunds = useMemo(
     () =>
       Object.fromEntries(
@@ -954,8 +957,7 @@ export function MoneyDate({
                                 cards={cardAccounts}
                                 onTeach={setTeaching}
                                 onProvision={(t) => setProvisioning(t.id)}
-                                onSetEvent={setTxEvent}
-                                events={data.events ?? []}
+                                eventLabels={eventLabels}
                               />
                             </td>
                           </tr>
@@ -1031,8 +1033,7 @@ export function MoneyDate({
                                 cards={cardAccounts}
                                 onTeach={setTeaching}
                                 onProvision={(t) => setProvisioning(t.id)}
-                                onSetEvent={setTxEvent}
-                                events={data.events ?? []}
+                                eventLabels={eventLabels}
                               />
                             </td>
                           </tr>
@@ -1084,8 +1085,7 @@ export function MoneyDate({
                               cards={cardAccounts}
                               onTeach={setTeaching}
                               onProvision={(t) => setProvisioning(t.id)}
-                              onSetEvent={setTxEvent}
-                              events={data.events ?? []}
+                              eventLabels={eventLabels}
                             />
                           </td>
                         </tr>
@@ -1131,7 +1131,6 @@ export function MoneyDate({
           provisions={provisionStatuses}
           cards={cardAccounts}
           events={data.events ?? []}
-          onSetEvent={setTxEvent}
           eventQuestion={eventQuestion}
           onAnswerEventQuestion={answerEventQuestion}
           onSetCard={setTxCard}
@@ -1170,7 +1169,11 @@ export function MoneyDate({
           currency={currency}
           locale={locale}
           eventFunds={eventFunds}
-          onSave={(allocations) => setTxAllocations(provisioningTx.id, allocations)}
+          events={data.events ?? []}
+          onSave={(allocations, eventId) => {
+            setTxAllocations(provisioningTx.id, allocations)
+            if (eventId !== provisioningTx.eventId) setTxEvent(provisioningTx.id, eventId)
+          }}
           onClose={() => setProvisioning(null)}
         />
       )}
@@ -1200,8 +1203,7 @@ function DrillList({
   onSetCard,
   onTeach,
   onProvision,
-  onSetEvent,
-  events,
+  eventLabels,
 }: {
   txs: Transaction[]
   currency: string
@@ -1211,8 +1213,7 @@ function DrillList({
   onSetCard: (id: string, cardAccountId: string | undefined) => void
   onTeach: (t: Transaction) => void
   onProvision: (t: Transaction) => void
-  onSetEvent: (txId: string, eventId: string | undefined) => void
-  events: SpecialEvent[]
+  eventLabels: Record<string, string>
   cards: Account[]
 }) {
   return (
@@ -1244,13 +1245,13 @@ function DrillList({
             ))}
           </select>
           <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} compact />
-          <EventPicker tx={t} events={events} onPick={(e) => onSetEvent(t.id, e)} compact />
           <ProvisionButton
             tx={t}
             provisions={provisions}
             currency={currency}
             locale={locale}
             onOpen={() => onProvision(t)}
+            eventLabel={eventLabels[t.eventId ?? '']}
             compact
           />
           <button
