@@ -252,7 +252,7 @@ export function MoneyDate({
     const samples = (data.sampleTransactions ?? []).filter((t) => t.month === activeMonth).length
     const what =
       `${monthTxs.length} transaction${monthTxs.length === 1 ? '' : 's'}` +
-      (samples > 0 ? ` and ${samples} weekly check-in line${samples === 1 ? '' : 's'}` : '')
+      (samples > 0 ? ` and ${samples} line${samples === 1 ? '' : 's'} from the old weekly sample` : '')
     if (
       !confirm(
         `Delete all ${what} for ${formatMonthLabel(activeMonth, locale)}? This can't be undone.`,
@@ -261,8 +261,9 @@ export function MoneyDate({
       return
     update((d) => {
       d.transactions = d.transactions.filter((t) => t.month !== activeMonth)
-      // The weekly pulse holds its own sample of the same month. Leaving it
-      // behind is how a month you deleted keeps turning up.
+      // A file saved before "This month" replaced the weekly check-in may still
+      // hold that screen's separate sample of the same month. Leaving it behind
+      // is how a month you deleted keeps turning up.
       d.sampleTransactions = (d.sampleTransactions ?? []).filter((t) => t.month !== activeMonth)
       return d
     })

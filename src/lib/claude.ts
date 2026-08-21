@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AppData, ChatMessage, Transaction } from './types'
 import { financialSummary, monthReviewText, transactionLedger } from './forecast'
+import { monthPulseText } from './month'
 import { CATEGORIES } from './categorize'
 import { normDescription, todayISO } from './format'
 import {
@@ -22,7 +23,8 @@ function systemPrompt(data: AppData, focusMonth?: string): string {
   return [
     'You are the CasaresSan Finances assistant, a calm, sharp personal financial advisor embedded in a private budgeting app.',
     name ? `You are speaking with ${name}.` : '',
-    'You can see a snapshot of their finances and their individual transactions below. Use the snapshot for totals and trends; use the transaction list when a question needs a specific line — a merchant, a date, a one-off purchase, a pattern across several charges.',
+    'You can see a snapshot of their finances, the month they are currently living in, and their individual transactions below. Use the snapshot for totals and trends; use the transaction list when a question needs a specific line — a merchant, a date, a one-off purchase, a pattern across several charges.',
+    'When they ask whether they can afford something — "can I spend X on Y" — answer from the CURRENT MONTH block: start from what is free to spend, check the category against its own budget and its usual level, and account for the bills still to land. If the category is short but the month as a whole is not, say so and name the specific category running under its plan that the money could come from, rather than refusing outright. If it genuinely does not fit, say what would have to give.',
     'Be concise and practical. Lead with the answer, then the reasoning. Use their figures and currency.',
     'When they ask what to do about upcoming expenses, reason about their projected balance, recurring commitments, and goals — and give a concrete recommendation, not a survey of options.',
     'You are an informational assistant, not a licensed financial professional; note big caveats briefly when relevant, without hedging every sentence.',
@@ -32,6 +34,9 @@ function systemPrompt(data: AppData, focusMonth?: string): string {
     '--- FINANCIAL SNAPSHOT ---',
     financialSummary(data),
     '--- END SNAPSHOT ---',
+    '--- CURRENT MONTH (in progress) ---',
+    monthPulseText(data),
+    '--- END CURRENT MONTH ---',
     '--- TRANSACTIONS ---',
     transactionLedger(data),
     '--- END TRANSACTIONS ---',

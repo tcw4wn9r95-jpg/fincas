@@ -31,6 +31,7 @@ const S = await server.ssrLoadModule('/src/lib/storage.ts')
 const C = await server.ssrLoadModule('/src/lib/categorize.ts')
 const fmt = await server.ssrLoadModule('/src/lib/format.ts')
 const PA = await server.ssrLoadModule('/src/lib/parse.ts')
+const MO = await server.ssrLoadModule('/src/lib/month.ts')
 
 const NOW = fmt.currentMonth()
 const round = (n) => Math.round(n * 100) / 100
@@ -937,6 +938,90 @@ console.log('\n── V. The balance chart doesn’t dip twice for a bill a pot 
   eq('the ledger table agrees with the chart', ledgerJul.net, 1200)
 
   eq('the headline "Total balance" figure is untouched by the smoothing', F.startingBalance(d), 9000)
+}
+
+console.log('\n── X. The month in progress: what is left once what is coming is counted ──')
+{
+  // Mid-month, on the 10th of a 31-day month. Salary has landed, rent has not.
+  const today = `${M(0)}-10`
+  const d = base({
+    accounts: [{ id: 'a1', name: 'S-Bank', balance: 4000, asOf: today, tracked: true }],
+    recurring: [
+      line({ id: 'r1', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' }),
+      line({ id: 'r2', label: 'Rent', amount: 1200, flow: 'expense', category: 'Housing' }),
+      line({ id: 'r3', label: 'Groceries', amount: 400, flow: 'expense', category: 'Food' }),
+      line({ id: 'r4', label: 'Savings', amount: 200, flow: 'expense', category: 'Savings' }),
+    ],
+    transactions: [
+      // Last month, so the rent has a shape and a date to be recognised by, and
+      // groceries visibly arrive as many small shops rather than one charge.
+      tx({ id: 'p1', date: `${M(-1)}-03`, description: 'Rent', amount: -1200, category: 'Housing', accountId: 'a1' }),
+      tx({ id: 'p2', date: `${M(-1)}-06`, description: 'Supermarket', amount: -130, category: 'Food', accountId: 'a1' }),
+      tx({ id: 'p3', date: `${M(-1)}-17`, description: 'Supermarket', amount: -140, category: 'Food', accountId: 'a1' }),
+      tx({ id: 'i1', date: `${M(0)}-02`, description: 'Salary', amount: 3000, category: 'Income', accountId: 'a1' }),
+      tx({ id: 'f1', date: `${M(0)}-04`, description: 'Supermarket', amount: -120, category: 'Food', accountId: 'a1' }),
+      // Logged by hand, before any statement carried it.
+      tx({ id: 'm1', date: `${M(0)}-08`, description: 'Lunch', amount: -30, category: 'Food', source: 'manual', accountId: 'a1' }),
+    ],
+  })
+
+  const p = MO.computeMonthPulse(d, M(0), today)
+  eq('the month knows how far in it is', p.daysElapsed, 10)
+  eq('money in counts what has landed', p.incomeSoFar, 3000)
+  eq('… and nothing more is expected once the salary is in', p.incomeExpected, 0)
+  eq('spending counts the hand-logged line alongside the imported one', p.spent, 150)
+
+  // Rent is the one planned line nothing has matched.
+  eq('the bill still to land is found', p.pending.map((b) => b.label).join(','), 'Rent')
+  eq('… at its planned size', p.pendingTotal, 1200)
+  eq('… and on the day it landed last month', p.pending[0].typicalDay, 3)
+  ok(
+    'a variable budget is never a pending bill — it arrives as many small shops, not one charge',
+    !p.pending.some((b) => b.category === 'Food'),
+  )
+  // Still spoken for, though: 1200 of rent plus the 250 of grocery budget left.
+  eq('what the plan still expects out covers both', p.committedLeft, 1450)
+
+  // 3000 in − 150 spent − 1450 still expected out − 200 still to set aside.
+  eq('free to spend nets off everything still coming', p.freeToSpend, 1200)
+  eq('the pots still owed this month are counted against it', p.setAsideLeft, 200)
+
+  const food = p.categories.find((c) => c.category === 'Food')
+  eq('a category reports what it has left', food.left, 250)
+  eq('… and where even pacing would put it by the 10th', food.paceTarget, round((400 * 10) / 31))
+
+  // ── The same spend, typed and then imported ──
+  const doubled = base({
+    ...d,
+    transactions: [
+      ...d.transactions,
+      tx({ id: 's1', date: `${M(0)}-08`, description: 'CAFE LISBOA 4471', amount: -30, category: 'Dining', accountId: 'a1' }),
+    ],
+  })
+  const dupes = MO.duplicatePairs(doubled, M(0))
+  eq('a hand-logged spend and its imported twin are paired', dupes.length, 1)
+  eq('… the typed one is named as the one to drop', dupes[0].manual.id, 'm1')
+  eq('… and the statement line as the record to keep', dupes[0].imported.id, 's1')
+  ok('a differing amount on the same day is not a pair', MO.duplicatePairs(base({ ...d, transactions: [...d.transactions, tx({ id: 's2', date: `${M(0)}-08`, description: 'Other', amount: -31, category: 'Dining' })] }), M(0)).length === 0)
+
+  // Pace belongs to the everyday half: 1600 planned less the 1200 rent.
+  eq('the everyday budget takes the committed bill out of the plan', p.everydayPlan, 400)
+  eq('… and out of what has been spent', p.everydaySpent, 150)
+  eq('the month is judged on where it will land, not on a straight-line pace', p.projectedMonthEnd, 1600)
+
+  // Housing's 1200 is unspent only because the rent has not posted. Offering it
+  // as slack would have the assistant suggest spending the rent.
+  const housing = p.categories.find((c) => c.category === 'Housing')
+  ok('a category whose plan is a bill is marked committed', housing.committed)
+  ok('… while a variable budget is not', !p.categories.find((c) => c.category === 'Food').committed)
+
+  // What the assistant is handed.
+  const text = MO.monthPulseText(d, M(0))
+  ok('the assistant is told what is still expected out', text.includes('still expects'))
+  ok('… and what is free to spend', text.includes('Free to spend'))
+  const movable = text.split('\n').find((l) => l.startsWith('Running behind plan')) ?? ''
+  ok('unspent grocery budget is offered as movable', movable.includes('Food'))
+  ok('an unpaid rent is never offered as movable', !movable.includes('Housing'))
 }
 
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')

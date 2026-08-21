@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Splash } from './components/Splash'
 import { Dashboard } from './components/Dashboard'
 import { MoneyDate } from './components/MoneyDate'
-import { WeeklyCheckin } from './components/WeeklyCheckin'
+import { CurrentMonth } from './components/CurrentMonth'
 import { Events } from './components/Events'
 import { Insights } from './components/Insights'
 import { Chat } from './components/Chat'
@@ -26,7 +26,7 @@ import type { ChatMessage } from './lib/types'
 
 type Tab =
   | 'overview'
-  | 'weekly'
+  | 'this-month'
   | 'money-date'
   | 'events'
   | 'insights'
@@ -48,7 +48,7 @@ interface NavItem {
 // reach for by reflex and tuck the rest behind More.
 const TRACK: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: IconDashboard, hint: 'Where you stand today' },
-  { id: 'weekly', label: 'Weekly', icon: IconWeek, hint: 'This week’s pulse' },
+  { id: 'this-month', label: 'This month', icon: IconWeek, hint: 'Log spend, track budget' },
   { id: 'money-date', label: 'Money date', icon: IconMoneyDate, hint: 'Reconcile the month' },
   { id: 'events', label: 'Events', icon: IconEvent, hint: 'Trips and parties' },
 ]
@@ -85,7 +85,7 @@ export function App() {
     window.scrollTo({ top: 0 })
   }, [tab])
   // Context the user asked to discuss — hands the Assistant a month or a
-  // ready-made prompt (e.g. a weekly check-in recap).
+  // ready-made prompt (e.g. a current-month recap).
   const [assistantSeed, setAssistantSeed] = useState<AssistantSeed | null>(null)
 
   function go(next: Tab) {
@@ -164,7 +164,13 @@ export function App() {
 
           <main className="px-4 sm:px-6 lg:px-10 py-6 lg:py-10 pb-24 lg:pb-10 max-w-5xl mx-auto">
             {tab === 'overview' && <Dashboard goTo={(t) => go(t)} />}
-            {tab === 'weekly' && <WeeklyCheckin onDiscuss={discussPrompt} onGoToEvents={() => go('events')} />}
+            {tab === 'this-month' && (
+              <CurrentMonth
+                onDiscuss={discussPrompt}
+                onGoToEvents={() => go('events')}
+                onGoToPlan={() => go('plan')}
+              />
+            )}
             {tab === 'money-date' && (
               <MoneyDate
                 onDiscuss={discussMonth}

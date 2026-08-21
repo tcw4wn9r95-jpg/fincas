@@ -322,6 +322,31 @@ export function ImportModal({
     setRows((prev) => prev.filter((r) => !suspectIds.has(r.id)))
   }
 
+  // Spends the user logged by hand before the statement existed, that this file
+  // is now bringing in properly. Matched on date and amount alone: a typed
+  // "Lunch" never resembles a card statement's merchant string, so asking the
+  // descriptions to agree would find none of them. The imported line is the
+  // better record — it carries the real merchant — so the default is to let it
+  // replace the hand-logged guess rather than have both count.
+  const manualDupes = useMemo(() => {
+    const claimed = new Set<string>()
+    const pairs: Array<{ rowId: string; manual: Transaction }> = []
+    const manuals = savedStream.filter((t) => t.source === 'manual')
+    if (!manuals.length) return pairs
+    for (const r of rows) {
+      const hit = manuals.find(
+        (m) => !claimed.has(m.id) && m.date === r.date && Math.abs(m.amount - r.amount) < 0.005,
+      )
+      if (hit) {
+        claimed.add(hit.id)
+        pairs.push({ rowId: r.id, manual: hit })
+      }
+    }
+    return pairs
+  }, [rows, savedStream])
+  const [keepManual, setKeepManual] = useState(false)
+  const supersededIds = keepManual ? [] : manualDupes.map((p) => p.manual.id)
+
   function save() {
     if (!rows.length) return
     // Stamp the account onto a freshly parsed line — a charge only counts
@@ -332,6 +357,9 @@ export function ImportModal({
     // the picker is changed by hand, later than the fold-in ran — would write
     // a second, re-tagged copy of someone else's month back in as this one's.
     const tagged = accountId ? rows.map((r) => (r.accountId ? r : { ...r, accountId })) : rows
+    // Hand-logged lines this file is bringing in for real — dropped as it saves,
+    // so the same spend never sits in the month twice.
+    const superseded = new Set(supersededIds)
     if (onImport) {
       onImport(tagged)
     } else if (replaceMonths) {
@@ -343,7 +371,9 @@ export function ImportModal({
         // must not evict each other.
         d.transactions = [
           ...d.transactions.filter(
-            (t) => !monthsCovered.has(t.month) || (accountId ? t.accountId !== accountId : false),
+            (t) =>
+              !superseded.has(t.id) &&
+              (!monthsCovered.has(t.month) || (accountId ? t.accountId !== accountId : false)),
           ),
           ...tagged,
         ]
@@ -352,7 +382,7 @@ export function ImportModal({
       })
     } else {
       update((d) => {
-        d.transactions = [...d.transactions, ...tagged]
+        d.transactions = [...d.transactions.filter((t) => !superseded.has(t.id)), ...tagged]
         if (statement && applyBalance) applyStatementBalance(d, statement)
         return d
       })
@@ -448,6 +478,30 @@ export function ImportModal({
                 </div>
               )}
 
+
+              {manualDupes.length > 0 && (
+                <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm">
+                  <div className="text-ink/80">
+                    {manualDupes.length} of these {manualDupes.length === 1 ? 'is a spend you' : 'are spends you'}{' '}
+                    already logged by hand — same day, same amount.{' '}
+                    {keepManual
+                      ? 'Both will be kept, so this month will count them twice.'
+                      : 'Your hand-logged version will be dropped as this saves, so nothing counts twice.'}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <button className="btn-subtle text-xs" onClick={() => setKeepManual((k) => !k)}>
+                      {keepManual ? 'Drop my hand-logged copies' : 'Keep both anyway'}
+                    </button>
+                    <span className="text-xs text-muted">
+                      {manualDupes
+                        .slice(0, 3)
+                        .map((p) => `${p.manual.date.slice(5)} ${fx(Math.abs(p.manual.amount))} “${p.manual.description}”`)
+                        .join(' · ')}
+                      {manualDupes.length > 3 ? ` · +${manualDupes.length - 3} more` : ''}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {suspectIds.size > 0 && (
                 <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">

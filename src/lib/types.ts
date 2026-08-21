@@ -265,9 +265,12 @@ export interface AppData {
   /** The scenario currently overlaid on the forecast, if any. */
   activeScenarioId?: string
   /**
-   * Weekly check-in transactions — a sample of variable spending (e.g. a
-   * Revolut export). Kept separate from `transactions` so the monthly money
-   * date (full bank statements) and the weekly pulse never double-count.
+   * @deprecated The weekly check-in's own sample of variable spending, kept
+   * apart from `transactions` so its Revolut export and the money date's full
+   * statements never double-counted. Retired with that screen: "This month"
+   * imports into `transactions` like everything else, and hand-logged spend
+   * lives there too. Still read (events tag against it) so a file saved before
+   * the change keeps showing what it already held; nothing writes it now.
    */
   sampleTransactions?: Transaction[]
   updatedAt: string
