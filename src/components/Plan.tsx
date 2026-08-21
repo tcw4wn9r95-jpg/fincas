@@ -3,6 +3,9 @@ import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
 import {
   accountBalance,
+  isPlannedSetAside,
+  itemAmountForMonth,
+  nextOccurrence,
   cardActivity,
   cardPaymentTarget,
   isCardAccount,
@@ -210,6 +213,45 @@ export function Plan() {
     [provisionStatuses],
   )
   const [showClosed, setShowClosed] = useState(false)
+
+  /**
+   * Plan lines worth saving up for: an expense the plan already carries, not
+   * already claimed by a pot. Lines that are themselves a set-aside are left
+   * out — provisioning your savings line is just the same money twice — and
+   * the lumpy cadences come first, since a €900 premium once a year is what a
+   * provision is actually for.
+   */
+  const CADENCE_RANK: Record<string, number> = { annual: 0, quarterly: 1, 'one-time': 2, biweekly: 3, weekly: 4, monthly: 5 }
+  const provisionableLines = useMemo(() => {
+    const claimed = new Set(data.provisions.map((p) => p.plannedLineId).filter(Boolean))
+    return data.recurring
+      .filter((r) => r.flow === 'expense' && !isPlannedSetAside(r) && !claimed.has(r.id))
+      .sort(
+        (a, b) =>
+          (CADENCE_RANK[a.cadence] ?? 9) - (CADENCE_RANK[b.cadence] ?? 9) || b.amount - a.amount,
+      )
+  }, [data.recurring, data.provisions])
+
+  /** Start a pot for a plan line, with its own figures already filled in. */
+  function provisionFromLine(id: string) {
+    const item = data.recurring.find((r) => r.id === id)
+    if (!item) return
+    const due = nextOccurrence(item)
+    const target = due ? itemAmountForMonth(item, due.slice(0, 7)) : item.amount
+    update((d) => {
+      d.provisions.push({
+        id: uid(),
+        label: item.label,
+        category: (PROVISION_CATS as readonly string[]).includes(item.category) ? item.category : 'Provisions',
+        targetAmount: Math.round((target || item.amount) * 100) / 100,
+        dueDate: due,
+        createdAt: todayISO(),
+        plannedLineId: item.id,
+      })
+      return d
+    })
+  }
+
   function addProvision() {
     if (!prov.label.trim() || !parseAmount(prov.target)) return
     const p: Provision = {
@@ -537,6 +579,14 @@ export function Plan() {
                   placeholder="Untitled provision"
                   onBlur={(e) => editProvision(p.id, { label: e.target.value.trim() || p.label })}
                 />
+                {p.plannedLineId && (
+                  <span
+                    className="pill bg-forest-tint text-forest shrink-0"
+                    title={`Saving up for "${data.recurring.find((r) => r.id === p.plannedLineId)?.label ?? 'a plan line'}" in your plan`}
+                  >
+                    from plan
+                  </span>
+                )}
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     className="text-muted hover:text-forest"
@@ -625,6 +675,32 @@ export function Plan() {
             </p>
           )}
         </div>
+        {provisionableLines.length > 0 && (
+          <div className="mb-3 rounded-lg border border-line bg-canvas px-4 py-3">
+            <div className="text-sm font-medium">Save up for something already in your plan</div>
+            <p className="text-xs text-muted mt-0.5 mb-2">
+              Pick a planned cost and it starts a pot with that line's amount and the date it next lands —
+              so an annual premium is put by month by month instead of landing whole.
+            </p>
+            <select
+              className="input w-full sm:w-auto"
+              value=""
+              onChange={(e) => e.target.value && provisionFromLine(e.target.value)}
+            >
+              <option value="">Choose a plan line…</option>
+              {provisionableLines.map((r) => {
+                const due = nextOccurrence(r)
+                return (
+                  <option key={r.id} value={r.id}>
+                    {r.label} · {fx(r.amount)} {r.cadence}
+                    {due ? ` · next ${formatMonthLabel(due, locale)}` : ''}
+                  </option>
+                )
+              })}
+            </select>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           <input
             className="input flex-1 min-w-[140px]"

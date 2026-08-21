@@ -1185,6 +1185,56 @@ console.log('\n── Z. A planned event books its own line, prorated across the
   eq('… but carries no plan, since the pot already paid for it', frow.planned, 0)
 }
 
+console.log('\n── AA. A provision can be started from a line already in the plan ──')
+{
+  const annual = line({
+    id: 'r1', label: 'Home insurance', amount: 900, flow: 'expense', category: 'Insurance',
+    cadence: 'annual', startDate: `${M(-9)}-14`,
+  })
+  const quarterly = line({
+    id: 'r2', label: 'Quarterly tax', amount: 1200, flow: 'expense', category: 'Taxes',
+    cadence: 'quarterly', startDate: `${M(-1)}-20`,
+  })
+  const monthly = line({ id: 'r3', label: 'Rent', amount: 1000, flow: 'expense', category: 'Housing' })
+
+  // The premium next falls due three months out — the whole reason to provision.
+  eq('an annual line reports the date it next lands', F.nextOccurrence(annual, M(0)), `${M(3)}-14`)
+  eq('a quarterly one, the same way', F.nextOccurrence(quarterly, M(0)), `${M(2)}-20`)
+  eq('a monthly line is simply this month', F.nextOccurrence(monthly, M(0)), `${M(0)}-01`)
+
+  // A day the month is too short for lands on its last day rather than rolling over.
+  const late = line({ id: 'r4', label: 'Odd', amount: 10, flow: 'expense', category: 'Fees', dayOfMonth: 31 })
+  const feb = F.nextOccurrence(late, '2027-02')
+  eq('a 31st in a short month clamps to its end', feb, '2027-02-28')
+
+  // A pot started from that line carries its figures and stays linked.
+  const d = base({
+    recurring: [annual],
+    provisions: [{
+      id: 'p1', label: 'Home insurance', category: 'Insurance', targetAmount: 900,
+      dueDate: `${M(3)}-14`, createdAt: `${M(0)}-01`, plannedLineId: 'r1',
+    }],
+  })
+  const st = P.provisionStatus(d, d.provisions[0])
+  eq('the pot names the plan line it is saving for', st.plannedLineId, 'r1')
+  eq('… targets what that line costs', st.targetAmount, 900)
+  eq('… and paces itself to the date it lands', st.suggestedMonthly, 300)
+
+  // It is an ordinary provision in every other respect: the transfer plan asks
+  // for it, the pots check counts it, allocations fill it.
+  const plan = U.fundingPlan(d, M(0), `${M(0)}-15`)
+  eq('the monthly transfer asks for its share', plan.total, 300)
+  const funded = base({
+    ...d,
+    transactions: [tx({
+      date: `${M(0)}-05`, description: 'To pot', amount: -300, category: 'Savings',
+      provisionAllocations: [{ provisionId: 'p1', amount: 300, role: 'contribution' }],
+    })],
+  })
+  eq('money paid in lands in it like any other pot', P.provisionStatus(funded, funded.provisions[0]).funded, 300)
+  eq('… and counts as money set aside for the month', F.computeReview(funded, M(0)).setAside, 300)
+}
+
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')
 {
   const d = base({

@@ -177,6 +177,13 @@ export interface Provision {
   startDate?: string
   createdAt: string
   /**
+   * The plan line this pot is saving for, when it was created from one. A
+   * recurring cost that lands as a lump — an annual premium, a quarterly tax —
+   * is exactly what a provision is for, and naming the line keeps the two from
+   * drifting apart once the amount or the date changes in the plan.
+   */
+  plannedLineId?: string
+  /**
    * ISO date this provision was closed — used for its purpose and put away.
    * A closed provision drops out of the plan's active list and stops asking
    * for money, but its history stays intact and it can be reopened.

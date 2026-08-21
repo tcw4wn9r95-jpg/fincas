@@ -119,6 +119,25 @@ export function itemAmountForMonth(item: RecurringItem, month: string): number {
   return itemBaseAmountForMonth(item, month)
 }
 
+/**
+ * The next date a plan line actually lands, from `fromMonth` onward — the due
+ * date a provision saving for it should carry. An annual premium three months
+ * out is what makes provisioning worth doing at all, so this looks ahead far
+ * enough to find one.
+ */
+export function nextOccurrence(item: RecurringItem, fromMonth = currentMonth()): string | undefined {
+  for (let i = 0; i < 36; i++) {
+    const m = addMonths(fromMonth, i)
+    if (itemAmountForMonth(item, m) <= 0.005) continue
+    const [y, mm] = m.split('-').map(Number)
+    const last = new Date(y, mm, 0).getDate()
+    const wanted = item.dayOfMonth ?? Number(item.startDate.slice(8, 10)) ?? 1
+    const day = Math.min(Math.max(1, wanted || 1), last)
+    return `${m}-${String(day).padStart(2, '0')}`
+  }
+  return undefined
+}
+
 /** Cash accounts hold money; a card holds a debt. Absent kind is cash. */
 export function isCardAccount(a: Account): boolean {
   return a.kind === 'card'

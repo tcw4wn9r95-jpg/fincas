@@ -169,6 +169,8 @@ export interface ProvisionStatus {
   overdrawn: number
   /** Set once the provision has been used for its purpose and closed. */
   closedAt?: string
+  /** The plan line this pot is saving for, when it was started from one. */
+  plannedLineId?: string
 }
 
 /** A provision's accrued balance and progress, derived live from tagged transactions. */
@@ -221,6 +223,7 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
     suggestedMonthly,
     overdrawn,
     closedAt: p.closedAt,
+    plannedLineId: p.plannedLineId,
   }
 }
 
