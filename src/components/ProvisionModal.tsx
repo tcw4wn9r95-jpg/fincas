@@ -117,7 +117,6 @@ export function ProvisionModal({
   onSave,
   onClose,
   emergency,
-  eventFunds,
   events = [],
 }: {
   tx: Transaction
@@ -133,15 +132,8 @@ export function ProvisionModal({
   onSave: (allocations: ProvisionAllocation[], eventId: string | undefined) => void
   onClose: () => void
   emergency: EmergencyFundStatus
-  /** Trips and parties this spend could belong to. */
+  /** Trips and parties this spend could belong to, and the pots they save into. */
   events?: SpecialEvent[]
-  /**
-   * Pot id → the event it is saving for. An event's fund is an ordinary
-   * provision, which makes it indistinguishable here from a pot for the car —
-   * so putting money towards a trip you have not taken yet looked like
-   * provisioning for something else entirely.
-   */
-  eventFunds?: Record<string, string>
 }) {
   const total = round2(Math.abs(tx.amount))
 
@@ -204,6 +196,38 @@ export function ProvisionModal({
     [events, tx.date],
   )
 
+  /**
+   * Pot id → the event it saves for. An event's fund is an ordinary provision,
+   * which makes it indistinguishable here from a pot for the car — so putting
+   * money towards a trip you have not taken yet looked like provisioning for
+   * something else entirely.
+   */
+  const fundEvent = useMemo(() => {
+    const m = new Map<string, SpecialEvent>()
+    for (const e of events) if (e.provisionId) m.set(e.provisionId, e)
+    return m
+  }, [events])
+  const statusById = useMemo(() => new Map(provisions.map((p) => [p.id, p])), [provisions])
+
+  /**
+   * An event's pot rises to the top when this transaction plausibly concerns
+   * it: the spend is already tagged to the event, or it happened while the
+   * event was running, or the event is still ahead and you are putting money
+   * away for it. A sinking fund only matters in the run-up and the week itself
+   * — the rest of the year it can sit in the list with everything else.
+   */
+  const orderedAllocatable = useMemo(() => {
+    const rank = (p: ProvisionStatus) => {
+      const e = fundEvent.get(p.id)
+      if (!e) return 2
+      if (e.id === eventId || during(e)) return 0
+      // Saving up only makes sense before it happens.
+      return !pulling && tx.date <= e.endDate ? 1 : 2
+    }
+    return [...allocatable].sort((a, b) => rank(a) - rank(b))
+    // `during` reads only tx.date, which cannot change while this is open.
+  }, [allocatable, fundEvent, eventId, pulling, tx.date])
+
   const rowIds = useMemo(() => [...allocatable.map((p) => p.id), EMERGENCY_FUND_ID], [allocatable])
   const allocated = useMemo(
     () =>
@@ -229,6 +253,19 @@ export function ProvisionModal({
   function useRest(id: string) {
     const current = Math.max(0, parseAmount(amounts[id] ?? '') || 0)
     setAmount(id, String(round2(current + Math.max(0, remaining))))
+  }
+
+  /**
+   * Jump from "this belongs to the trip" to "and the trip's pot paid for it".
+   * The two are one decision on the day it happens, and making the user find
+   * the other tab, remember which pot, and type the figure again is three
+   * chances to not bother.
+   */
+  function payFromFund(potId: string, available: number) {
+    const left = Math.max(0, remaining)
+    setDirection('drawdown')
+    setTab('drawdown')
+    setAmount(potId, String(round2(available > 0.005 ? Math.min(left, available) : left)))
   }
 
   /** Pre-fill a row with what this provision needs (or holds), capped by what's left. */
@@ -359,35 +396,73 @@ export function ProvisionModal({
                 </button>
                 {orderedEvents.map((e) => {
                   const picked = eventId === e.id
+                  const fund = e.provisionId ? statusById.get(e.provisionId) : undefined
                   return (
-                    <button
-                      key={e.id}
-                      className={classNames(
-                        'w-full text-left rounded-xl border p-3.5 transition',
-                        picked ? 'border-forest/40 bg-forest-tint/20' : 'border-line hover:bg-canvas',
-                      )}
-                      onClick={() => setEventId(e.id)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-medium break-words">{e.label}</div>
-                          <div className="text-xs text-muted">
-                            {e.startDate} → {e.endDate} · {fx(e.budget)} budget
+                    <div key={e.id}>
+                      <button
+                        className={classNames(
+                          'w-full text-left rounded-xl border p-3.5 transition',
+                          picked
+                            ? 'border-forest/40 bg-forest-tint/20'
+                            : 'border-line hover:bg-canvas',
+                        )}
+                        onClick={() => setEventId(e.id)}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-medium break-words">{e.label}</div>
+                            <div className="text-xs text-muted">
+                              {e.startDate} → {e.endDate} · {fx(e.budget)} budget
+                              {fund ? ` · ${fx(fund.funded)} set aside` : ''}
+                            </div>
                           </div>
+                          {/* Says plainly when a spend sits outside the dates —
+                              a deposit paid early still belongs to the trip, but
+                              picking one by accident should be obvious. */}
+                          <span
+                            className={classNames(
+                              'pill shrink-0',
+                              during(e) ? 'bg-forest-tint text-forest' : 'bg-canvas text-muted',
+                            )}
+                          >
+                            {during(e) ? 'during' : 'other dates'}
+                          </span>
                         </div>
-                        {/* Says plainly when a spend sits outside the dates —
-                            a deposit paid early still belongs to the trip, but
-                            picking one by accident should be obvious. */}
-                        <span
-                          className={classNames(
-                            'pill shrink-0',
-                            during(e) ? 'bg-forest-tint text-forest' : 'bg-canvas text-muted',
+                      </button>
+
+                      {/* The point of having provisioned for it. Filing the
+                          spend under the event says what it was for; this says
+                          where the money came from, and the two are one thought
+                          on the day rather than two trips through the pop-up. */}
+                      {picked && fund && (
+                        <div className="mt-1.5 rounded-xl border border-forest/25 bg-forest-tint/10 p-3">
+                          {fund.funded > 0.005 ? (
+                            <>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-sm">
+                                  {fx(fund.funded)} saved up for this
+                                </span>
+                                <button
+                                  className="btn-subtle text-xs shrink-0"
+                                  onClick={() => payFromFund(fund.id, fund.funded)}
+                                >
+                                  Pay for this out of it
+                                </button>
+                              </div>
+                              <p className="text-xs text-muted mt-1">
+                                Takes {fx(Math.min(total, fund.funded))} out of the pot instead of
+                                letting it land on this month.
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-xs text-muted">
+                              Its pot is empty, so this comes out of the month. Put money in from
+                              the “Set aside” tab next time a transfer comes through.
+                            </p>
                           )}
-                        >
-                          {during(e) ? 'during' : 'other dates'}
-                        </span>
-                      </div>
-                    </button>
+                        </div>
+                      )}
+                    </div>
                   )
                 })}
               </>
@@ -398,7 +473,7 @@ export function ProvisionModal({
                 No provisions yet — add one in your plan, or send this to the emergency fund.
               </p>
             )}
-            {allocatable.map((p) => {
+            {orderedAllocatable.map((p) => {
               const raw = amounts[p.id] ?? ''
               const value = Math.max(0, parseAmount(raw) || 0)
               const active = value > 0
@@ -421,13 +496,21 @@ export function ProvisionModal({
                             two usually read the same — "Lisbon tripLisbon
                             trip" says nothing twice. Name the event only when
                             it is not already the name on the row. */}
-                        {eventFunds?.[p.id] && (
-                          <span className="ml-1.5 pill bg-forest-tint text-forest align-middle">
-                            {eventFunds[p.id].trim().toLowerCase() === p.label.trim().toLowerCase()
-                              ? 'event fund'
-                              : `for ${eventFunds[p.id]}`}
-                          </span>
-                        )}
+                        {(() => {
+                          const ev = fundEvent.get(p.id)
+                          if (!ev) return null
+                          const sameName =
+                            ev.label.trim().toLowerCase() === p.label.trim().toLowerCase()
+                          return (
+                            <span className="ml-1.5 pill bg-forest-tint text-forest align-middle">
+                              {ev.id === eventId
+                                ? 'this event’s fund'
+                                : sameName
+                                  ? 'event fund'
+                                  : `for ${ev.label}`}
+                            </span>
+                          )
+                        })()}
                       </div>
                       <div className="text-xs text-muted">
                         {pulling

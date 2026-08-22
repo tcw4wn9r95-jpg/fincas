@@ -106,16 +106,9 @@ export function MoneyDate({
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
-  // Which pots are a trip's fund, so allocating to one says so.
+  // Event id → name, so a tagged row says which trip it belongs to.
   const eventLabels = useMemo(
     () => Object.fromEntries((data.events ?? []).map((e) => [e.id, e.label])),
-    [data.events],
-  )
-  const eventFunds = useMemo(
-    () =>
-      Object.fromEntries(
-        (data.events ?? []).filter((e) => e.provisionId).map((e) => [e.provisionId!, e.label]),
-      ),
     [data.events],
   )
   const emergency = useMemo(() => emergencyFundStatus(data), [data])
@@ -1168,7 +1161,6 @@ export function MoneyDate({
           emergency={emergency}
           currency={currency}
           locale={locale}
-          eventFunds={eventFunds}
           events={data.events ?? []}
           onSave={(allocations, eventId) => {
             setTxAllocations(provisioningTx.id, allocations)

@@ -4,12 +4,15 @@ import { CATEGORIES } from '../lib/categorize'
 import {
   allEventStatuses,
   eventCandidates,
+  eventProvision,
+  eventProvisionDraft,
   eventStatus,
   eventTransactions,
   pendingExpenses,
   tagTransactionToEvent,
   type EventStatus,
 } from '../lib/events'
+import { provisionStatus, type ProvisionStatus } from '../lib/provisions'
 import { formatMoney, classNames, parseAmount, todayISO, uid } from '../lib/format'
 import type { EventKind, SpecialEvent, Transaction } from '../lib/types'
 import { IconPlus, IconTrash, IconCheck, IconEvent, IconClose } from './icons'
@@ -99,16 +102,7 @@ export function Events() {
       d.events = [...(d.events ?? []), event]
       // The sinking fund is an ordinary provision — it shows up in the plan and
       // takes allocations through the same pop-up as every other pot.
-      if (provisionId) {
-        d.provisions.push({
-          id: provisionId,
-          label: draft.label,
-          category: draft.category,
-          targetAmount: draft.budget,
-          dueDate: draft.startDate,
-          createdAt: today,
-        })
-      }
+      if (provisionId) d.provisions.push(eventProvisionDraft(draft, provisionId, today))
       return d
     })
     setCreating(false)
@@ -128,6 +122,52 @@ export function Events() {
         if (fields.startDate) p.dueDate = fields.startDate
         if (fields.category) p.category = fields.category
       }
+      return d
+    })
+  }
+
+  /**
+   * Start provisioning for an event that hasn't got a fund — one created with
+   * the box unticked, or created before you decided to save up for it. Nothing
+   * else about the event changes: it simply gains a pot, and every other part
+   * of the loop already knows what to do with one.
+   */
+  function startFund(id: string) {
+    update((d) => {
+      const e = d.events?.find((x) => x.id === id)
+      if (!e || eventProvision(d, e)) return d
+      const provisionId = uid()
+      e.provisionId = provisionId
+      d.provisions.push(eventProvisionDraft(e, provisionId, today))
+      return d
+    })
+  }
+
+  /**
+   * Stop saving for it. An untouched pot goes away entirely rather than
+   * loitering in the plan asking for money nobody wants to give it; a pot with
+   * something in it stays, because money already set aside is real and
+   * unlinking must not quietly spend it.
+   */
+  function stopFund(id: string) {
+    const e = data.events?.find((x) => x.id === id)
+    const fund = e ? eventProvision(data, e) : undefined
+    if (!e || !fund) return
+    const funded = provisionStatus(data, fund).funded
+    if (
+      funded > 0.005 &&
+      !confirm(
+        `Stop provisioning for "${e.label}"? The ${formatMoney(funded, currency, locale)} already ` +
+          'set aside stays in your plan as a provision of its own — it just stops being this event’s fund.',
+      )
+    )
+      return
+    update((d) => {
+      const ev = d.events?.find((x) => x.id === id)
+      if (!ev) return d
+      const potId = ev.provisionId
+      ev.provisionId = undefined
+      if (potId && funded <= 0.005) d.provisions = d.provisions.filter((p) => p.id !== potId)
       return d
     })
   }
@@ -192,6 +232,12 @@ export function Events() {
         onBack={() => setOpenId(null)}
         onEdit={(fields) => editEvent(open.id, fields)}
         onRemove={() => removeEvent(open.id)}
+        fund={(() => {
+          const p = eventProvision(data, open)
+          return p ? provisionStatus(data, p) : undefined
+        })()}
+        onStartFund={() => startFund(open.id)}
+        onStopFund={() => stopFund(open.id)}
         onLog={(x) => logExpense(open.id, x)}
         onRemoveExpense={(x) => removeExpense(open.id, x)}
         onTag={(txId, tagged) => tagTransaction(open.id, txId, tagged)}
@@ -418,7 +464,7 @@ function NewEventForm({
           onChange={(e) => setProvision(e.target.checked)}
         />
         <span className="text-sm">
-          <span className="font-medium">Set money aside for it</span>
+          <span className="font-medium">Provision for this</span>
           <span className="block text-muted text-xs mt-0.5">
             Creates a provision due{' '}
             {startDate
@@ -473,6 +519,9 @@ function EventDetail({
   onTag,
   candidates,
   tagged,
+  fund,
+  onStartFund,
+  onStopFund,
 }: {
   event: SpecialEvent
   status: EventStatus
@@ -481,6 +530,10 @@ function EventDetail({
   onBack: () => void
   onEdit: (fields: Partial<SpecialEvent>) => void
   onRemove: () => void
+  /** The pot this event saves into, when it has one. */
+  fund?: ProvisionStatus
+  onStartFund: () => void
+  onStopFund: () => void
   onLog: (x: { date: string; label: string; amount: number; category: string }) => void
   onRemoveExpense: (id: string) => void
   onTag: (txId: string, tagged: boolean) => void
@@ -565,16 +618,89 @@ function EventDetail({
             </span>
           )}
         </div>
-        {status.hasProvision && status.setAside < 0.005 && (
-          <p className="text-xs text-muted mt-2">
-            Nothing set aside yet — its provision is waiting in your plan, so allocate to it next
-            time you reconcile a transfer.
-          </p>
-        )}
         {status.hasProvision && status.setAside >= 0.005 && status.setAside < status.spent && (
           <p className="text-xs text-muted mt-2">
             {fx(status.spent - status.setAside)} of this came from the month rather than the money
             you set aside.
+          </p>
+        )}
+      </div>
+
+      {/* Provisioning for it — the money side, kept apart from the spending
+          side above so the two questions ("what has it cost" and "have I saved
+          for it") don't have to be read out of the same row of figures. */}
+      <div className="card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-lg">Provisioning for it</h3>
+            <p className="text-sm text-muted">
+              {fund
+                ? 'Its own pot in your plan. Put money in when you reconcile, then pay for the event out of it when it happens.'
+                : 'Not saving for this one yet — it comes out of whichever month it lands in.'}
+            </p>
+          </div>
+          {fund ? (
+            <button className="btn-subtle text-xs shrink-0" onClick={onStopFund}>
+              Stop provisioning
+            </button>
+          ) : (
+            <button className="btn-primary shrink-0" onClick={onStartFund}>
+              Provision for this
+            </button>
+          )}
+        </div>
+
+        {fund ? (
+          <div className="mt-4 space-y-2">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                {/* Before it happens the question is "have I saved enough";
+                    after, it is "how much of this did the pot actually pay
+                    for". Same two numbers, and reading them the wrong way
+                    round is how a pot that did its job reads as one that was
+                    never funded. */}
+                <div className="label">
+                  {status.phase === 'upcoming' ? 'Set aside' : 'Left in the pot'}
+                </div>
+                <div className="stat-value tabular-nums text-forest">{fx(fund.funded)}</div>
+              </div>
+              <div className="text-right">
+                <div className="label">
+                  {status.phase === 'upcoming' ? 'Still to save' : 'Paid out of it'}
+                </div>
+                <div className="stat-value tabular-nums">
+                  {status.phase === 'upcoming'
+                    ? fx(Math.max(0, fund.targetAmount - fund.funded))
+                    : fx(fund.drawn)}
+                </div>
+              </div>
+            </div>
+            <div className="h-2 rounded-full bg-line overflow-hidden">
+              <div className="h-full bg-forest rounded-full" style={{ width: `${fund.pct}%` }} />
+            </div>
+            <p className="text-xs text-muted">
+              {status.phase !== 'upcoming'
+                ? fund.drawn > 0.005
+                  ? `${fx(fund.drawn)} of what it cost came out of this pot rather than out of the month.`
+                  : `${fx(fund.funded)} is sitting there for it — reconcile what you spent with “Pull from savings” so it comes out of here.`
+                : fund.funded >= fund.targetAmount - 0.005
+                  ? 'Fully funded — the whole budget is already waiting for it.'
+                  : fund.suggestedMonthly && fund.suggestedMonthly > 0
+                    ? `${fx(fund.suggestedMonthly)} a month gets there by the time it starts. Allocate to it from the “Set aside” tab next time you reconcile a transfer.`
+                    : 'Allocate to it from the “Set aside” tab next time you reconcile a transfer.'}
+            </p>
+            {fund.overdrawn > 0.005 && (
+              <p className="text-xs text-clay">
+                {fx(fund.overdrawn)} more has come out than ever went in — that part was paid by the
+                month, not by this pot.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted mt-3">
+            Starting one creates a provision in your plan for {fx(status.budget)}, due{' '}
+            {shortRange(event.startDate, event.startDate, locale)}. You can then put money towards
+            it whenever you reconcile, and draw it back out when the time comes.
           </p>
         )}
       </div>

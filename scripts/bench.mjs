@@ -1455,6 +1455,69 @@ console.log('\n── U. Investments is its own category, and it counts as provi
   ok('… and not as variable spend to pace against', !F.isVariableExpense(item))
 }
 
+console.log('\n── AF. Provisioning for an event, then spending the pot ──')
+{
+  const ev = {
+    id: 'e1', label: 'Lisbon trip', kind: 'travel',
+    startDate: `${M(1)}-05`, endDate: `${M(1)}-09`,
+    budget: 900, category: 'Travel', expenses: [], createdAt: `${M(-2)}-01`,
+  }
+
+  const fund = EV.eventProvisionDraft(ev, 'pv', `${M(-2)}-01`)
+  eq('the pot is named after the event', fund.label, 'Lisbon trip')
+  eq('… targets the whole budget', fund.targetAmount, 900)
+  eq('… and is due the day it starts, not the day it ends', fund.dueDate, `${M(1)}-05`)
+  eq('… under the category the event spends in', fund.category, 'Travel')
+
+  // Two months of putting money away, through the ordinary allocation pop-up.
+  const d = base({
+    provisions: [fund],
+    events: [{ ...ev, provisionId: 'pv' }],
+    transactions: [
+      tx({
+        id: 't1', date: `${M(-2)}-28`, description: 'To savings', amount: -300, category: 'Internal',
+        provisionAllocations: [{ provisionId: 'pv', amount: 300, role: 'contribution' }],
+      }),
+      tx({
+        id: 't2', date: `${M(-1)}-28`, description: 'To savings', amount: -300, category: 'Internal',
+        provisionAllocations: [{ provisionId: 'pv', amount: 300, role: 'contribution' }],
+      }),
+    ],
+  })
+  const saving = EV.eventStatus(d, d.events[0], `${M(0)}-01`)
+  ok('the event knows it has a fund', saving.hasProvision)
+  eq('… and what is in it', saving.setAside, 600)
+  eq('the pot paces the rest over the months left', P.provisionStatus(d, fund).suggestedMonthly, 300)
+
+  // The trip happens. The hotel is trip spending and money out of the pot at
+  // once — one transaction answering both questions, which is the whole reason
+  // the allocation pop-up asks them together.
+  const spent = base({
+    ...d,
+    transactions: [
+      ...d.transactions,
+      tx({
+        id: 't3', date: `${M(1)}-06`, description: 'Hotel Lisboa', amount: -600, category: 'Travel',
+        eventId: 'e1',
+        provisionAllocations: [{ provisionId: 'pv', amount: 600, role: 'drawdown' }],
+      }),
+    ],
+  })
+  const st = EV.eventStatus(spent, spent.events[0], `${M(1)}-07`)
+  eq('the spend counts against the event budget', st.spent, 600)
+  eq('… and comes back out of the pot', P.provisionStatus(spent, fund).funded, 0)
+  const r = F.computeReview(spent, M(1))
+  eq('the month it lands in is not charged for it', r.expenses, 0)
+  eq('… it is reported as a bill the provision paid', r.provisionedSpend, 600)
+  eq('… so a trip saved for over months does not sink the month it happens in', r.net, 0)
+
+  // Unlinking, or deleting the pot from the plan, leaves the event standing.
+  const orphan = base({ ...d, provisions: [] })
+  const without = EV.eventStatus(orphan, orphan.events[0], `${M(0)}-01`)
+  ok('a fund deleted from the plan stops counting as one', !without.hasProvision)
+  eq('… and nothing is claimed to be set aside', without.setAside, 0)
+}
+
 console.log('\n── S. The assistant reads individual transactions, not just totals ──')
 {
   const d = base({

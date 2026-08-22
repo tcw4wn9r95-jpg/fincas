@@ -1,4 +1,4 @@
-import type { AppData, EventExpense, SpecialEvent, Transaction } from './types'
+import type { AppData, EventExpense, Provision, SpecialEvent, Transaction } from './types'
 import { provisionStatus } from './provisions'
 
 // Special events (a trip, a party) are budgeted as a lump and spent in a burst.
@@ -56,6 +56,43 @@ export function eventBudgetForMonth(
   const total = daysBetween(e.startDate, e.endDate) + 1
   if (total <= 0 || here <= 0) return 0
   return round2((e.budget * here) / total)
+}
+
+/**
+ * The sinking fund an event saves into. It is an ordinary `Provision` on
+ * purpose — that is what lets it show up in the plan, take money through the
+ * same allocation pop-up as every other pot, and be drawn down when the trip
+ * finally happens — so this only pins the handful of fields that have to agree
+ * with the event they belong to.
+ *
+ * Shared rather than written out at each call site: a fund started later from
+ * the event screen must be indistinguishable from one created alongside the
+ * event, and the way you end up with a pot due on the wrong day is by building
+ * it twice.
+ */
+export function eventProvisionDraft(
+  e: Pick<SpecialEvent, 'label' | 'category' | 'budget' | 'startDate'>,
+  id: string,
+  createdAt: string,
+): Provision {
+  return {
+    id,
+    label: e.label,
+    category: e.category,
+    targetAmount: e.budget,
+    // Due the day it starts. The money has to be there before the first
+    // night's hotel, not by the time you get home.
+    dueDate: e.startDate,
+    createdAt,
+  }
+}
+
+/** The pot an event saves into, if it asked for one and it still exists. */
+export function eventProvision(
+  data: AppData,
+  e: Pick<SpecialEvent, 'provisionId'>,
+): Provision | undefined {
+  return e.provisionId ? data.provisions.find((p) => p.id === e.provisionId) : undefined
 }
 
 /** Same spend seen twice — used to keep the weekly sample from double-counting the statement. */
@@ -140,11 +177,8 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
   confirmed = round2(confirmed)
   pending = round2(pending)
   const spent = round2(confirmed + pending)
-  const setAside = e.provisionId
-    ? (data.provisions.find((p) => p.id === e.provisionId)
-        ? provisionStatus(data, data.provisions.find((p) => p.id === e.provisionId)!).funded
-        : 0)
-    : 0
+  const fund = eventProvision(data, e)
+  const setAside = fund ? provisionStatus(data, fund).funded : 0
 
   const phase: EventPhase = today < e.startDate ? 'upcoming' : today > e.endDate ? 'past' : 'live'
 
@@ -163,7 +197,7 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
     pct: e.budget > 0 ? Math.round((spent / e.budget) * 100) : 0,
     over: spent > e.budget + 0.005,
     setAside,
-    hasProvision: !!e.provisionId && data.provisions.some((p) => p.id === e.provisionId),
+    hasProvision: !!fund,
     phase,
     daysToStart: daysBetween(today, e.startDate),
     byCategory: Array.from(byCat.entries())
