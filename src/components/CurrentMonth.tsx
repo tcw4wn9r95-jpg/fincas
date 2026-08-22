@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import {
+  assumptionKey,
   computeMonthPulse,
   monthPulseText,
-  autoPayTransactions,
-  plannedPayment,
   type DuplicatePair,
-  type PendingBill,
 } from '../lib/month'
 import { monthsWithData } from '../lib/forecast'
 import { eventsInRange } from '../lib/events'
@@ -123,54 +121,39 @@ export function CurrentMonth({
     setDraft({ description: '', amount: '', category: draft.category, date })
   }
 
-  // Fixed costs leave whether or not anyone remembers them, so the month starts
-  // with them already counted rather than listing them for a whole month
-  // waiting to be ticked off. Written once per month: the rows satisfy the same
-  // "has this line arrived" test that selected them, so this settles on the
-  // next pass. Only ever for the month being lived in — browsing back to March
-  // should not invent transactions in it.
-  const autoPaidFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (activeMonth !== currentMonth() || autoPaidFor.current === activeMonth) return
-    const rows = autoPayTransactions(data, activeMonth)
-    autoPaidFor.current = activeMonth
-    if (!rows.length) return
+  /**
+   * Count a planned bill as settled. A note against the budget pocket, not a
+   * transaction: nothing is invented that a statement could later be asked to
+   * confirm, and the moment a real charge answers to the line the pocket is
+   * filled by the charge instead.
+   */
+  function markPaid(lineId: string, amount: number) {
     update((d) => {
-      // Re-checked inside the update: two renders could otherwise each decide
-      // the same bill was missing and write it twice.
-      const already = new Set(
-        d.transactions.filter((t) => t.month === activeMonth && t.plannedLineId).map((t) => t.plannedLineId),
-      )
-      d.transactions.push(...rows.filter((r) => !already.has(r.plannedLineId)))
-      return d
-    })
-  }, [data, activeMonth, update])
-
-  /** Tick a planned bill off by hand — the same row auto-pay would have written. */
-  function markPaid(bill: PendingBill) {
-    const item = data.recurring.find((r) => r.id === bill.id)
-    if (!item) return
-    const tx = plannedPayment(data, item, activeMonth)
-    if (!tx) return
-    update((d) => {
-      d.transactions.push(tx)
+      const key = assumptionKey(activeMonth, lineId)
+      d.assumedPaid = { ...(d.assumedPaid ?? {}), [key]: Math.abs(amount) }
+      d.autoPaySkips = (d.autoPaySkips ?? []).filter((k) => k !== key)
       return d
     })
   }
 
   /**
-   * Removing a stand-in the app wrote has to stick, or deleting it is only
-   * temporary: the next visit would find the bill missing and assume it paid
-   * all over again. The line goes back to the waiting list, where it can be
-   * ticked off by hand if it does turn up.
+   * Take the assumption back. A fixed cost would otherwise reassume itself on
+   * the next render — it is counted by default — so saying no has to be
+   * recorded, not merely done.
    */
+  function unassume(lineId: string) {
+    update((d) => {
+      const key = assumptionKey(activeMonth, lineId)
+      const next = { ...(d.assumedPaid ?? {}) }
+      delete next[key]
+      d.assumedPaid = next
+      d.autoPaySkips = Array.from(new Set([...(d.autoPaySkips ?? []), key]))
+      return d
+    })
+  }
+
   function removeTx(id: string) {
     update((d) => {
-      const t = d.transactions.find((x) => x.id === id)
-      if (t?.plannedLineId) {
-        const key = `${t.month}:${t.plannedLineId}`
-        d.autoPaySkips = Array.from(new Set([...(d.autoPaySkips ?? []), key]))
-      }
       d.transactions = d.transactions.filter((x) => x.id !== id)
       return d
     })
@@ -284,13 +267,8 @@ export function CurrentMonth({
             {pulse.duplicates.length} {pulse.duplicates.length === 1 ? 'spend is' : 'spends are'} counted twice
           </h3>
           <p className="text-sm text-muted mb-3">
-            An import has brought in the real version of{' '}
-            {pulse.duplicates.every((p) => p.kind === 'assumed')
-              ? 'bills this month had assumed were paid'
-              : pulse.duplicates.every((p) => p.kind === 'logged')
-                ? 'spends you logged by hand'
-                : 'spends that were already standing in for them'}
-            . Both are counting, so the month is overstated by{' '}
+            An import has brought in the real version of spends you logged by hand. Both are counting, so
+            the month is overstated by{' '}
             {fx(pulse.duplicates.reduce((s, p) => s + Math.abs(p.manual.amount), 0))} until you pick one.
           </p>
           <div className="space-y-2">
@@ -302,10 +280,7 @@ export function CurrentMonth({
                 <div className="grid gap-1 mb-2.5">
                   <div className="flex items-baseline justify-between gap-3 text-sm">
                     <span className="min-w-0 break-words">
-                      <span className="text-muted text-xs">
-                        {p.kind === 'assumed' ? 'assumed · ' : 'yours · '}
-                        {p.manual.date.slice(5)}{' '}
-                      </span>
+                      <span className="text-muted text-xs">yours · {p.manual.date.slice(5)} </span>
                       {p.manual.description}
                     </span>
                     <span className="tabular-nums shrink-0">{fx(Math.abs(p.manual.amount))}</span>
@@ -323,7 +298,7 @@ export function CurrentMonth({
                     <IconCheck width={14} height={14} /> Keep the statement
                   </button>
                   <button className="btn-subtle text-xs" onClick={() => resolveDuplicate(p, 'manual')}>
-                    {p.kind === 'assumed' ? 'Keep the assumed one' : 'Keep mine'}
+                    Keep mine
                   </button>
                   <button
                     className="btn-subtle text-xs"
@@ -345,9 +320,10 @@ export function CurrentMonth({
           value={fx(pulse.spent)}
           tone={overPace ? 'warn' : 'default'}
           sub={
-            pulse.plannedSpend > 0
+            (pulse.plannedSpend > 0
               ? `of ${fx(pulse.plannedSpend)} planned · day ${pulse.daysElapsed} of ${pulse.daysTotal}`
-              : `${pulse.daysElapsed} of ${pulse.daysTotal} days in`
+              : `${pulse.daysElapsed} of ${pulse.daysTotal} days in`) +
+            (pulse.assumedTotal > 0.5 ? ` · ${fx(pulse.assumedTotal)} of it assumed` : '')
           }
         />
         <Stat
@@ -474,12 +450,11 @@ export function CurrentMonth({
         {pulse.manualTxs.length > 0 && (
           <div className="mt-4 pt-4 border-t border-line space-y-1.5">
             <div className="label mb-1">
-              Logged or assumed this month ·{' '}
+              Logged this month ·{' '}
               {fx(pulse.manualTxs.reduce((s, t) => s + Math.abs(Math.min(0, t.amount)), 0))}
             </div>
-            {/* Every field here is editable. An assumed row is the app's guess
-                at a bill it has not seen, and a guess you cannot correct is
-                worse than no guess at all. */}
+            {/* Every field stays editable — a spend typed at the till is a
+                guess about a receipt you no longer have. */}
             {pulse.manualTxs.map((t) => (
               <div key={t.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm py-1.5 border-b border-line/40 last:border-0">
                 <input
@@ -495,14 +470,6 @@ export function CurrentMonth({
                   defaultValue={t.description}
                   onBlur={(e) => editTx(t.id, { description: e.target.value.trim() || t.description })}
                 />
-                {t.plannedLineId && (
-                  <span
-                    className="pill bg-gold/15 text-gold shrink-0"
-                    title="Counted from your plan, not seen on a statement yet — correct it or remove it if it's wrong"
-                  >
-                    assumed
-                  </span>
-                )}
                 {t.notDuplicate && (
                   <button
                     className="pill bg-canvas text-muted shrink-0 hover:text-ink"
@@ -539,7 +506,7 @@ export function CurrentMonth({
                   className="text-muted hover:text-clay shrink-0"
                   onClick={() => removeTx(t.id)}
                   aria-label={`Delete ${t.description}`}
-                  title={t.plannedLineId ? "Remove it — it won't be assumed again this month" : 'Delete'}
+                  title="Delete"
                 >
                   <IconTrash width={15} height={15} />
                 </button>
@@ -550,7 +517,7 @@ export function CurrentMonth({
       </div>
 
       {/* ── Variable spending ── */}
-      {(variableRows.length > 0 || pulse.pending.length > 0) && (
+      {(variableRows.length > 0 || pulse.pending.length > 0 || pulse.assumed.length > 0) && (
         <div className="card p-5">
           <h3 className="text-lg">Variable spending</h3>
           <p className="text-sm text-muted mb-3">
@@ -611,23 +578,77 @@ export function CurrentMonth({
                 {pulse.pending.map((b) => (
                   <div
                     key={b.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-line bg-canvas px-4 py-2"
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-lg border border-line bg-canvas px-4 py-2"
                   >
                     <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">{b.label}</div>
+                      <div className="text-sm font-medium break-words">{b.label}</div>
                       <div className="text-xs text-muted">
                         {b.category} · usually around the {b.typicalDay}
                         {b.overdue && <span className="text-clay"> · that day has passed</span>}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-3 shrink-0 ml-auto">
                       <span className="tabular-nums text-sm">{fx(b.amount)}</span>
                       <button
                         className="btn-subtle text-xs"
-                        onClick={() => markPaid(b)}
+                        onClick={() => markPaid(b.id, b.amount)}
                         title={`Count ${b.label} as paid at ${fx(b.amount)} on the ${b.typicalDay}`}
                       >
                         <IconCheck width={14} height={14} /> Mark as paid
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Pockets the month counts as filled without a statement to prove
+              it. Kept visibly apart from everything above: a figure taken on
+              trust that reads exactly like an observed one is how a guess ends
+              up quoted back as a fact. */}
+          {pulse.assumed.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-line">
+              <div className="label mb-2">Counted as paid · {fx(pulse.assumedTotal)}</div>
+              <p className="text-xs text-muted mb-2">
+                No statement has shown these yet — they're counted because they always go out. Correct
+                the amount if it was different, or take one back if it hasn't left.
+              </p>
+              <div className="space-y-2">
+                {pulse.assumed.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-lg border border-line bg-canvas px-4 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium break-words">{a.label}</div>
+                      <div className="text-xs text-muted">
+                        {a.category} · around the {a.day} ·{' '}
+                        {a.auto ? 'counted automatically' : 'you marked it paid'}
+                        {Math.abs(a.amount - a.planAmount) > 0.005 && (
+                          <span> · plan says {fx(a.planAmount)}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        className="bg-transparent tabular-nums w-20 text-right text-sm outline-none focus:text-forest border-b border-line focus:border-forest"
+                        aria-label={`Amount counted for ${a.label}`}
+                        defaultValue={a.amount}
+                        onBlur={(e) => {
+                          const v = parseAmount(e.target.value)
+                          if (v && Math.abs(v - a.amount) > 0.005) markPaid(a.id, v)
+                        }}
+                      />
+                      <button
+                        className="text-muted hover:text-clay"
+                        onClick={() => unassume(a.id)}
+                        aria-label={`Stop counting ${a.label} as paid`}
+                        title="It hasn't left yet — put it back on the waiting list"
+                      >
+                        <IconTrash width={15} height={15} />
                       </button>
                     </div>
                   </div>

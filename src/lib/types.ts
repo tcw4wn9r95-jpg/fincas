@@ -89,11 +89,11 @@ export interface Transaction {
   /** Marked true once reviewed/confirmed in the reconcile flow. */
   reconciled?: boolean
   /**
-   * Set when this row stands in for a plan line rather than recording something
-   * observed: a fixed cost assumed paid at the start of the month, or a bill
-   * ticked off by hand on "This month". Names the `RecurringItem` it came from,
-   * so the statement that eventually carries the real charge can replace it
-   * instead of counting alongside it.
+   * Legacy. Marked a row the app wrote from a plan line rather than something
+   * observed — a fixed cost assumed paid, or a bill ticked off by hand. Nothing
+   * writes it any more: an assumption is a note against a budget pocket
+   * (`AppData.assumedPaid`), not a transaction. Read only by `liftStandIns`,
+   * which converts any that survive in saved data and drops the row.
    */
   plannedLineId?: string
   /**
@@ -281,11 +281,26 @@ export interface AppData {
    */
   provisionAccountId?: string
   /**
-   * `month:lineId` for every fixed cost the user removed after the month
-   * assumed it paid. Without this, deleting one only made it come back: the
-   * next visit found the bill missing again and wrote it straight back in.
-   * Deleting is how you say the assumption was wrong, so it has to stick — the
-   * line returns to the waiting list, where it can be ticked off by hand.
+   * Plan lines the month counts as settled without a statement to prove it,
+   * keyed `month:lineId`, valued at what to count — the plan's own figure
+   * unless the real bill turned out to differ.
+   *
+   * This is a note against a budget pocket, not a transaction. Fabricating a
+   * transaction was the earlier design and it put rows named after plan lines
+   * ("Rent", "Netflix") into the reconcile queue, asking the user to confirm
+   * the app's own guess against a statement that never contained it, and
+   * reporting a guess as an actual everywhere a real charge would be counted.
+   *
+   * Superseded by reality without asking: once a charge that answers to the
+   * line shows up, the pocket is filled by the charge and this is ignored, so
+   * the two can never both count.
+   */
+  assumedPaid?: Record<string, number>
+  /**
+   * `month:lineId` for fixed costs the user explicitly un-assumed. Loans,
+   * utilities, insurance and subscriptions are counted as settled by default —
+   * they leave whether or not anyone remembers them — so saying otherwise
+   * needs somewhere to live, or the default would simply reapply itself.
    */
   autoPaySkips?: string[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */

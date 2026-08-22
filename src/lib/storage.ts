@@ -78,17 +78,44 @@ export function repairAllocations(d: AppData): AppData {
   return d
 }
 
+/**
+ * Turn the stand-in transactions an earlier version wrote from plan lines back
+ * into what they always were: a note that a budget pocket is assumed settled.
+ *
+ * They were real rows in `transactions`, which meant they queued up for
+ * reconciliation under the plan line's name, counted as actuals in the money
+ * date, and drew themselves into the Sankey — a guess wearing the clothes of an
+ * observation. Nothing is lost in the conversion: the assumption survives at
+ * the amount it was carrying, including any correction made by hand.
+ */
+export function liftStandIns(d: AppData): AppData {
+  if (!d.transactions.some((t) => t.plannedLineId)) return d
+  const assumed = { ...(d.assumedPaid ?? {}) }
+  for (const t of d.transactions) {
+    if (!t.plannedLineId) continue
+    const key = `${t.month}:${t.plannedLineId}`
+    // A month that somehow carries two rows for one line keeps the larger, so
+    // the conversion can never quietly shrink what was being counted.
+    assumed[key] = Math.max(assumed[key] ?? 0, round2(Math.abs(t.amount)))
+  }
+  d.assumedPaid = assumed
+  d.transactions = d.transactions.filter((t) => !t.plannedLineId)
+  return d
+}
+
 export function loadData(): AppData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return emptyData()
     const parsed = JSON.parse(raw) as AppData
     // Merge in any new default settings keys without clobbering saved ones.
-    return repairAllocations({
-      ...emptyData(),
-      ...parsed,
-      settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
-    })
+    return liftStandIns(
+      repairAllocations({
+        ...emptyData(),
+        ...parsed,
+        settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+      }),
+    )
   } catch {
     return emptyData()
   }

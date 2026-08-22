@@ -1025,7 +1025,7 @@ console.log('\n── X. The month in progress: what is left once what is coming
   ok('an unpaid rent is never offered as movable', !movable.includes('Housing'))
 }
 
-console.log('\n── Y. Fixed costs are assumed paid; the rest get a button ──')
+console.log('\n── Y. A plan line is a pocket, not a transaction ──')
 {
   const today = `${M(0)}-10`
   const d = base({
@@ -1041,75 +1041,112 @@ console.log('\n── Y. Fixed costs are assumed paid; the rest get a button ─
     ],
   })
 
-  const before = MO.computeMonthPulse(d, M(0), today)
-  eq('every planned bill starts out waiting', before.pending.length, 5)
+  // Fixed costs are counted from the start of the month without anything being
+  // written into the ledger to make it so.
+  const p0 = MO.computeMonthPulse(d, M(0), today)
   eq(
-    'the four fixed-cost categories are the ones marked automatic',
-    before.pending.filter((b) => b.autoPaid).map((b) => b.category).sort().join(','),
+    'the four fixed-cost categories are counted as paid on their own',
+    p0.assumed.map((a) => a.category).sort().join(','),
     'Insurance,Loans,Subscriptions,Utilities',
   )
-  ok('rent is not', !before.pending.find((b) => b.label === 'Rent').autoPaid)
+  eq('… at their planned size', p0.assumedTotal, 412)
+  ok('… without being asked', p0.assumed.every((a) => a.auto))
+  eq('only the bill with no automatic rule is left waiting', p0.pending.map((b) => b.label).join(','), 'Rent')
+  eq('what is assumed counts as spent', p0.spent, 412)
+  eq('… and fills its own category pocket', p0.categories.find((c) => c.category === 'Utilities').actual, 60)
+  eq('… leaving that pocket empty', p0.categories.find((c) => c.category === 'Utilities').left, 0)
+  eq('nothing is invented in the ledger to make that true', d.transactions.length, 0)
+  ok('… so no plan line can turn up asking to be reconciled', !d.transactions.some((t) => t.plannedLineId))
 
-  const auto = MO.autoPayTransactions(d, M(0), today)
-  eq('only the fixed costs are written in', auto.map((t) => t.description).sort().join(','), 'Car loan,Electricity,Home insurance,Netflix')
-  eq('… at their planned size, as money out', auto.reduce((s, t) => s + t.amount, 0), -412)
-  eq('… dated the day the plan says they land', auto.find((t) => t.description === 'Electricity').date, `${M(0)}-12`)
-  ok('… and marked as standing in for a plan line', auto.every((t) => t.plannedLineId))
+  // Marking the one manual bill paid is the same kind of note.
+  const paid = base({ ...d, assumedPaid: { [MO.assumptionKey(M(0), 'r6')]: 1200 } })
+  const p1 = MO.computeMonthPulse(paid, M(0), today)
+  eq('marking a bill paid settles its pocket too', p1.pending.length, 0)
+  eq('… and says it was marked rather than assumed', p1.assumed.find((a) => a.label === 'Rent').auto, false)
+  eq('… counting the whole month of bills', p1.spent, 1612)
+  eq('what is free is unchanged — the money was always committed', p1.freeToSpend, p0.freeToSpend)
 
-  const paid = base({ ...d, transactions: auto })
-  const after = MO.computeMonthPulse(paid, M(0), today)
-  eq('they stop waiting to be ticked off', after.pending.map((b) => b.label).join(','), 'Rent')
-  eq('… and count as spent', after.spent, 412)
-  eq('what is free is unchanged — the money was always committed', after.freeToSpend, before.freeToSpend)
-  eq('running it again writes nothing', MO.autoPayTransactions(paid, M(0), today).length, 0)
+  // An assumption is a guess, and a guess can be corrected or taken back.
+  const corrected = base({ ...d, assumedPaid: { [MO.assumptionKey(M(0), 'r3')]: 61.4 } })
+  const p2 = MO.computeMonthPulse(corrected, M(0), today)
+  eq('a corrected assumption counts at the corrected figure', p2.assumedTotal, 413.4)
+  eq('… and still remembers what the plan said', p2.assumed.find((a) => a.label === 'Electricity').planAmount, 60)
+  const skipped = base({ ...d, autoPaySkips: [MO.assumptionKey(M(0), 'r3')] })
+  const p3 = MO.computeMonthPulse(skipped, M(0), today)
+  ok('taking one back stops it being counted', !p3.assumed.some((a) => a.label === 'Electricity'))
+  eq('… and puts it back on the waiting list', p3.pending.filter((b) => b.label === 'Electricity').length, 1)
+  ok('… where it is marked as one that would normally be automatic', p3.pending.find((b) => b.label === 'Electricity').unassumed)
+  eq('… only for the month it was taken back in', MO.computeMonthPulse(skipped, M(1), `${M(1)}-10`).assumedTotal, 412)
 
-  // The button, on the one bill that has no automatic rule.
-  const rentTx = MO.plannedPayment(paid, paid.recurring.find((r) => r.id === 'r6'), M(0))
-  eq('marking rent paid dates it to its own day', rentTx.date, `${M(0)}-03`)
-  eq('… at the planned amount', rentTx.amount, -1200)
-  const allPaid = base({ ...paid, transactions: [...auto, rentTx] })
-  ok('nothing is left waiting', MO.computeMonthPulse(allPaid, M(0), today).pending.length === 0)
-
-  // The statement finally arrives, and the real electricity bill is not the
-  // guess: two days later and a euro forty more.
+  // The statement arrives. The real bill is not the guess — two days later and
+  // a euro forty more — and the charge simply fills the pocket the assumption
+  // was holding open.
   const real = base({
-    ...paid,
+    ...d,
     transactions: [
-      ...auto,
       tx({ id: 'real', date: `${M(0)}-14`, description: 'EDP ENERGIA', amount: -61.4, category: 'Utilities', accountId: 'a1' }),
     ],
   })
-  const pairs = MO.duplicatePairs(real, M(0))
-  eq('the stand-in is paired with the charge it stood for', pairs.length, 1)
-  eq('… named as an assumption rather than something logged', pairs[0].kind, 'assumed')
-  eq('… the assumed row being the one to drop', pairs[0].manual.description, 'Electricity')
-  eq('… and the statement line the one to keep', pairs[0].imported.id, 'real')
+  const p4 = MO.computeMonthPulse(real, M(0), today)
+  ok('the real charge replaces the assumption', !p4.assumed.some((a) => a.label === 'Electricity'))
+  eq('… so the pocket holds the charge, not both', p4.categories.find((c) => c.category === 'Utilities').actual, 61.4)
+  eq('… and the month counts it exactly once', p4.spent, 413.4)
+  eq('there is no duplicate to resolve', MO.duplicatePairs(real, M(0)).length, 0)
 
-  // The importer files a line by guesswork long before anyone reconciles it, so
-  // an incoming charge very often does not yet carry the right category. It
-  // still has to be recognised, or the real bill lands beside the stand-in and
-  // the month counts it twice.
-  const miscategorised = base({
-    ...paid,
-    transactions: [
-      ...auto,
-      tx({ id: 'edp', date: `${M(0)}-14`, description: 'EDP ENERGIA', amount: -61.4, category: 'Other', accountId: 'a1' }),
-    ],
-  })
-  const loose = MO.duplicatePairs(miscategorised, M(0))
-  eq('a charge filed as Other is still matched to the bill it settles', loose.length, 1)
-  eq('… the electricity stand-in being the one to drop', loose[0].manual.description, 'Electricity')
-
-  // But not anything of roughly that size: a restaurant weeks away is not the
-  // electricity bill.
+  // Which holds however the importer happened to file it: a charge is matched
+  // to its plan line by category and size, and a pocket it does not answer to
+  // stays assumed.
   const unrelated = base({
-    ...paid,
+    ...d,
     transactions: [
-      ...auto,
       tx({ id: 'din', date: `${M(0)}-28`, description: 'Restaurant', amount: -55, category: 'Dining', accountId: 'a1' }),
     ],
   })
-  eq('an unrelated spend of similar size is left alone', MO.duplicatePairs(unrelated, M(0)).length, 0)
+  const p5 = MO.computeMonthPulse(unrelated, M(0), today)
+  eq('a spend of similar size in another category settles nothing', p5.assumedTotal, 412)
+  eq('… and is counted on top', p5.spent, 467)
+
+  // Correcting an assumption tells the app what the bill really came to, so the
+  // charge that proves it has to be recognised even though it sits outside the
+  // plan's own tolerance. Missing it counted the bill twice.
+  const dearer = base({
+    ...d,
+    assumedPaid: { [MO.assumptionKey(M(0), 'r3')]: 104.3 },
+    transactions: [
+      tx({ id: 'edp', date: `${M(0)}-14`, description: 'EDP ENERGIA', amount: -104.3, category: 'Utilities', accountId: 'a1' }),
+    ],
+  })
+  const p6 = MO.computeMonthPulse(dearer, M(0), today)
+  ok('a charge matching the corrected figure settles the pocket', !p6.assumed.some((a) => a.label === 'Electricity'))
+  eq('… so it is counted once, at what it cost', p6.spent, 456.3)
+  eq('… and stays out of the day-to-day half', p6.everydaySpent, 0)
+
+  // Two lines in one category can't both settle against the same charge.
+  const twoLines = base({
+    recurring: [
+      line({ id: 'w1', label: 'Electricity', amount: 60, flow: 'expense', category: 'Utilities', dayOfMonth: 12 }),
+      line({ id: 'w2', label: 'Water', amount: 60, flow: 'expense', category: 'Utilities', dayOfMonth: 20 }),
+    ],
+    transactions: [
+      tx({ id: 'one', date: `${M(0)}-12`, description: 'EDP', amount: -60, category: 'Utilities' }),
+    ],
+  })
+  const p7 = MO.computeMonthPulse(twoLines, M(0), today)
+  eq('one charge settles one line', p7.assumed.length, 1)
+  eq('… and the other is still assumed', p7.assumed[0].amount, 60)
+  eq('… so the category counts 120, not 180', p7.categories.find((c) => c.category === 'Utilities').actual, 120)
+
+  // Data written by the version that faked transactions is converted on load.
+  const legacy = base({
+    ...d,
+    transactions: [
+      tx({ id: 'old', date: `${M(0)}-12`, description: 'Electricity', amount: -60, category: 'Utilities', reconciled: false, plannedLineId: 'r3' }),
+    ],
+  })
+  const lifted = S.liftStandIns(legacy)
+  eq('a stand-in written by the old model is lifted out of the ledger', lifted.transactions.length, 0)
+  eq('… and survives as the assumption it always was', lifted.assumedPaid[MO.assumptionKey(M(0), 'r3')], 60)
+  eq('… counting the same as before', MO.computeMonthPulse(lifted, M(0), today).spent, 412)
 }
 
 console.log('\n── Z. A planned event books its own line, prorated across the months it runs ──')
@@ -1216,9 +1253,9 @@ console.log('\n── AB. Every plan line is accounted for, in the month it belo
     recurring: [line({ id: 'i1', label: 'Home insurance', amount: 40, flow: 'expense', category: 'Insurance', dayOfMonth: 20 })],
     transactions: [tx({ date: `${M(-1)}-20`, description: 'MAPFRE', amount: -120, category: 'Insurance' })],
   })
-  const written = MO.autoPayTransactions(awkward, M(0), `${M(0)}-10`)
-  eq('a fixed cost is written in whatever its history looks like', written.map((t) => t.label ?? t.description).join(','), 'Home insurance')
-  eq('… at the planned amount', written[0].amount, -40)
+  const counted = MO.computeMonthPulse(awkward, M(0), `${M(0)}-10`).assumed
+  eq('a fixed cost is counted whatever its history looks like', counted.map((a) => a.label).join(','), 'Home insurance')
+  eq('… at the planned amount', counted[0].amount, 40)
 
   // The same must hold for the other three.
   for (const [cat, label] of [['Loans', 'Car loan'], ['Utilities', 'Water'], ['Subscriptions', 'Spotify']]) {
@@ -1226,7 +1263,7 @@ console.log('\n── AB. Every plan line is accounted for, in the month it belo
       recurring: [line({ id: 'x', label, amount: 30, flow: 'expense', category: cat })],
       transactions: [tx({ date: `${M(-1)}-09`, description: 'odd', amount: -7, category: cat })],
     })
-    ok(`${cat} is automatic too, regardless of history`, MO.autoPayTransactions(d, M(0), `${M(0)}-10`).length === 1)
+    ok(`${cat} is automatic too, regardless of history`, MO.computeMonthPulse(d, M(0), `${M(0)}-10`).assumed.length === 1)
   }
 
   // A cost that is not due this month is in no figure — and says so.
@@ -1238,7 +1275,7 @@ console.log('\n── AB. Every plan line is accounted for, in the month it belo
   })
   const p = MO.computeMonthPulse(annual, M(0), `${M(0)}-10`)
   eq('an annual premium costs this month nothing', p.plannedSpend, 400)
-  ok('… so it is not written in as paid', MO.autoPayTransactions(annual, M(0), `${M(0)}-10`).length === 0)
+  ok('… so it is not counted as paid', p.assumed.length === 0)
   ok('… and not waiting to land either', !p.pending.some((b) => b.category === 'Insurance'))
   eq('… but it is named as coming, with the month it lands', p.upcoming.map((b) => `${b.label}@${b.month}`).join(','), `Home insurance@${M(3)}`)
   eq('… at what it will cost', p.upcoming[0].amount, 900)
@@ -1247,43 +1284,44 @@ console.log('\n── AB. Every plan line is accounted for, in the month it belo
   // Come the month it lands, it stops being upcoming and becomes automatic.
   const due = MO.computeMonthPulse(annual, M(3), `${M(3)}-01`)
   ok('in its own month it is gone from the upcoming list', !due.upcoming.some((b) => b.label === 'Home insurance'))
-  eq('… and is written in like any other fixed cost', MO.autoPayTransactions(annual, M(3), `${M(3)}-01`).length, 1)
+  eq('… and is counted like any other fixed cost', due.assumed.length, 1)
 
   ok('the assistant is told what is not due yet', MO.monthPulseText(annual, M(0)).includes('not due this month'))
 }
 
-console.log('\n── AC. An assumption you can correct, remove, and have stay removed ──')
+console.log('\n── AC. An assumption you can correct, take back, and have it stay taken back ──')
 {
   const today = `${M(0)}-10`
   const d = base({
     recurring: [line({ id: 'u1', label: 'Electricity', amount: 60, flow: 'expense', category: 'Utilities', dayOfMonth: 12 })],
   })
-  const [written] = MO.autoPayTransactions(d, M(0), today)
-  const paid = base({ ...d, transactions: [written] })
-  eq('the month assumes the bill paid', MO.computeMonthPulse(paid, M(0), today).spent, 60)
+  eq('the month assumes the bill paid', MO.computeMonthPulse(d, M(0), today).spent, 60)
+  eq('… with nothing written into the ledger to say so', d.transactions.length, 0)
 
-  // Removing it has to stick, or deleting it is only ever temporary.
-  const removed = base({
-    ...d,
-    transactions: [],
-    autoPaySkips: [`${M(0)}:u1`],
-  })
-  eq('once removed, it is not assumed again', MO.autoPayTransactions(removed, M(0), today).length, 0)
-  eq('… and returns to the list to be ticked off by hand', MO.computeMonthPulse(removed, M(0), today).pending.map((b) => b.label).join(','), 'Electricity')
-  eq('… only for the month it was removed from', MO.autoPayTransactions(removed, M(1), `${M(1)}-10`).length, 1)
+  // Correcting it is editing the note, not editing a fabricated transaction.
+  const fixed = base({ ...d, assumedPaid: { [MO.assumptionKey(M(0), 'u1')]: 61.4 } })
+  eq('a corrected assumption is what counts', MO.computeMonthPulse(fixed, M(0), today).spent, 61.4)
 
-  // A wrong pairing can be overruled, and the overruling taken back.
-  const withReal = base({
+  // Taking it back has to stick, or saying no is only ever temporary.
+  const removed = base({ ...d, autoPaySkips: [MO.assumptionKey(M(0), 'u1')] })
+  const after = MO.computeMonthPulse(removed, M(0), today)
+  eq('once taken back, it is not assumed again', after.assumedTotal, 0)
+  eq('… and returns to the list to be ticked off by hand', after.pending.map((b) => b.label).join(','), 'Electricity')
+  eq('… only for the month it was taken back in', MO.computeMonthPulse(removed, M(1), `${M(1)}-10`).assumedTotal, 60)
+
+  // A hand-logged spend and its imported twin are still a real question — that
+  // is two records of one thing, unlike a pocket and the charge that fills it.
+  const logged = base({
     ...d,
     transactions: [
-      written,
-      tx({ id: 'r', date: `${M(0)}-14`, description: 'EDP', amount: -61.4, category: 'Utilities' }),
+      tx({ id: 'm', date: `${M(0)}-08`, description: 'Lunch', amount: -24, category: 'Dining', source: 'manual' }),
+      tx({ id: 's', date: `${M(0)}-08`, description: 'CAFE 4471', amount: -24, category: 'Dining' }),
     ],
   })
-  eq('the stand-in is paired with the real charge', MO.duplicatePairs(withReal, M(0)).length, 1)
+  eq('the two are paired', MO.duplicatePairs(logged, M(0)).length, 1)
   const overruled = base({
-    ...withReal,
-    transactions: withReal.transactions.map((t) => (t.plannedLineId ? { ...t, notDuplicate: true } : t)),
+    ...logged,
+    transactions: logged.transactions.map((t) => (t.source === 'manual' ? { ...t, notDuplicate: true } : t)),
   })
   eq('saying they are separate stops it being offered', MO.duplicatePairs(overruled, M(0)).length, 0)
   ok('… and the description is left exactly as it was', overruled.transactions.every((t) => !t.description.includes('confirmed separate')))

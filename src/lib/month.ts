@@ -8,7 +8,7 @@ import {
   FIXED_COST_CATEGORIES,
 } from './forecast'
 import { NON_CASHFLOW } from './categorize'
-import { addMonths, currentMonth, todayISO, uid } from './format'
+import { addMonths, currentMonth, todayISO } from './format'
 
 // The current month, while it is still being lived in — as opposed to the money
 // date, which reviews a month once its statement has arrived and every line is
@@ -48,27 +48,54 @@ export interface PendingBill {
   /** True once that day has passed and nothing matching has shown up. */
   overdue: boolean
   /**
-   * A committed cost the month assumes rather than waits for — a loan, a
-   * utility, an insurance premium, a subscription. These leave whether or not
-   * anyone remembers them, so they are written in at the start of the month
-   * and never sit in this list; a bill here with the flag set is one the
-   * assumption has not been applied to yet.
+   * A fixed cost the month would normally count as settled on its own — here
+   * only because it was explicitly un-assumed. Everything else in this list is
+   * simply a bill nothing has answered to yet.
    */
-  autoPaid: boolean
+  unassumed: boolean
 }
 
 /**
- * A recurring line counts as arrived when a transaction this month sits in its
- * category at roughly its size. Roughly, because a bill that moves by a few
- * euros month to month (a utility, a variable-rate loan) is still that bill —
- * demanding an exact match would report every one of them as still to come and
- * make "what is left" read far too pessimistic.
+ * The charge that has answered to a plan line this month, if one has — its id
+ * and what it actually cost, or `null` while the line is still outstanding.
+ *
+ * Matched on the line's category at roughly its size. Roughly, because a bill
+ * that moves by a few euros month to month (a utility, a variable-rate loan) is
+ * still that bill, and demanding an exact match would report every one of them
+ * as still to come.
+ *
+ * `assumedAt` widens that to what the month is currently counting for the line.
+ * Correcting an assumption is the user saying what the bill really came to, so
+ * the charge that proves them right must be recognised — a €104 electricity
+ * bill on a €90 plan line sits just outside the plan's tolerance, and the
+ * pocket would have gone on being counted as assumed *and* filled by the
+ * charge, which is the one thing this whole model exists to prevent.
+ *
+ * `claimed` stops two plan lines in one category (electricity and water, say)
+ * both settling themselves against the same charge.
  */
-function lineHasArrived(item: RecurringItem, amount: number, monthTxs: Transaction[]): boolean {
-  const tol = Math.max(2, amount * 0.15)
-  return monthTxs.some(
-    (t) => t.amount < 0 && t.category === item.category && Math.abs(Math.abs(t.amount) - amount) <= tol,
-  )
+function arrivedCharge(
+  item: RecurringItem,
+  planAmount: number,
+  monthTxs: Transaction[],
+  assumedAt: number | null,
+  claimed: Set<string>,
+): { id: string; amount: number } | null {
+  const targets = [planAmount]
+  if (assumedAt !== null && Math.abs(assumedAt - planAmount) > 0.005) targets.push(assumedAt)
+  let best: { id: string; amount: number } | null = null
+  let bestGap = Infinity
+  for (const t of monthTxs) {
+    if (t.amount >= 0 || t.category !== item.category || claimed.has(t.id)) continue
+    const size = Math.abs(t.amount)
+    for (const target of targets) {
+      const gap = Math.abs(size - target)
+      if (gap > Math.max(2, target * 0.15) || gap >= bestGap) continue
+      best = { id: t.id, amount: round2(size) }
+      bestGap = gap
+    }
+  }
+  return best
 }
 
 /**
@@ -186,162 +213,91 @@ export interface CategoryPulse {
 /** How many previous months a category's "usual" is averaged over. */
 const TREND_MONTHS = 3
 
-/**
- * How well an imported line answers to a plan stand-in, or `null` if it does
- * not. Lower is a better fit.
- *
- * A stand-in was never a record of anything — only the plan's guess at a bill's
- * date and size — and the guess is wrong in small ways almost every time: a
- * utility lands on the 14th for €61.40 when the plan said the 12th and €60. So
- * the match has to be loose, but not so loose that a restaurant can claim the
- * electricity.
- *
- * Two ways in. If the categories agree, size alone is enough. If they do not —
- * and at import time they very often do not, since a line is categorised by
- * guesswork long before anyone reconciles it — then the size has to be closer
- * and the date has to be near the day the bill was expected. Requiring the
- * category outright was the earlier rule, and it quietly let a real bill land
- * beside the stand-in it replaced whenever the importer had filed it as Other.
- */
-export function standInMatchScore(standIn: Transaction, candidate: Transaction): number | null {
-  if (candidate.amount >= 0 || candidate.month !== standIn.month) return null
-  const size = Math.abs(standIn.amount)
-  const diff = Math.abs(Math.abs(candidate.amount) - size)
-  const dayGap = Math.abs(Number(candidate.date.slice(8, 10)) - Number(standIn.date.slice(8, 10)))
-  const sameCategory = candidate.category === standIn.category
-  const ok = sameCategory
-    ? diff <= Math.max(5, size * 0.3)
-    : diff <= Math.max(3, size * 0.2) && dayGap <= 10
-  if (!ok) return null
-  // Prefer a category that agrees, then the closest size, then the nearest day.
-  return (sameCategory ? 0 : 1) + (size > 0 ? diff / size : 0) + dayGap / 100
-}
-
-/** The best unclaimed candidate for a stand-in, if any answers to it. */
-export function bestStandInMatch(
-  standIn: Transaction,
-  candidates: Transaction[],
-  claimed: Set<string> = new Set(),
-): Transaction | null {
-  let best: Transaction | null = null
-  let bestScore = Infinity
-  for (const c of candidates) {
-    if (claimed.has(c.id) || c.notDuplicate) continue
-    const score = standInMatchScore(standIn, c)
-    if (score !== null && score < bestScore) {
-      best = c
-      bestScore = score
-    }
-  }
-  return best
-}
-
 export interface DuplicatePair {
-  /** The stand-in: typed by hand, or written in from a plan line. */
+  /** The line typed by hand before any statement existed. */
   manual: Transaction
   /** The imported line that appears to be the same spend. */
   imported: Transaction
-  /**
-   * `logged` — the user typed it before the statement existed.
-   * `assumed` — the app wrote it in from the plan, so the import is simply the
-   * real version of a bill that was only ever a placeholder.
-   */
-  kind: 'logged' | 'assumed'
 }
 
 /**
- * Stand-ins that a later import appears to have brought in for real. Both are
- * sitting in the totals, so the month reads high by exactly the amount of every
- * pair here until one of them goes.
+ * Hand-logged spends that a later import appears to have brought in for real.
+ * Both are sitting in the totals, so the month reads high by exactly the amount
+ * of every pair here until one of them goes.
  *
- * Two kinds, matched differently. A hand-typed spend is matched on date and
- * amount alone — a typed "lunch" never resembles a card statement's merchant
- * string, so requiring the descriptions to agree would find nothing. A row
- * written in from a plan line is matched by `standInMatchScore`, which is
- * looser still, because it was only ever the plan's guess at a bill.
+ * Matched on date and amount alone: a typed "lunch" never resembles a card
+ * statement's merchant string, so requiring the descriptions to agree would
+ * find nothing.
+ *
+ * Plan lines are deliberately not in here. A budget pocket the month assumed
+ * settled is not a transaction competing with the statement — the moment a real
+ * charge answers to the line, the pocket is filled by the charge and the
+ * assumption stops counting on its own. There is nothing to ask about and
+ * nothing to delete.
  */
 export function duplicatePairs(data: AppData, month: string): DuplicatePair[] {
   const monthTxs = data.transactions.filter((t) => t.month === month && !NON_CASHFLOW.has(t.category))
   const imported = monthTxs.filter((t) => t.source !== 'manual')
   const claimed = new Set<string>()
   const out: DuplicatePair[] = []
-
-  // Plan stand-ins first: they have the loosest rule, and letting an exact
-  // hand-logged match claim the same imported row first would leave the
-  // stand-in stranded and still double-counting.
-  for (const assumed of monthTxs) {
-    if (!assumed.plannedLineId || assumed.notDuplicate) continue
-    const hit = bestStandInMatch(assumed, imported, claimed)
-    if (hit) {
-      claimed.add(hit.id)
-      out.push({ manual: assumed, imported: hit, kind: 'assumed' })
-    }
-  }
-
   for (const manual of monthTxs) {
-    if (manual.source !== 'manual' || manual.plannedLineId || manual.notDuplicate) continue
+    if (manual.source !== 'manual' || manual.notDuplicate) continue
     const hit = imported.find(
       (t) => !claimed.has(t.id) && t.date === manual.date && Math.abs(t.amount - manual.amount) < 0.005,
     )
     if (hit) {
       claimed.add(hit.id)
-      out.push({ manual, imported: hit, kind: 'logged' })
+      out.push({ manual, imported: hit })
     }
   }
   return out
 }
 
-/**
- * The row that stands in for a plan line being paid. Dated the day that line
- * normally lands rather than today: a rent counted on the 1st because that is
- * when the app happened to be opened would misplace it in every by-date view,
- * and the point of the row is to say when the money goes, not when it was
- * assumed.
- */
-export function plannedPayment(data: AppData, item: RecurringItem, month: string): Transaction | null {
-  const amount = itemAmountForMonth(item, month)
-  if (amount <= 0.5) return null
-  const day = Math.min(typicalDayFor(data, item, amount, month), daysInMonth(month))
-  const date = `${month}-${String(Math.max(1, day)).padStart(2, '0')}`
-  return {
-    id: uid(),
-    date,
-    description: item.label,
-    amount: -round2(amount),
-    category: item.category,
-    source: 'manual',
-    month,
-    reconciled: false,
-    plannedLineId: item.id,
-  }
+/** The key one month's assumption about one plan line is stored under. */
+export function assumptionKey(month: string, lineId: string): string {
+  return `${month}:${lineId}`
+}
+
+export interface AssumedBill {
+  id: string
+  label: string
+  category: string
+  /** What is actually being counted — the plan's figure, or a correction. */
+  amount: number
+  /** What the plan says, so a correction can say what it corrected. */
+  planAmount: number
+  /** The day of the month it usually lands. */
+  day: number
+  /**
+   * True when the month assumed it without being asked, because it is a loan,
+   * a utility, an insurance premium or a subscription; false when it was
+   * marked as paid by hand.
+   */
+  auto: boolean
 }
 
 /**
- * Fixed costs for `month` that nothing has covered yet — the rows to write in
- * so a loan, a utility, an insurance premium or a subscription is counted from
- * the start of the month instead of waiting to be ticked off by hand.
+ * Whether this month counts a plan line as settled, and at what.
  *
- * Returns nothing once they are in, so calling it repeatedly is safe: the rows
- * it wrote satisfy the same "has this line arrived" test that put them here.
- * A bill the user has removed for this month is left alone — see
- * `AppData.autoPaySkips`.
+ * Fixed costs are assumed by default — they leave whether or not anyone
+ * remembers them — and everything else only once it has been marked as paid.
+ * Either way the answer is a note against the budget pocket, never a
+ * transaction, and either way a real charge that answers to the line overrides
+ * it: `computeMonthPulse` checks arrival first and never asks this about a line
+ * that has landed, so the two can't both count.
  */
-export function autoPayTransactions(data: AppData, month: string, today = todayISO()): Transaction[] {
-  const pulse = computeMonthPulse(data, month, today)
-  const byId = new Map(data.recurring.map((r) => [r.id, r]))
-  const skipped = new Set(data.autoPaySkips ?? [])
-  const out: Transaction[] = []
-  for (const bill of pulse.pending) {
-    if (!bill.autoPaid) continue
-    // Removed by hand for this month — writing it back would make deleting it
-    // impossible rather than merely temporary.
-    if (skipped.has(`${month}:${bill.id}`)) continue
-    const item = byId.get(bill.id)
-    if (!item) continue
-    const tx = plannedPayment(data, item, month)
-    if (tx) out.push(tx)
-  }
-  return out
+export function assumedAmountFor(
+  data: AppData,
+  item: RecurringItem,
+  planAmount: number,
+  month: string,
+): number | null {
+  const key = assumptionKey(month, item.id)
+  const marked = data.assumedPaid?.[key]
+  if (marked !== undefined) return round2(marked)
+  if (!FIXED_COST_CATEGORIES.has(item.category)) return null
+  if ((data.autoPaySkips ?? []).includes(key)) return null
+  return round2(planAmount)
 }
 
 export interface MonthPulse {
@@ -352,7 +308,13 @@ export interface MonthPulse {
   /** Money in so far, and what the plan still expects to arrive. */
   incomeSoFar: number
   incomeExpected: number
-  /** Ordinary spending so far — set-aside and provision-funded bills excluded. */
+  /**
+   * Ordinary spending so far — set-aside and provision-funded bills excluded,
+   * assumed bills included. This screen's job is to say where the month stands
+   * right now, and a rent that certainly left on the 3rd is part of that
+   * whether or not the statement has arrived; `assumedTotal` says how much of
+   * this is taken on trust.
+   */
   spent: number
   plannedSpend: number
   /**
@@ -377,6 +339,14 @@ export interface MonthPulse {
   /** Committed bills that haven't shown up yet, soonest first. */
   pending: PendingBill[]
   pendingTotal: number
+  /**
+   * Pockets this month counts as settled without a statement — the fixed costs
+   * it assumes, plus anything marked as paid by hand. Counted in `spent` and in
+   * their category's actual, and listed separately so what is a guess is never
+   * silently mixed in with what was observed.
+   */
+  assumed: AssumedBill[]
+  assumedTotal: number
   /**
    * Plan lines that cost nothing this month but land in a later one — an annual
    * premium, a quarterly tax. Deliberately absent from every figure here: this
@@ -422,11 +392,16 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   // left of a budget like that is simply its plan less its actuals, which is
   // what `committedLeft` below counts and what the category table already says.
   const pending: PendingBill[] = []
+  const assumed: AssumedBill[] = []
+  // Assumed spending per category, so a pocket the month takes on trust fills
+  // its own budget line and nobody else's.
+  const assumedByCat: Record<string, number> = {}
   // Both sides of the committed half of the month, so pace can be asked of the
   // everyday half alone.
   let discretePlan = 0
   let discreteArrived = 0
   const committedCats = new Set<string>()
+  const claimedCharges = new Set<string>()
   for (const item of data.recurring) {
     if (item.flow !== 'expense' || NON_CASHFLOW.has(item.category) || isPlannedSetAside(item)) continue
     const amount = itemAmountForMonth(item, month)
@@ -434,11 +409,35 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     if (!looksDiscrete(data, item, amount, month)) continue
     committedCats.add(item.category)
     discretePlan += amount
-    if (lineHasArrived(item, amount, monthTxs)) {
-      discreteArrived += amount
+    const takenOnTrust = assumedAmountFor(data, item, amount, month)
+    // Reality first, always. A charge that answers to this line fills the
+    // pocket, and whatever the month was assuming about it stops counting —
+    // which is why an assumption can never double up with the statement that
+    // supersedes it, and why there is nothing to reconcile away.
+    const arrived = arrivedCharge(item, amount, monthTxs, takenOnTrust, claimedCharges)
+    if (arrived) {
+      claimedCharges.add(arrived.id)
+      // What it really cost, not what the plan hoped. Taking the plan's figure
+      // out of the everyday half would leave the overshoot in it, and read a
+      // dear electricity bill as an evening out.
+      discreteArrived += arrived.amount
       continue
     }
     const typicalDay = typicalDayFor(data, item, amount, month)
+    if (takenOnTrust !== null && takenOnTrust > 0.005) {
+      discreteArrived += takenOnTrust
+      assumedByCat[item.category] = round2((assumedByCat[item.category] ?? 0) + takenOnTrust)
+      assumed.push({
+        id: item.id,
+        label: item.label,
+        category: item.category,
+        amount: takenOnTrust,
+        planAmount: round2(amount),
+        day: typicalDay,
+        auto: data.assumedPaid?.[assumptionKey(month, item.id)] === undefined,
+      })
+      continue
+    }
     pending.push({
       id: item.id,
       label: item.label,
@@ -446,11 +445,13 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
       amount: round2(amount),
       typicalDay,
       overdue: elapsed > 0 && typicalDay < elapsed,
-      autoPaid: FIXED_COST_CATEGORIES.has(item.category),
+      unassumed: FIXED_COST_CATEGORIES.has(item.category),
     })
   }
   pending.sort((a, b) => a.typicalDay - b.typicalDay || b.amount - a.amount)
+  assumed.sort((a, b) => a.day - b.day || b.amount - a.amount)
   const pendingTotal = round2(pending.reduce((s, p) => s + p.amount, 0))
+  const assumedTotal = round2(assumed.reduce((s, a) => s + a.amount, 0))
 
   // Costs the plan carries that simply are not due this month.
   const upcoming: UpcomingBill[] = []
@@ -498,14 +499,17 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     .map((c) => {
       const average = past && withData.length ? round2((past.expense[c.category] ?? 0) / withData.length) : 0
       const paceTarget = total > 0 ? round2((c.planned * elapsed) / total) : 0
+      // An event row is keyed by the event, not the category, and a pocket
+      // taken on trust belongs to the ordinary category line.
+      const actual = round2(c.actual + (c.eventId ? 0 : (assumedByCat[c.category] ?? 0)))
       return {
         category: c.category,
         planned: round2(c.planned),
-        actual: round2(c.actual),
-        left: round2(Math.max(0, c.planned - c.actual)),
-        over: round2(Math.max(0, c.actual - c.planned)),
+        actual,
+        left: round2(Math.max(0, c.planned - actual)),
+        over: round2(Math.max(0, actual - c.planned)),
         average,
-        vsAverage: round2(c.actual - average),
+        vsAverage: round2(actual - average),
         paceTarget,
         // An event is a lump with dates, not a habit to pace — treated as
         // committed so its unspent budget never reads as everyday slack.
@@ -526,7 +530,11 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   const eventRows = categories.filter((c) => c.eventId)
   const eventPlan = round2(eventRows.reduce((s, c) => s + c.planned, 0))
   const eventSpent = round2(eventRows.reduce((s, c) => s + c.actual, 0))
-  const everydaySpent = round2(Math.max(0, review.expenses - discreteArrived - eventSpent))
+  const spent = round2(review.expenses + assumedTotal)
+  // Assumptions are only ever made about discrete bills, and every one of them
+  // is already inside `discreteArrived` — so the everyday half is untouched by
+  // them, which is the point: pace is a question about habits.
+  const everydaySpent = round2(Math.max(0, spent - discreteArrived - eventSpent))
   const everydayPlan = round2(Math.max(0, review.plannedExpenses - discretePlan - eventPlan))
   const everydayRate = elapsed > 0 ? everydaySpent / elapsed : 0
 
@@ -537,22 +545,24 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     daysLeft: Math.max(0, total - elapsed),
     incomeSoFar: review.income,
     incomeExpected,
-    spent: review.expenses,
+    spent,
     plannedSpend: review.plannedExpenses,
-    projectedMonthEnd: round2(review.expenses + committedLeft),
+    projectedMonthEnd: round2(spent + committedLeft),
     everydaySpent,
     everydayPlan,
     everydayPaceTarget: total > 0 ? round2((everydayPlan * elapsed) / total) : 0,
     everydayPaceMonthEnd: round2(everydayRate * total),
     pending,
     pendingTotal,
+    assumed,
+    assumedTotal,
     upcoming,
     committedLeft,
     setAside: review.setAside,
     plannedSetAside: review.plannedSetAside,
     setAsideLeft,
     freeToSpend: round2(
-      review.income + incomeExpected - review.expenses - committedLeft - review.setAside - setAsideLeft,
+      review.income + incomeExpected - spent - committedLeft - review.setAside - setAsideLeft,
     ),
     categories,
     duplicates: duplicatePairs(data, month),
@@ -600,6 +610,18 @@ export function monthPulseText(data: AppData, month = currentMonth()): string {
     `The plan still expects ${fx(p.committedLeft)} to go out this month: every category's plan less what it has ` +
       'already spent. That covers both the bills below and the unspent half of the variable budgets.',
   )
+  if (p.assumed.length) {
+    lines.push(
+      `Of the spending above, ${fx(p.assumedTotal)} is taken on trust rather than seen on a statement: ` +
+        p.assumed
+          .map((a) => `${a.label} ${fx(a.amount)} [${a.category}, around day ${a.day}]`)
+          .join('; ') +
+        '. These are budget pockets the month counts as filled because the bills always go out; if the ' +
+        'real charge turns up for a different amount, the charge replaces the assumption rather than ' +
+        'adding to it.',
+    )
+  }
+
   if (p.pending.length) {
     lines.push(
       `Committed bills nothing has matched yet, ${fx(p.pendingTotal)} of that total: ` +

@@ -9,7 +9,6 @@ import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
 import { CategorizeOverlay } from './CategorizeOverlay'
 import { Portal } from './Portal'
-import { bestStandInMatch } from '../lib/month'
 
 // Exact duplicates (date+amount+description) are skipped on import. These helpers
 // catch the softer case: same date and amount, description merely similar — e.g.
@@ -330,38 +329,22 @@ export function ImportModal({
   // have both count.
   const manualDupes = useMemo(() => {
     const claimed = new Set<string>()
-    const pairs: Array<{ rowId: string; manual: Transaction; kind: 'logged' | 'assumed' }> = []
+    const pairs: Array<{ rowId: string; manual: Transaction }> = []
     // A row the user has already said is not a duplicate stays out of it.
-    const standIns = savedStream.filter((t) => t.source === 'manual' && !t.notDuplicate)
-    if (!standIns.length) return pairs
+    const logged = savedStream.filter((t) => t.source === 'manual' && !t.notDuplicate)
+    if (!logged.length) return pairs
 
-    // Plan stand-ins first, on the loosest rule — see `standInMatchScore`. One
-    // was never a record of anything, only the plan's guess at a bill, so
-    // insisting on the exact day and cent would leave the placeholder sitting
-    // beside the charge it stands for. Matched from the stand-in's side so the
-    // best-fitting row wins rather than the first one scanned.
-    const takenRows = new Set<string>()
-    for (const standIn of standIns) {
-      if (!standIn.plannedLineId) continue
-      const hit = bestStandInMatch(standIn, rows, takenRows)
-      if (hit) {
-        takenRows.add(hit.id)
-        claimed.add(standIn.id)
-        pairs.push({ rowId: hit.id, manual: standIn, kind: 'assumed' })
-      }
-    }
+    // Only hand-logged spends are candidates. A plan line the month counted as
+    // settled is a note against a budget pocket, not a row competing with the
+    // statement: the arriving charge fills the pocket and the assumption stops
+    // counting by itself, so there is nothing here to supersede.
     for (const r of rows) {
-      if (pairs.some((x) => x.rowId === r.id)) continue
-      const hit = standIns.find(
-        (m) =>
-          !m.plannedLineId &&
-          !claimed.has(m.id) &&
-          m.date === r.date &&
-          Math.abs(m.amount - r.amount) < 0.005,
+      const hit = logged.find(
+        (m) => !claimed.has(m.id) && m.date === r.date && Math.abs(m.amount - r.amount) < 0.005,
       )
       if (hit) {
         claimed.add(hit.id)
-        pairs.push({ rowId: r.id, manual: hit, kind: 'logged' })
+        pairs.push({ rowId: r.id, manual: hit })
       }
     }
     return pairs
@@ -504,21 +487,15 @@ export function ImportModal({
               {manualDupes.length > 0 && (
                 <div className="mb-3 rounded-lg bg-gold/10 border border-gold/30 px-4 py-2.5 text-sm">
                   <div className="text-ink/80">
-                    {manualDupes.length} of these {manualDupes.length === 1 ? 'is' : 'are'} already standing in
-                    for {manualDupes.length === 1 ? 'this spend' : 'these spends'}
-                    {manualDupes.every((p) => p.kind === 'assumed')
-                      ? ' — bills counted automatically at the start of the month'
-                      : manualDupes.every((p) => p.kind === 'logged')
-                        ? ' — spends you logged by hand'
-                        : ' — some logged by hand, some counted automatically'}
-                    .{' '}
+                    {manualDupes.length} of these {manualDupes.length === 1 ? 'is' : 'are'} already here as{' '}
+                    {manualDupes.length === 1 ? 'a spend' : 'spends'} you logged by hand.{' '}
                     {keepManual
                       ? 'Both will be kept, so this month will count them twice.'
-                      : 'The stand-in will be dropped as this saves, so nothing counts twice.'}
+                      : 'The line you logged will be dropped as this saves, so nothing counts twice.'}
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
                     <button className="btn-subtle text-xs" onClick={() => setKeepManual((k) => !k)}>
-                      {keepManual ? 'Drop the stand-ins' : 'Keep both anyway'}
+                      {keepManual ? 'Drop the lines I logged' : 'Keep both anyway'}
                     </button>
                     <span className="text-xs text-muted">
                       {manualDupes
