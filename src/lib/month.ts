@@ -87,11 +87,13 @@ function historyDays(data: AppData, item: RecurringItem, amount: number, month: 
 }
 
 /**
- * The categories that genuinely arrive as many small purchases rather than one
- * charge — the everyday half of a month. Used only when there is no history to
- * judge a line by; everything else defaults to being a bill, because most of
- * what anyone bothers to put in a plan (a rent, a loan, a premium, a fee, a
- * term's tuition) is one.
+ * The categories that arrive as many small purchases rather than one charge —
+ * the everyday half of a month. A grocery budget is never a bill, however the
+ * month's shops happen to have fallen: a €150 food budget against a history
+ * containing one €140 shop used to look exactly like a €150 bill that lands
+ * once, so Food was listed as "still to land" and its whole budget counted as
+ * money yet to leave in a lump. It is spent a basket at a time, and what is
+ * useful about it is the daily allowance, not a due date.
  */
 const SPREAD_CATEGORIES = new Set([
   'Food',
@@ -108,33 +110,33 @@ const SPREAD_CATEGORIES = new Set([
  * rent, a loan, an insurance premium — as opposed to a budget spread over many
  * small ones.
  *
- * History decides it where there is any: a single charge of about this size in
- * this category, in a month gone by, settles the question. Spending in the
- * category with no such charge settles it the other way — that is what a
- * grocery budget looks like.
- *
- * Only with nothing to go on does the category itself get a say, and even then
- * not through the planner's fixed/variable split, which is about pacing
- * discretionary spend and gets this wrong in both directions: rent sits in
- * Housing, which that split calls variable unless the user happens to have
- * grouped it otherwise — leaving the one bill most worth flagging invisible on
- * a plan that has not run a month yet.
+ * The two lists above answer it outright where they apply. Everything else is
+ * decided by history: a single charge of about this size, in a month gone by,
+ * makes it a bill; spending in the category with no such charge makes it a
+ * budget. With nothing at all to go on it defaults to a bill, because most of
+ * what anyone bothers to plan for (a rent, a fee, a term's tuition) is one —
+ * and notably not through the planner's own fixed/variable split, which calls
+ * Housing variable and would leave rent invisible on a plan that has not run a
+ * month yet.
  */
 function looksDiscrete(data: AppData, item: RecurringItem, amount: number, month: string): boolean {
+  // Both of these settle the question outright, in opposite directions, and
+  // history gets no say over either.
+  //
   // A loan, a utility, an insurance premium and a subscription are bills by
-  // declaration — they are the four the month assumes paid without being asked.
-  // History gets no say over that: an insurance line planned at €40 a month
-  // against a history of €120 quarterly charges matched nothing, so the guess
-  // below called it a spread budget and the one category the user had most
-  // explicitly asked to be automatic was never written in at all.
+  // declaration — the four the month assumes paid without being asked. And a
+  // grocery or dining budget is never a bill however its charges happen to have
+  // fallen. Letting history overrule the first left insurance silently never
+  // assumed; letting it overrule the second put Food in a list of things still
+  // to land, which is what the whole distinction exists to prevent.
   if (FIXED_COST_CATEGORIES.has(item.category)) return true
+  if (SPREAD_CATEGORIES.has(item.category) || item.group === 'Variable') return false
   if (historyDays(data, item, amount, month).length > 0) return true
-  const seenCategory = data.transactions.some(
+  // Spending in the category with no single charge that size is what a budget
+  // spread over many purchases looks like.
+  return !data.transactions.some(
     (t) => t.month < month && t.category === item.category && t.amount < 0,
   )
-  if (seenCategory) return false
-  if (item.group === 'Variable') return false
-  return !SPREAD_CATEGORIES.has(item.category)
 }
 
 /** The day of the month this line has historically landed on, median of what we've seen. */

@@ -223,6 +223,31 @@ export function CurrentMonth({
   const budgetPct =
     pulse.everydayPlan > 0 ? Math.round((pulse.everydaySpent / pulse.everydayPlan) * 100) : 0
   const elapsedPct = pulse.daysTotal > 0 ? Math.round((pulse.daysElapsed / pulse.daysTotal) * 100) : 0
+
+  /**
+   * The budgets you steer: not a bill, not an event, and actually budgeted.
+   * Each carries the only figure that helps mid-month — what is left divided by
+   * the days left — against the rate it has actually been going at.
+   */
+  const variableRows = useMemo(
+    () =>
+      pulse.categories
+        .filter((c) => !c.committed && !c.eventId && c.planned > 0.5)
+        .map((c) => {
+          const perDay = pulse.daysLeft > 0 ? c.left / pulse.daysLeft : 0
+          const wasPerDay = pulse.daysElapsed > 0 ? c.actual / pulse.daysElapsed : 0
+          // The day the budget runs dry if nothing changes.
+          const daysAtRate = wasPerDay > 0 ? Math.floor(c.left / wasPerDay) : Infinity
+          return {
+            ...c,
+            perDay: Math.round(perDay * 100) / 100,
+            wasPerDay: Math.round(wasPerDay * 100) / 100,
+            runsOutOn: Math.min(pulse.daysTotal, pulse.daysElapsed + Math.max(0, daysAtRate)),
+          }
+        })
+        .sort((a, b) => b.planned - a.planned),
+    [pulse],
+  )
   const hasAnything = pulse.transactionCount > 0 || pulse.plannedSpend > 0
 
   return (
@@ -366,19 +391,30 @@ export function CurrentMonth({
             {fx(pulse.everydaySpent)} of the {fx(pulse.everydayPlan)} that isn't already committed to a bill —
             the part of the month you actually steer.
           </p>
-          {/* Two bars, one over the other: how much of the budget is gone, and
-              how much of the month has gone. Ahead of the marker is overspending
-              for the date, not merely spending. */}
+          {/* The filled bar is the budget spent; the marker is today. Past the
+              marker is spending ahead of the date, not merely spending — but a
+              bare line said none of that, so it is labelled. */}
           <div className="relative h-3 rounded-full bg-line overflow-hidden">
             <div
               className={classNames('h-full rounded-full', overPace ? 'bg-clay' : 'bg-forest')}
               style={{ width: `${Math.min(100, budgetPct)}%` }}
             />
             <div
-              className="absolute inset-y-0 w-0.5 bg-ink/60"
+              className="absolute inset-y-0 w-0.5 bg-ink/70"
               style={{ left: `${Math.min(100, elapsedPct)}%` }}
-              title="Where the month is"
             />
+          </div>
+          <div className="relative h-4 mt-0.5 text-[11px] text-muted">
+            <span
+              className="absolute whitespace-nowrap -translate-x-1/2"
+              style={{
+                // Pinned inside the track so the label can't hang off either end
+                // on day 1 or day 31.
+                left: `${Math.min(88, Math.max(12, elapsedPct))}%`,
+              }}
+            >
+              ↑ today, day {pulse.daysElapsed} of {pulse.daysTotal}
+            </span>
           </div>
           <p className="text-sm text-muted mt-2">
             {overPace
@@ -513,42 +549,92 @@ export function CurrentMonth({
         )}
       </div>
 
-      {/* ── Still to land ── */}
-      {pulse.pending.length > 0 && (
+      {/* ── Variable spending ── */}
+      {(variableRows.length > 0 || pulse.pending.length > 0) && (
         <div className="card p-5">
-          <h3 className="text-lg">Still to land this month</h3>
+          <h3 className="text-lg">Variable spending</h3>
           <p className="text-sm text-muted mb-3">
-            Planned lines nothing has matched yet, with the day of the month they usually arrive. This is the
-            money that isn't free even though it's still in the account. Loans, utilities, insurance and
-            subscriptions are counted automatically at the start of the month, so they only appear here if
-            you removed one.
+            The budgets you spend down a bit at a time. What matters is not the €400 you set for food but
+            what you can still spend a day on it — so that is the number.
           </p>
+
           <div className="space-y-2">
-            {pulse.pending.map((b) => (
-              <div
-                key={b.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-line bg-canvas px-4 py-2.5"
-              >
-                <div className="min-w-0">
-                  <div className="text-sm font-medium truncate">{b.label}</div>
-                  <div className="text-xs text-muted">
-                    {b.category} · usually around the {b.typicalDay}
-                    {b.overdue && <span className="text-clay"> · that day has passed</span>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="tabular-nums">{fx(b.amount)}</span>
-                  <button
-                    className="btn-subtle text-xs"
-                    onClick={() => markPaid(b)}
-                    title={`Count ${b.label} as paid at ${fx(b.amount)} on the ${b.typicalDay}`}
+            {variableRows.map((r) => (
+              <div key={r.category} className="rounded-lg border border-line bg-canvas px-4 py-2.5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-medium min-w-0 break-words">{r.category}</span>
+                  <span
+                    className={classNames(
+                      'tabular-nums shrink-0 text-sm',
+                      r.over > 0 ? 'text-clay' : 'text-forest',
+                    )}
                   >
-                    <IconCheck width={14} height={14} /> Mark as paid
-                  </button>
+                    {r.over > 0 ? `${fx(r.over)} over` : `${fx(r.left)} left`}
+                  </span>
+                </div>
+                {/* The actionable sentence, not the budget. */}
+                <div className="text-xs text-muted mt-0.5">
+                  {r.over > 0
+                    ? `Nothing left — ${fx(r.actual)} spent of ${fx(r.planned)}.`
+                    : pulse.daysLeft <= 0
+                      ? `${fx(r.actual)} spent of ${fx(r.planned)} — the month is done.`
+                      : `${fx(r.perDay)} a day for the ${pulse.daysLeft} ${pulse.daysLeft === 1 ? 'day' : 'days'} left` +
+                        (r.wasPerDay > 0
+                          ? ` · you've been spending ${fx(r.wasPerDay)} a day`
+                          : '')}
+                </div>
+                {r.over <= 0 && pulse.daysLeft > 0 && r.wasPerDay > r.perDay + 0.5 && (
+                  <div className="text-xs text-clay mt-0.5">
+                    At that rate it runs out around day {r.runsOutOn} of {pulse.daysTotal} — about{' '}
+                    {fx(r.wasPerDay - r.perDay)} a day less keeps it to the end of the month.
+                  </div>
+                )}
+                <div className="mt-1.5 h-1.5 rounded-full bg-line overflow-hidden">
+                  <div
+                    className={classNames(
+                      'h-full rounded-full',
+                      r.over > 0 ? 'bg-clay' : r.wasPerDay > r.perDay + 0.5 ? 'bg-gold' : 'bg-forest',
+                    )}
+                    style={{ width: `${r.planned > 0 ? Math.min(100, (r.actual / r.planned) * 100) : 0}%` }}
+                  />
                 </div>
               </div>
             ))}
           </div>
+
+          {/* Bills belong to the same question — what is left of the month —
+              but they are not something you pace, so they sit apart. */}
+          {pulse.pending.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-line">
+              <div className="label mb-2">Bills not seen yet · {fx(pulse.pendingTotal)}</div>
+              <div className="space-y-2">
+                {pulse.pending.map((b) => (
+                  <div
+                    key={b.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-line bg-canvas px-4 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{b.label}</div>
+                      <div className="text-xs text-muted">
+                        {b.category} · usually around the {b.typicalDay}
+                        {b.overdue && <span className="text-clay"> · that day has passed</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="tabular-nums text-sm">{fx(b.amount)}</span>
+                      <button
+                        className="btn-subtle text-xs"
+                        onClick={() => markPaid(b)}
+                        title={`Count ${b.label} as paid at ${fx(b.amount)} on the ${b.typicalDay}`}
+                      >
+                        <IconCheck width={14} height={14} /> Mark as paid
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

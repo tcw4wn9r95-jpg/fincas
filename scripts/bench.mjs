@@ -1352,6 +1352,45 @@ console.log('\n── AD. Tagging a spend to an event, and the tally that disagr
   ok('… and releases the logged line again', !exact.events[0].expenses.find((x) => x.id === 'x2').matchedTxId)
 }
 
+console.log('\n── AE. A grocery budget is never a bill waiting to land ──')
+{
+  const today = `${M(0)}-10`
+  // A €150 food budget, and a month gone by that happened to contain one €140
+  // shop. That single charge used to make Food look exactly like a bill.
+  const d = base({
+    recurring: [
+      line({ id: 'f1', label: 'Groceries', amount: 150, flow: 'expense', category: 'Food' }),
+      line({ id: 'r1', label: 'Rent', amount: 1200, flow: 'expense', category: 'Housing', dayOfMonth: 3 }),
+    ],
+    transactions: [
+      tx({ date: `${M(-1)}-04`, description: 'Big shop', amount: -140, category: 'Food' }),
+      tx({ date: `${M(-1)}-18`, description: 'Small shop', amount: -30, category: 'Food' }),
+      tx({ date: `${M(-1)}-03`, description: 'Rent', amount: -1200, category: 'Housing' }),
+    ],
+  })
+  const p = MO.computeMonthPulse(d, M(0), today)
+  ok('food is not something "still to land"', !p.pending.some((b) => b.category === 'Food'))
+  eq('… only the rent is', p.pending.map((b) => b.label).join(','), 'Rent')
+  ok('… and its row is not marked as a committed bill', !p.categories.find((c) => c.category === 'Food').committed)
+  ok('the rent still is', p.categories.find((c) => c.category === 'Housing').committed)
+  eq('so the food budget is what you steer day to day', p.everydayPlan, 150)
+
+  // Every spread category holds, whatever its history looks like.
+  for (const cat of ['Food', 'Dining', 'Shopping', 'Entertainment', 'Transport', 'Home expenses', 'Other']) {
+    const one = base({
+      recurring: [line({ id: 'x', label: cat, amount: 200, flow: 'expense', category: cat })],
+      transactions: [tx({ date: `${M(-1)}-05`, description: 'one big one', amount: -205, category: cat })],
+    })
+    ok(`${cat} is a budget, not a bill`, MO.computeMonthPulse(one, M(0), today).pending.length === 0)
+  }
+
+  // A line the user has explicitly grouped as Variable is a budget too.
+  const grouped = base({
+    recurring: [line({ id: 'g1', label: 'Pocket money', amount: 80, flow: 'expense', category: 'Health', group: 'Variable' })],
+  })
+  ok('a line grouped Variable is never a bill either', MO.computeMonthPulse(grouped, M(0), today).pending.length === 0)
+}
+
 console.log('\n── W. Set aside splits into provisions, investments and savings ──')
 {
   const d = base({
