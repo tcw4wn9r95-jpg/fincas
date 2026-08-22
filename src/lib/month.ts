@@ -5,9 +5,11 @@ import {
   itemAmountForMonth,
   actualsByCategoryRange,
   nextOccurrence,
+  isSetAsideCategory,
   FIXED_COST_CATEGORIES,
 } from './forecast'
 import { NON_CASHFLOW } from './categorize'
+import { potMovements } from './provisions'
 import { addMonths, currentMonth, todayISO } from './format'
 
 // The current month, while it is still being lived in — as opposed to the money
@@ -158,12 +160,37 @@ function looksDiscrete(data: AppData, item: RecurringItem, amount: number, month
   // to land, which is what the whole distinction exists to prevent.
   if (FIXED_COST_CATEGORIES.has(item.category)) return true
   if (SPREAD_CATEGORIES.has(item.category) || item.group === 'Variable') return false
-  if (historyDays(data, item, amount, month).length > 0) return true
+  return categoryLooksDiscrete(data, item.category, amount, month)
+}
+
+/**
+ * The same question asked of a bare category and an amount, for a flat category
+ * budget — one with no plan line behind it to carry a group or a due day.
+ *
+ * A budget of this kind was previously in nothing that shapes the month: no
+ * committed category, no pending bill, no share of the discrete half. So a
+ * €1,200 rent budgeted this way was paced day by day like a grocery bill, and
+ * the day-to-day figure read "€1,350 of €1,600" when the honest answer was
+ * "€150 of €400".
+ */
+function categoryLooksDiscrete(data: AppData, category: string, amount: number, month: string): boolean {
+  if (FIXED_COST_CATEGORIES.has(category)) return true
+  if (SPREAD_CATEGORIES.has(category)) return false
+  const tol = Math.max(2, amount * 0.25)
+  const anySpend = data.transactions.some(
+    (t) => t.month < month && t.category === category && t.amount < 0,
+  )
+  const oneThatSize = data.transactions.some(
+    (t) =>
+      t.month < month &&
+      t.category === category &&
+      t.amount < 0 &&
+      Math.abs(Math.abs(t.amount) - amount) <= tol,
+  )
+  if (oneThatSize) return true
   // Spending in the category with no single charge that size is what a budget
   // spread over many purchases looks like.
-  return !data.transactions.some(
-    (t) => t.month < month && t.category === item.category && t.amount < 0,
-  )
+  return !anySpend
 }
 
 /** The day of the month this line has historically landed on, median of what we've seen. */
@@ -200,6 +227,12 @@ export interface CategoryPulse {
   vsAverage: number
   /** Where the month's elapsed days say this category should be by now. */
   paceTarget: number
+  /**
+   * Spending in this category a provision paid for. Out of `actual`, because
+   * the cost was charged to the months that funded the pot — kept here so the
+   * row can still say the bill was paid.
+   */
+  provisionCovered: number
   /**
    * True when a discrete bill is what this category's plan is for. Its unspent
    * plan is money already spoken for, not slack — offering to move an unpaid
@@ -367,6 +400,13 @@ export interface MonthPulse {
   /** Set-aside the plan still expects this month. */
   setAsideLeft: number
   /**
+   * The three kinds of money kept, actual against planned, dropping any that
+   * neither moved nor was planned for. Without it the set-aside total and the
+   * pot-by-pot list disagree for no visible reason: an index fund and a plain
+   * savings transfer are both money put by, and neither is a named pot.
+   */
+  setAsideSplit: { label: string; actual: number; planned: number }[]
+  /**
    * What is genuinely free once everything known is accounted for: money in
    * (arrived and still expected), less what has gone out, less the bills still
    * to land, less the pots still to be filled. The figure behind "can I spend".
@@ -396,10 +436,6 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   // Assumed spending per category, so a pocket the month takes on trust fills
   // its own budget line and nobody else's.
   const assumedByCat: Record<string, number> = {}
-  // Both sides of the committed half of the month, so pace can be asked of the
-  // everyday half alone.
-  let discretePlan = 0
-  let discreteArrived = 0
   const committedCats = new Set<string>()
   const claimedCharges = new Set<string>()
   for (const item of data.recurring) {
@@ -408,7 +444,6 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     if (amount <= 0.5) continue
     if (!looksDiscrete(data, item, amount, month)) continue
     committedCats.add(item.category)
-    discretePlan += amount
     const takenOnTrust = assumedAmountFor(data, item, amount, month)
     // Reality first, always. A charge that answers to this line fills the
     // pocket, and whatever the month was assuming about it stops counting —
@@ -417,15 +452,10 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     const arrived = arrivedCharge(item, amount, monthTxs, takenOnTrust, claimedCharges)
     if (arrived) {
       claimedCharges.add(arrived.id)
-      // What it really cost, not what the plan hoped. Taking the plan's figure
-      // out of the everyday half would leave the overshoot in it, and read a
-      // dear electricity bill as an evening out.
-      discreteArrived += arrived.amount
       continue
     }
     const typicalDay = typicalDayFor(data, item, amount, month)
     if (takenOnTrust !== null && takenOnTrust > 0.005) {
-      discreteArrived += takenOnTrust
       assumedByCat[item.category] = round2((assumedByCat[item.category] ?? 0) + takenOnTrust)
       assumed.push({
         id: item.id,
@@ -448,6 +478,19 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
       unassumed: FIXED_COST_CATEGORIES.has(item.category),
     })
   }
+  // A flat category budget with no plan line behind it still has to be told
+  // apart from a budget you spend down. Nothing here can become a pending bill
+  // — there is no line to mark paid and no day it lands — but a rent budgeted
+  // this way must leave the pace, or the everyday figure carries it.
+  const plannedCats = new Set(
+    data.recurring.filter((r) => r.flow === 'expense').map((r) => r.category),
+  )
+  for (const [cat, budget] of Object.entries(data.categoryBudgets)) {
+    if (plannedCats.has(cat) || isSetAsideCategory(cat) || NON_CASHFLOW.has(cat)) continue
+    if (budget <= 0.5 || !categoryLooksDiscrete(data, cat, budget, month)) continue
+    committedCats.add(cat)
+  }
+
   pending.sort((a, b) => a.typicalDay - b.typicalDay || b.amount - a.amount)
   assumed.sort((a, b) => a.day - b.day || b.amount - a.amount)
   const pendingTotal = round2(pending.reduce((s, p) => s + p.amount, 0))
@@ -499,21 +542,33 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     .map((c) => {
       const average = past && withData.length ? round2((past.expense[c.category] ?? 0) / withData.length) : 0
       const paceTarget = total > 0 ? round2((c.planned * elapsed) / total) : 0
+      // What a pot paid for is charged to the months that funded it, so it is
+      // not part of this month's spending — but the row must still say it
+      // happened, or a month that paid €3,600 of tax reads as having paid none.
+      // Kept as its own figure rather than folded into `actual`, which is what
+      // made the category table add up to €3,750 under a €150 headline.
+      const provisionCovered = round2(Math.min(c.actual, c.provisionCovered ?? 0))
       // An event row is keyed by the event, not the category, and a pocket
       // taken on trust belongs to the ordinary category line.
-      const actual = round2(c.actual + (c.eventId ? 0 : (assumedByCat[c.category] ?? 0)))
+      const actual = round2(
+        c.actual - provisionCovered + (c.eventId ? 0 : (assumedByCat[c.category] ?? 0)),
+      )
       return {
         category: c.category,
         planned: round2(c.planned),
         actual,
+        provisionCovered,
         left: round2(Math.max(0, c.planned - actual)),
         over: round2(Math.max(0, actual - c.planned)),
         average,
         vsAverage: round2(actual - average),
         paceTarget,
         // An event is a lump with dates, not a habit to pace — treated as
-        // committed so its unspent budget never reads as everyday slack.
-        committed: !!c.eventId || committedCats.has(c.category),
+        // committed so its unspent budget never reads as everyday slack. Money
+        // being put by is not a habit either: pacing a transfer into the tax
+        // pot against the days of the month says nothing about how you live.
+        committed:
+          !!c.eventId || committedCats.has(c.category) || isSetAsideCategory(c.category),
         ...(c.eventId ? { eventId: c.eventId } : {}),
       }
     })
@@ -524,18 +579,21 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   // bill already paid can't be counted as still coming and an overspent
   // category can't lend its excess back.
   const committedLeft = round2(categories.reduce((s, c) => s + c.left, 0))
-  // Events come out of both sides of the pace question too: three days of a
-  // trip is not a habit, and leaving it in would swamp the one measure that
-  // says whether ordinary spending is under control.
-  const eventRows = categories.filter((c) => c.eventId)
-  const eventPlan = round2(eventRows.reduce((s, c) => s + c.planned, 0))
-  const eventSpent = round2(eventRows.reduce((s, c) => s + c.actual, 0))
   const spent = round2(review.expenses + assumedTotal)
-  // Assumptions are only ever made about discrete bills, and every one of them
-  // is already inside `discreteArrived` — so the everyday half is untouched by
-  // them, which is the point: pace is a question about habits.
-  const everydaySpent = round2(Math.max(0, spent - discreteArrived - eventSpent))
-  const everydayPlan = round2(Math.max(0, review.plannedExpenses - discretePlan - eventPlan))
+  /**
+   * The everyday half, read straight off the rows rather than accumulated
+   * alongside them. Three days of a trip is not a habit; nor is a rent, nor
+   * money moved into a pot — and leaving any of them in swamps the one measure
+   * that says whether ordinary spending is under control.
+   *
+   * Derived from `categories` on purpose: the two used to be counted in
+   * parallel, and a budget the accumulator did not know about (a flat category
+   * budget, a transfer to savings) landed in the everyday figure while the
+   * table it is read beside called it committed.
+   */
+  const everydayRows = categories.filter((c) => !c.committed && !c.eventId)
+  const everydaySpent = round2(everydayRows.reduce((s, c) => s + c.actual, 0))
+  const everydayPlan = round2(everydayRows.reduce((s, c) => s + c.planned, 0))
   const everydayRate = elapsed > 0 ? everydaySpent / elapsed : 0
 
   return {
@@ -561,6 +619,11 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
     setAside: review.setAside,
     plannedSetAside: review.plannedSetAside,
     setAsideLeft,
+    setAsideSplit: [
+      { label: 'Provisions', actual: review.setAsideProvisions, planned: review.plannedSetAsideProvisions },
+      { label: 'Investments', actual: review.setAsideInvestments, planned: review.plannedSetAsideInvestments },
+      { label: 'Savings', actual: review.setAsideSavings, planned: review.plannedSetAsideSavings },
+    ].filter((b) => Math.abs(b.actual) > 0.5 || Math.abs(b.planned) > 0.5),
     freeToSpend: round2(
       review.income + incomeExpected - spent - committedLeft - review.setAside - setAsideLeft,
     ),
@@ -594,15 +657,29 @@ export function monthPulseText(data: AppData, month = currentMonth()): string {
         : ` — ${fx(Math.abs(p.projectedMonthEnd - p.plannedSpend))} ${p.projectedMonthEnd > p.plannedSpend ? 'over' : 'under'} plan.`),
   )
   lines.push(
-    `Day-to-day spending (the committed bills taken out of both sides) is ${fx(p.everydaySpent)} of ${fx(p.everydayPlan)} ` +
+    `Day-to-day spending (bills, events and money put by taken out of both sides) is ${fx(p.everydaySpent)} of ${fx(p.everydayPlan)} ` +
       `budgeted, where even pacing would put it near ${fx(p.everydayPaceTarget)} by now; at this daily rate it ends the ` +
       `month around ${fx(p.everydayPaceMonthEnd)}. Judge day-to-day habits on these figures, not on the totals above, ` +
       'which move with whether a big bill happens to have posted yet.',
   )
   if (p.setAside > 0.5 || p.plannedSetAside > 0.5) {
+    const moved = potMovements(data, [month])
     lines.push(
       `Set aside so far ${fx(p.setAside)} of ${fx(p.plannedSetAside)} planned` +
-        (p.setAsideLeft > 0.5 ? `, so ${fx(p.setAsideLeft)} still to move into pots this month.` : '.'),
+        (p.setAsideLeft > 0.5 ? `, so ${fx(p.setAsideLeft)} still to move into pots this month. ` : '. ') +
+        (moved.length
+          ? 'Pot by pot this month: ' +
+            moved
+              .map(
+                (m) =>
+                  `${m.label} ${m.contributed > 0.005 ? `${fx(m.contributed)} in` : ''}` +
+                  `${m.contributed > 0.005 && m.drawn > 0.005 ? ', ' : ''}` +
+                  `${m.drawn > 0.005 ? `${fx(m.drawn)} out` : ''} (now holds ${fx(m.balance)})`,
+              )
+              .join('; ') +
+            '.'
+          : 'Nothing has moved into or out of a named pot this month.') +
+        ' None of this is spending — it is kept, and it is already out of the day-to-day figures above.',
     )
   }
 

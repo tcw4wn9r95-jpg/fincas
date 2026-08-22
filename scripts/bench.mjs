@@ -1556,6 +1556,98 @@ console.log('\n── AF. Provisioning for an event, then spending the pot ─�
   eq('… and nothing is claimed to be set aside', without.setAside, 0)
 }
 
+console.log('\n── AG. The cards have to add up ──')
+{
+  // Every identity the eight headline figures implicitly claim, checked on the
+  // shapes that broke them: a flat category budget with no plan line behind it,
+  // a provisioning category that is also spent in, a bill a pot paid for, and a
+  // pot funded by a transfer filed as Internal.
+  const audit = (name, d, month = M(0), today = `${M(0)}-15`) => {
+    const p = MO.computeMonthPulse(d, month, today)
+    const r = F.computeReview(d, month)
+    eq(`${name}: in − out − aside = net`, round(r.income - r.expenses - r.setAside), r.net)
+    eq(`${name}: before-set-aside − aside = net`, round(r.netBeforeSetAside - r.setAside), r.net)
+    eq(`${name}: spent + still to come = will land at`, round(p.spent + p.committedLeft), p.projectedMonthEnd)
+    eq(
+      `${name}: free = money in − will land at − what is kept`,
+      round(p.incomeSoFar + p.incomeExpected - p.projectedMonthEnd - p.setAside - p.setAsideLeft),
+      p.freeToSpend,
+    )
+    eq(`${name}: the category rows sum to spent`, round(p.categories.reduce((s, c) => s + c.actual, 0)), p.spent)
+    eq(`${name}: the category plans sum to the plan`, round(p.categories.reduce((s, c) => s + c.planned, 0)), p.plannedSpend)
+    eq(`${name}: what's left per category sums to still to come`, round(p.categories.reduce((s, c) => s + c.left, 0)), p.committedLeft)
+    const everyday = p.categories.filter((c) => !c.committed && !c.eventId)
+    eq(`${name}: the pace is exactly the rows nothing has claimed`, round(everyday.reduce((s, c) => s + c.actual, 0)), p.everydaySpent)
+    ok(
+      `${name}: nothing being put by is in the pace`,
+      !everyday.some((c) => ['Savings', 'Investments', 'Provisions', 'Taxes', 'Travel'].includes(c.category)),
+    )
+    return { p, d }
+  }
+
+  const salary = line({ id: 'i', label: 'Salary', amount: 3000, flow: 'income', category: 'Income' })
+  const pay = tx({ date: `${M(0)}-02`, description: 'PAY', amount: 3000, category: 'Income' })
+  const shop = tx({ date: `${M(0)}-08`, description: 'SHOP', amount: -150, category: 'Food' })
+
+  // A rent budgeted as a flat category figure, with no plan line behind it.
+  const { p: flat, d: flatData } = audit('a flat category budget', base({
+    categoryBudgets: { Food: 400, Housing: 1200 },
+    transactions: [pay, shop, tx({ date: `${M(0)}-03`, description: 'RENT', amount: -1200, category: 'Housing' })],
+  }))
+  eq('a rent budgeted without a plan line still leaves the pace', flat.everydayPlan, 400)
+  ok('… and its category is marked as a bill', flat.categories.find((c) => c.category === 'Housing').committed)
+
+  // Money going into pots, some of it through a transfer filed as Internal.
+  const { p: putting } = audit('money going into pots', base({
+    provisions: [{ id: 'p1', label: 'Quarterly tax', category: 'Taxes', targetAmount: 3600, dueDate: `${M(2)}-20`, createdAt: `${M(-3)}-01` }],
+    recurring: [
+      salary,
+      line({ id: 'f', label: 'Groceries', amount: 400, flow: 'expense', category: 'Food' }),
+      line({ id: 't', label: 'Tax pot', amount: 600, flow: 'expense', category: 'Taxes' }),
+      line({ id: 'sv', label: 'Savings', amount: 200, flow: 'expense', category: 'Savings' }),
+    ],
+    transactions: [
+      pay,
+      shop,
+      tx({ id: 'mv', date: `${M(0)}-05`, description: 'TO POT', amount: -600, category: 'Internal',
+           provisionAllocations: [{ provisionId: 'p1', amount: 600, role: 'contribution' }] }),
+      tx({ date: `${M(0)}-05`, description: 'TO SAVINGS', amount: -200, category: 'Savings' }),
+    ],
+  }))
+  eq('a transfer earmarked to a pot counts as set aside however it is filed', putting.setAside, 800)
+  eq('… and none of it lands in the pace', putting.everydaySpent, 150)
+
+  // Spending in a provisioning category, with nothing planned as spending there.
+  const { p: spentThere } = audit('spending in a provisioning category', base({
+    recurring: [salary, line({ id: 'f', label: 'Groceries', amount: 400, flow: 'expense', category: 'Food' }),
+      line({ id: 'tv', label: 'Holiday fund', amount: 200, flow: 'expense', category: 'Travel' })],
+    transactions: [pay, shop, tx({ date: `${M(0)}-09`, description: 'RYANAIR', amount: -180, category: 'Travel' })],
+  }))
+  eq('travel spending is real spending', spentThere.spent, 330)
+  eq('… but it is not paced day to day', spentThere.everydaySpent, 150)
+
+  // A bill a pot paid for: out of the month's spending, still on its row.
+  const { p: drew, d: drewData } = audit('a bill a pot paid for', base({
+    provisions: [{ id: 'p1', label: 'Quarterly tax', category: 'Taxes', targetAmount: 3600, dueDate: `${M(0)}-20`, createdAt: `${M(-3)}-01` }],
+    recurring: [salary, line({ id: 'f', label: 'Groceries', amount: 400, flow: 'expense', category: 'Food' })],
+    transactions: [
+      pay,
+      shop,
+      tx({ date: `${M(0)}-19`, description: 'FROM POT', amount: 3600, category: 'Internal' }),
+      tx({ date: `${M(0)}-20`, description: 'TAX BILL', amount: -3600, category: 'Taxes',
+           provisionAllocations: [{ provisionId: 'p1', amount: 3600, role: 'drawdown' }] }),
+    ],
+  }))
+  eq('the month it lands in is not charged for it', drew.spent, 150)
+  eq('… and its row says the pot paid, rather than adding to the total', drew.categories.find((c) => c.category === 'Taxes').provisionCovered, 3600)
+
+  // What actually moved, pot by pot — the figure the set-aside total never gave.
+  const moved = P.potMovements(drewData, [M(0)])
+  eq('the month reports what came out of the pot', moved.map((m) => `${m.label}:${m.drawn}`).join(','), 'Quarterly tax:3600')
+  eq('… as a fall in the pot', moved[0].net, -3600)
+  eq('a month that touched no pot reports none', P.potMovements(flatData, [M(0)]).length, 0)
+}
+
 console.log('\n── S. The assistant reads individual transactions, not just totals ──')
 {
   const d = base({

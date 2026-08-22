@@ -56,6 +56,21 @@ export function planSection(item: RecurringItem): string {
 }
 
 /**
+ * A category whose money is put by rather than spent: the four provisioning
+ * categories, plus plain savings. The plan already routes lines in these to the
+ * set-aside total instead of to planned spending; this is the same question
+ * asked of a bare category name, for the places that have one and no plan line
+ * — a flat category budget, or a transaction filed under Travel with nothing
+ * planned at all.
+ *
+ * Exported because a figure that treats these as spending in one place and as
+ * money kept in another is how the same €200 gets asked for twice.
+ */
+export function isSetAsideCategory(category: string): boolean {
+  return category === SAVINGS_CATEGORY || PROVISION_CATS.has(category)
+}
+
+/**
  * A plan line that puts money aside rather than spending it: the planner's
  * Provisions section, and plain savings. These are compared against what was
  * actually set aside, never against spending.
@@ -995,14 +1010,10 @@ export function computeReview(data: AppData, month: string): MonthReview {
   // the spend it belongs to (e.g. a reimbursed Health cost shows its net).
   const netByCat: Record<string, number> = {}
   for (const t of txs) {
-    // Internal moves between your own accounts don't count as income/spending.
-    if (NON_CASHFLOW.has(t.category)) {
-      if (t.amount >= 0) excludedIn += t.amount
-      else excludedOut += Math.abs(t.amount)
-      continue
-    }
     // Money put into a pot is kept, not spent — it comes off this category
-    // before anything is called an expense, and lands on its own line.
+    // before anything is called an expense, and lands on its own line. Read
+    // before the non-cashflow test, because a transfer earmarked to a pot is
+    // money set aside however it is filed.
     const aside = setAsideAmount(t)
     setAside += aside
     if (aside) {
@@ -1010,6 +1021,12 @@ export function computeReview(data: AppData, month: string): MonthReview {
       if (bucket === 'savings') setAsideSavings += aside
       else if (bucket === 'investments') setAsideInvestments += aside
       else setAsideProvisions += aside
+    }
+    // Internal moves between your own accounts don't count as income/spending.
+    if (NON_CASHFLOW.has(t.category)) {
+      if (t.amount >= 0) excludedIn += t.amount
+      else excludedOut += Math.abs(t.amount)
+      continue
     }
     const key = budgetKey(t)
     netByCat[key] = (netByCat[key] ?? 0) + t.amount + aside
@@ -1092,7 +1109,7 @@ export function computeReview(data: AppData, month: string): MonthReview {
   const plannedExpenseByCat: Record<string, number> = { ...recurringExpenseByCat }
   for (const [cat, budget] of Object.entries(data.categoryBudgets)) {
     if (cat in plannedExpenseByCat) continue
-    if (cat === SAVINGS_CATEGORY || PROVISION_CATS.has(cat)) {
+    if (isSetAsideCategory(cat)) {
       plannedSetAside += budget
       if (cat === SAVINGS_CATEGORY) plannedSetAsideSavings += budget
       else if (cat === INVESTMENTS_CATEGORY) plannedSetAsideInvestments += budget

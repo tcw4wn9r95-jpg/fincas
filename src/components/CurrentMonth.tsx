@@ -7,6 +7,7 @@ import {
   type DuplicatePair,
 } from '../lib/month'
 import { monthsWithData } from '../lib/forecast'
+import { potMovements } from '../lib/provisions'
 import { eventsInRange } from '../lib/events'
 import { CATEGORIES, NON_CASHFLOW } from '../lib/categorize'
 import {
@@ -84,6 +85,7 @@ export function CurrentMonth({
   const activeMonth = month && months.includes(month) ? month : currentMonth()
 
   const pulse = useMemo(() => computeMonthPulse(data, activeMonth), [data, activeMonth])
+  const pots = useMemo(() => potMovements(data, [activeMonth]), [data, activeMonth])
   const monthEvents = useMemo(
     () => eventsInRange(data, `${activeMonth}-01`, lastDayOf(activeMonth), todayISO()),
     [data, activeMonth],
@@ -364,8 +366,8 @@ export function CurrentMonth({
             </span>
           </div>
           <p className="text-sm text-muted mb-2">
-            {fx(pulse.everydaySpent)} of the {fx(pulse.everydayPlan)} that isn't already committed to a bill —
-            the part of the month you actually steer.
+            {fx(pulse.everydaySpent)} of the {fx(pulse.everydayPlan)} that isn't a bill, an event, or money
+            being put by — the part of the month you actually steer.
           </p>
           {/* The filled bar is the budget spent; the marker is today. Past the
               marker is spending ahead of the date, not merely spending — but a
@@ -659,6 +661,87 @@ export function CurrentMonth({
         </div>
       )}
 
+      {/* ── Money put by ── */}
+      {(pulse.plannedSetAside > 0.5 || pulse.setAside > 0.5 || pots.length > 0) && (
+        <div className="card p-5">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <h3 className="text-lg">Money put by</h3>
+            <span className="tabular-nums text-sm text-muted">
+              {fx(pulse.setAside)} of {fx(pulse.plannedSetAside)} planned
+            </span>
+          </div>
+          <p className="text-sm text-muted mb-3">
+            Kept rather than spent, so none of it is in the spending figures above or in the pace —
+            putting €300 into the tax pot says nothing about how you're living this month.
+          </p>
+
+          {pulse.plannedSetAside > 0.5 && (
+            <>
+              <div className="h-2 rounded-full bg-line overflow-hidden">
+                <div
+                  className="h-full bg-forest rounded-full"
+                  style={{
+                    width: `${Math.min(100, Math.round((pulse.setAside / pulse.plannedSetAside) * 100))}%`,
+                  }}
+                />
+              </div>
+              <p className="text-xs text-muted mt-1.5">
+                {pulse.setAsideLeft > 0.5
+                  ? `${fx(pulse.setAsideLeft)} still to move this month — already counted against what's free to spend.`
+                  : 'Everything the plan asks for this month has been moved.'}
+              </p>
+            </>
+          )}
+
+          {pulse.setAsideSplit.length > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted mt-3">
+              {pulse.setAsideSplit.map((b) => (
+                <span key={b.label} className="tabular-nums">
+                  {b.label} <span className="text-ink">{fx(b.actual)}</span>
+                  {b.planned > 0.5 && ` of ${fx(b.planned)}`}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {pots.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {pots.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border border-line bg-canvas px-4 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium break-words">{p.label}</div>
+                    <div className="text-xs text-muted tabular-nums">
+                      {p.contributed > 0.005 && `${fx(p.contributed)} in`}
+                      {p.contributed > 0.005 && p.drawn > 0.005 && ' · '}
+                      {p.drawn > 0.005 && `${fx(p.drawn)} out`}
+                      {' · now holds '}
+                      {fx(p.balance)}
+                      {p.target > 0.005 && ` of ${fx(p.target)}`}
+                    </div>
+                  </div>
+                  <span
+                    className={classNames(
+                      'tabular-nums text-sm shrink-0 ml-auto',
+                      p.net >= 0 ? 'text-forest' : 'text-gold',
+                    )}
+                  >
+                    {fx(p.net, { signed: true })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted mt-3">
+              Nothing has moved into or out of a pot this month. Allocate a transfer to one when you
+              reconcile and it will show up here.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Costs the plan carries that simply are not due yet — the answer to
           "where is my insurance?" when the premium is annual. Never in any
           figure above: this month does not owe them. */}
@@ -746,6 +829,13 @@ export function CurrentMonth({
                               bill
                             </span>
                           )
+                        )}
+                        {/* Otherwise a category whose whole bill a pot paid
+                            reads as €0 spent with no explanation. */}
+                        {c.provisionCovered > 0.5 && (
+                          <div className="text-[11px] text-muted mt-0.5">
+                            {fx(c.provisionCovered)} paid from provisions
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-3 min-w-[110px]">

@@ -46,11 +46,15 @@ export function allocatedTotal(t: Transaction): number {
  * movements net off.
  */
 export function setAsideAmount(t: Transaction): number {
-  if (NON_CASHFLOW.has(t.category)) return 0
-  if (t.category === SAVINGS_CATEGORY || t.category === INVESTMENTS_CATEGORY) return round2(-t.amount)
   const contributed = transactionAllocations(t)
     .filter((a) => a.role === 'contribution')
     .reduce((s, a) => s + a.amount, 0)
+  // An earmark outranks the category. Moving money to the pot account is very
+  // often filed as an internal transfer, and reading only the category meant
+  // the pot's balance counted the €600 while the month reported none of it set
+  // aside — the same movement, two answers, on two screens.
+  if (NON_CASHFLOW.has(t.category)) return round2(Math.min(Math.max(0, -t.amount), contributed))
+  if (t.category === SAVINGS_CATEGORY || t.category === INVESTMENTS_CATEGORY) return round2(-t.amount)
   return round2(Math.min(Math.max(0, -t.amount), contributed))
 }
 
@@ -297,6 +301,66 @@ export function provisionCoveredByCategoryRange(data: AppData, months: string[])
     }
   }
   return covered
+}
+
+export interface PotMovement {
+  id: string
+  label: string
+  /** What went in over the period. */
+  contributed: number
+  /** What came back out to pay for something. */
+  drawn: number
+  /** contributed − drawn: what the period added to the pot, or took off it. */
+  net: number
+  /** The pot's standing balance now, for context on the movement. */
+  balance: number
+  /** What it is saving toward, when it has a target. */
+  target: number
+}
+
+/**
+ * What actually moved in and out of each pot over a set of months.
+ *
+ * The provisions list answers "how full is it"; this answers "what did this
+ * month do about it", which is the question a month's own screen is asking and
+ * the one no figure on it could previously answer. A pot with no movement in
+ * the period is left out — a list of every pot you did not touch is not news.
+ *
+ * The emergency fund is included on the same footing, and money earmarked to a
+ * pot that has since been deleted is dropped rather than attributed to nothing.
+ */
+export function potMovements(data: AppData, months: string[]): PotMovement[] {
+  const monthSet = new Set(months)
+  const known = new Map(data.provisions.map((p) => [p.id, p]))
+  const moved = new Map<string, { contributed: number; drawn: number }>()
+  for (const t of data.transactions) {
+    if (!monthSet.has(t.month)) continue
+    for (const a of transactionAllocations(t)) {
+      if (a.provisionId !== EMERGENCY_FUND_ID && !known.has(a.provisionId)) continue
+      const row = moved.get(a.provisionId) ?? { contributed: 0, drawn: 0 }
+      if (a.role === 'drawdown') row.drawn += a.amount
+      else row.contributed += a.amount
+      moved.set(a.provisionId, row)
+    }
+  }
+
+  const out: PotMovement[] = []
+  for (const [id, { contributed, drawn }] of moved) {
+    if (contributed < 0.005 && drawn < 0.005) continue
+    const pot = known.get(id)
+    out.push({
+      id,
+      label: pot?.label ?? EMERGENCY_FUND_LABEL,
+      contributed: round2(contributed),
+      drawn: round2(drawn),
+      net: round2(contributed - drawn),
+      balance: pot ? provisionStatus(data, pot).funded : emergencyFundStatus(data).balance,
+      target: pot?.targetAmount ?? data.emergencyFund?.targetAmount ?? 0,
+    })
+  }
+  // Biggest movement first, either direction — a €3,600 drawdown is the story
+  // of its month just as much as a €600 contribution is of another.
+  return out.sort((a, b) => Math.abs(b.net) - Math.abs(a.net) || b.contributed - a.contributed)
 }
 
 /** Single-month convenience wrapper — see `provisionCoveredByCategoryRange`. */

@@ -19,6 +19,7 @@ import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import {
   allProvisionStatuses,
   emergencyFundStatus,
+  potMovements,
   provisionCoveredByCategory,
   setAsideAmount,
   setAsideBucket,
@@ -402,6 +403,10 @@ export function MoneyDate({
       }))
   }, [review, monthTxs])
 
+  // What actually moved in and out of each pot this month — the other half of
+  // the set-aside card, which only ever gave a total.
+  const monthPots = useMemo(() => potMovements(data, [activeMonth]), [data, activeMonth])
+
   // Closing the loop: how far this month's plan still differs from its actuals,
   // over the categories that actually have transactions.
   const reconcileGap = useMemo(() => {
@@ -705,6 +710,70 @@ export function MoneyDate({
               </button>
             )}
           </div>
+
+          {/* ── Where money was put by ── */}
+          {(monthPots.length > 0 || review.setAside > 0.5 || review.plannedSetAside > 0.5) && (
+            <div className="card p-5">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <h3 className="text-lg">Where money was put by</h3>
+                <span className="tabular-nums text-sm text-muted">
+                  {fx(review.setAside)}
+                  {review.plannedSetAside > 0.5 && ` of ${fx(review.plannedSetAside)} planned`}
+                </span>
+              </div>
+              <p className="text-sm text-muted mb-3">
+                The set-aside total, pot by pot. None of it is in the spending figures — it was kept,
+                not spent — and a bill one of these paid for is charged to the months that filled it.
+              </p>
+
+              {setAsideRows.length > 0 && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted mb-3">
+                  {setAsideRows.map((r) => (
+                    <span key={r.key} className="tabular-nums">
+                      {r.label} <span className="text-ink">{fx(r.actual)}</span>
+                      {r.planned > 0.5 && ` of ${fx(r.planned)}`}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {monthPots.length > 0 ? (
+                <div className="space-y-2">
+                  {monthPots.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border border-line bg-canvas px-4 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium break-words">{p.label}</div>
+                        <div className="text-xs text-muted tabular-nums">
+                          {p.contributed > 0.005 && `${fx(p.contributed)} in`}
+                          {p.contributed > 0.005 && p.drawn > 0.005 && ' · '}
+                          {p.drawn > 0.005 && `${fx(p.drawn)} out`}
+                          {' · now holds '}
+                          {fx(p.balance)}
+                          {p.target > 0.005 && ` of ${fx(p.target)}`}
+                        </div>
+                      </div>
+                      <span
+                        className={classNames(
+                          'tabular-nums text-sm shrink-0 ml-auto',
+                          p.net >= 0 ? 'text-forest' : 'text-gold',
+                        )}
+                      >
+                        {fx(p.net, { signed: true })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted">
+                  Nothing was earmarked for a named pot this month. Allocate a transfer to one while
+                  reconciling and it will be broken down here.
+                </p>
+              )}
+            </div>
+          )}
 
           {monthEvents.length > 0 && (
             <div className="card p-5">
