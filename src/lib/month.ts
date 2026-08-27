@@ -10,6 +10,7 @@ import {
 } from './forecast'
 import { NON_CASHFLOW } from './categorize'
 import { potMovements } from './provisions'
+import { foreignLineMatches } from './fx'
 import { addMonths, currentMonth, todayISO } from './format'
 
 // The current month, while it is still being lived in — as opposed to the money
@@ -260,7 +261,9 @@ export interface DuplicatePair {
  *
  * Matched on date and amount alone: a typed "lunch" never resembles a card
  * statement's merchant string, so requiring the descriptions to agree would
- * find nothing.
+ * find nothing. A spend logged in another currency is matched on either figure
+ * — see `foreignLineMatches`, since the statement may post the dollars or the
+ * bank's own conversion of them, and never the reference rate we used.
  *
  * Plan lines are deliberately not in here. A budget pocket the month assumed
  * settled is not a transaction competing with the statement — the moment a real
@@ -275,9 +278,15 @@ export function duplicatePairs(data: AppData, month: string): DuplicatePair[] {
   const out: DuplicatePair[] = []
   for (const manual of monthTxs) {
     if (manual.source !== 'manual' || manual.notDuplicate) continue
-    const hit = imported.find(
-      (t) => !claimed.has(t.id) && t.date === manual.date && Math.abs(t.amount - manual.amount) < 0.005,
-    )
+    const exact = (t: Transaction) =>
+      !claimed.has(t.id) && t.date === manual.date && Math.abs(t.amount - manual.amount) < 0.005
+    const hit =
+      imported.find(exact) ??
+      // Only for a line that was paid abroad. Widening the rule for every
+      // manual entry would start pairing genuinely separate purchases.
+      (manual.foreign
+        ? imported.find((t) => !claimed.has(t.id) && t.amount < 0 && foreignLineMatches(manual, t))
+        : undefined)
     if (hit) {
       claimed.add(hit.id)
       out.push({ manual, imported: hit })

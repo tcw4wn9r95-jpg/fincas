@@ -19,6 +19,7 @@ import {
 } from './provisions'
 import { allEventStatuses, eventSummaryLine, eventBudgetForMonth } from './events'
 import { fundingPlan } from './funding'
+import { describeForeign } from './fx'
 import { CARD_PAYMENT_CATEGORY, NON_CASHFLOW, SAVINGS_CATEGORY, INVESTMENTS_CATEGORY } from './categorize'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -1458,7 +1459,15 @@ export function transactionLedger(data: AppData, months = 18): string {
   if (!rows.length) return 'No individual transactions recorded yet.'
   const accountName = (id?: string) => (id && data.accounts.find((a) => a.id === id)?.name) || 'Unlabelled'
   return (
-    `Individual transactions, newest first (date | account | description | amount | category):\n` +
-    rows.map((t) => `${t.date} | ${accountName(t.accountId)} | ${t.description} | ${fx(t.amount)} | ${t.category}`).join('\n')
+    `Individual transactions, newest first (date | account | description | amount | category). ` +
+    `An amount in brackets is what was paid in another currency — the figure before it is that ` +
+    `converted at the day's official rate, and is the one every total here counts:\n` +
+    rows
+      .map(
+        (t) =>
+          `${t.date} | ${accountName(t.accountId)} | ${t.description} | ${fx(t.amount)} | ${t.category}` +
+          (t.foreign ? ` (paid ${describeForeign(t.foreign, locale)})` : ''),
+      )
+      .join('\n')
   )
 }

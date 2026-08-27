@@ -4,6 +4,7 @@ import { parseFile, type StatementSummary } from '../lib/parse'
 import { applyStatementBalance, isCardAccount, trackedAccountName } from '../lib/forecast'
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey, todayISO } from '../lib/format'
+import { foreignLineMatches } from '../lib/fx'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -339,9 +340,14 @@ export function ImportModal({
     // statement: the arriving charge fills the pocket and the assumption stops
     // counting by itself, so there is nothing here to supersede.
     for (const r of rows) {
-      const hit = logged.find(
-        (m) => !claimed.has(m.id) && m.date === r.date && Math.abs(m.amount - r.amount) < 0.005,
-      )
+      const hit =
+        logged.find(
+          (m) => !claimed.has(m.id) && m.date === r.date && Math.abs(m.amount - r.amount) < 0.005,
+        ) ??
+        // A spend paid abroad is matched on either figure: the statement may
+        // post the original currency, or the bank's own conversion of it at a
+        // rate that is never the reference rate we recorded.
+        logged.find((m) => !claimed.has(m.id) && m.foreign && foreignLineMatches(m, r))
       if (hit) {
         claimed.add(hit.id)
         pairs.push({ rowId: r.id, manual: hit })

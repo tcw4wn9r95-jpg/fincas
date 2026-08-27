@@ -14,7 +14,9 @@ import {
 } from '../lib/events'
 import { provisionStatus, type ProvisionStatus } from '../lib/provisions'
 import { formatMoney, classNames, parseAmount, todayISO, uid } from '../lib/format'
-import type { EventKind, SpecialEvent, Transaction } from '../lib/types'
+import type { EventKind, ForeignAmount, SpecialEvent, Transaction } from '../lib/types'
+import { CurrencyPicker, RateNote, useForeignRate } from './ForeignAmount'
+import { describeForeign } from '../lib/fx'
 import { IconPlus, IconTrash, IconCheck, IconEvent, IconClose } from './icons'
 
 const KIND_LABEL: Record<EventKind, string> = {
@@ -193,7 +195,10 @@ export function Events() {
   }
 
   /** Log a spend on the spot — no statement needed, and it never hits the month's totals. */
-  function logExpense(id: string, expense: { date: string; label: string; amount: number; category: string }) {
+  function logExpense(
+    id: string,
+    expense: { date: string; label: string; amount: number; category: string; foreign?: ForeignAmount },
+  ) {
     update((d) => {
       const e = d.events?.find((x) => x.id === id)
       if (!e) return d
@@ -534,7 +539,13 @@ function EventDetail({
   fund?: ProvisionStatus
   onStartFund: () => void
   onStopFund: () => void
-  onLog: (x: { date: string; label: string; amount: number; category: string }) => void
+  onLog: (x: {
+    date: string
+    label: string
+    amount: number
+    category: string
+    foreign?: ForeignAmount
+  }) => void
   onRemoveExpense: (id: string) => void
   onTag: (txId: string, tagged: boolean) => void
   candidates: { tx: Transaction; source: 'month' | 'week' }[]
@@ -551,12 +562,25 @@ function EventDetail({
     today >= event.startDate && today <= event.endDate ? today : event.startDate,
   )
   const value = parseAmount(amount) || 0
+  // A trip is where this matters most: the bar bill is in dollars and the
+  // budget is in euros, and doing the sum in your head at the counter is how a
+  // trip's tally stops being kept at all.
+  const [payCurrency, setPayCurrency] = useState(currency)
+  const rate = useForeignRate(payCurrency, currency, date)
 
   function submit() {
-    if (value <= 0) return
-    onLog({ date, label: label.trim() || 'Expense', amount: Math.abs(value), category })
+    if (value <= 0 || !rate.usable) return
+    const paid = Math.abs(value)
+    onLog({
+      date,
+      label: label.trim() || 'Expense',
+      amount: rate.convert(paid),
+      category,
+      ...(rate.record(paid) ? { foreign: rate.record(paid) } : {}),
+    })
     setAmount('')
     setLabel('')
+    rate.reset()
   }
 
   const pending = pendingExpenses(event)
@@ -710,7 +734,8 @@ function EventDetail({
         <h3 className="text-lg">Add an expense</h3>
         <p className="text-sm text-muted mb-4">
           Log it now, while you're here. It counts against the budget straight away and stays out of
-          your month until the real transaction shows up.
+          your month until the real transaction shows up. Paying in another currency? Pick it and the
+          day's official rate does the sum.
         </p>
         <div className="flex flex-wrap gap-2">
           <input
@@ -723,6 +748,7 @@ function EventDetail({
             onKeyDown={(e) => e.key === 'Enter' && submit()}
             aria-label="Amount"
           />
+          <CurrencyPicker value={payCurrency} base={currency} onChange={setPayCurrency} />
           <input
             className="input flex-1 min-w-[140px]"
             placeholder="What was it?"
@@ -752,10 +778,18 @@ function EventDetail({
             onChange={(e) => setDate(e.target.value)}
             aria-label="Date"
           />
-          <button className="btn-primary" onClick={submit} disabled={value <= 0}>
+          <button className="btn-primary" onClick={submit} disabled={value <= 0 || !rate.usable}>
             <IconPlus width={16} height={16} /> Add
           </button>
         </div>
+        <RateNote
+          fx={rate}
+          amount={Math.abs(value)}
+          currency={payCurrency}
+          base={currency}
+          locale={locale}
+          date={date}
+        />
 
         {pending.length > 0 && (
           <div className="mt-4 divide-y divide-line/60">
@@ -764,6 +798,14 @@ function EventDetail({
                 <span className="text-muted w-12 shrink-0 tabular-nums">{x.date.slice(5)}</span>
                 <span className="flex-1 min-w-0 truncate">{x.label}</span>
                 <span className="pill bg-line/50 text-muted shrink-0">{x.category}</span>
+                {x.foreign && (
+                  <span
+                    className="pill bg-canvas text-muted shrink-0 hidden sm:inline"
+                    title={`Paid in ${x.foreign.currency}, converted at ${x.foreign.rate.toFixed(4)}`}
+                  >
+                    {describeForeign(x.foreign, locale)}
+                  </span>
+                )}
                 <span className="tabular-nums w-20 text-right shrink-0">{fx(x.amount)}</span>
                 <button
                   className="text-muted hover:text-clay shrink-0"

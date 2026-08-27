@@ -2,6 +2,10 @@
 // Everything here is persisted locally (browser storage) and/or to the
 // user's own Google Drive via JSON export. None of it touches GitHub.
 
+import type { ForeignAmount } from './fx'
+
+export type { ForeignAmount }
+
 export type Cadence =
   | 'monthly'
   | 'weekly'
@@ -88,6 +92,15 @@ export interface Transaction {
   month: string
   /** Marked true once reviewed/confirmed in the reconcile flow. */
   reconciled?: boolean
+  /**
+   * Set when the spend happened in another currency. `amount` above is always
+   * in the account's own currency — every figure in the app reads that field,
+   * and a budget that sometimes held dollars would be wrong everywhere at once
+   * — so this carries what was actually charged, and the rate it was converted
+   * at. Kept because it is the figure on the receipt, and the one a statement
+   * may well post.
+   */
+  foreign?: ForeignAmount
   /**
    * Legacy. Marked a row the app wrote from a plan line rather than something
    * observed — a fixed cost assumed paid, or a bill ticked off by hand. Nothing
@@ -211,10 +224,12 @@ export interface EventExpense {
   id: string
   date: string
   label: string
-  /** Positive: what was spent. */
+  /** Positive: what was spent, in the account's currency. */
   amount: number
   category: string
   matchedTxId?: string
+  /** Set when it was paid in another currency — see `Transaction.foreign`. */
+  foreign?: ForeignAmount
 }
 
 export type EventKind = 'travel' | 'party' | 'other'

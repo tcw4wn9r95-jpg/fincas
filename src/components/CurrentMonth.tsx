@@ -21,6 +21,8 @@ import {
   parseAmount,
 } from '../lib/format'
 import type { Transaction } from '../lib/types'
+import { describeForeign } from '../lib/fx'
+import { CurrencyPicker, RateNote, useForeignRate } from './ForeignAmount'
 import { ImportModal } from './ImportModal'
 import { IconUpload, IconChat, IconPlus, IconTrash, IconCheck } from './icons'
 
@@ -98,14 +100,24 @@ export function CurrentMonth({
     amount: '',
     category: 'Food' as string,
     date: todayISO(),
+    currency,
   })
+  const fx2 = useForeignRate(draft.currency, currency, draft.date || todayISO())
+  const draftAmount = Math.abs(parseAmount(draft.amount) || 0)
+
   function addManual() {
     const amount = parseAmount(draft.amount)
-    if (!draft.description.trim() || !amount) return
+    if (!draft.description.trim() || !amount || !fx2.usable) return
     // Typed into a "log a spend" box, a bare number means money out. Someone
     // recording a refund can still say so with a leading minus.
-    const signed = draft.amount.trim().startsWith('-') ? Math.abs(amount) : -Math.abs(amount)
+    const paid = Math.abs(amount)
+    // Stored in your own currency, always: every figure downstream reads this
+    // field, and one that sometimes held dollars would be wrong in every one
+    // of them. What the card was charged rides along beside it.
+    const own = fx2.convert(paid)
+    const signed = draft.amount.trim().startsWith('-') ? own : -own
     const date = draft.date || todayISO()
+    const foreign = fx2.record(paid)
     const t: Transaction = {
       id: uid(),
       date,
@@ -115,12 +127,16 @@ export function CurrentMonth({
       source: 'manual',
       month: date.slice(0, 7),
       reconciled: true,
+      ...(foreign ? { foreign } : {}),
     }
     update((d) => {
       d.transactions.push(t)
       return d
     })
-    setDraft({ description: '', amount: '', category: draft.category, date })
+    // The currency is sticky: a week abroad is a week of dollars, and
+    // resetting it after every entry would be a small tax on each one.
+    setDraft({ description: '', amount: '', category: draft.category, date, currency: draft.currency })
+    fx2.reset()
   }
 
   /**
@@ -407,7 +423,8 @@ export function CurrentMonth({
         <h3 className="text-lg">Log a spend</h3>
         <p className="text-sm text-muted mb-3">
           Anything you paid for that hasn't reached a statement yet. It counts against the budget straight
-          away, and if an import later brings in the same day and amount you'll be asked which to keep.
+          away, and if an import later brings in the same spend you'll be asked which to keep. Paid in
+          another currency? Say so and it's converted at that day's official rate.
         </p>
         <div className="flex flex-wrap gap-2">
           <input
@@ -437,6 +454,11 @@ export function CurrentMonth({
             onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
             onKeyDown={(e) => e.key === 'Enter' && addManual()}
           />
+          <CurrencyPicker
+            value={draft.currency}
+            base={currency}
+            onChange={(c) => setDraft({ ...draft, currency: c })}
+          />
           <input
             className="input w-auto"
             type="date"
@@ -444,10 +466,18 @@ export function CurrentMonth({
             value={draft.date}
             onChange={(e) => setDraft({ ...draft, date: e.target.value })}
           />
-          <button className="btn-primary" onClick={addManual}>
+          <button className="btn-primary" onClick={addManual} disabled={!fx2.usable}>
             <IconPlus width={16} height={16} /> Log
           </button>
         </div>
+        <RateNote
+          fx={fx2}
+          amount={draftAmount}
+          currency={draft.currency}
+          base={currency}
+          locale={locale}
+          date={draft.date || todayISO()}
+        />
 
         {pulse.manualTxs.length > 0 && (
           <div className="mt-4 pt-4 border-t border-line space-y-1.5">
@@ -472,6 +502,16 @@ export function CurrentMonth({
                   defaultValue={t.description}
                   onBlur={(e) => editTx(t.id, { description: e.target.value.trim() || t.description })}
                 />
+                {t.foreign && (
+                  <span
+                    className="pill bg-canvas text-muted shrink-0"
+                    title={`Paid in ${t.foreign.currency}, converted at ${t.foreign.rate.toFixed(4)} (${
+                      t.foreign.manual ? 'your rate' : `ECB rate for ${t.foreign.rateDate}`
+                    })`}
+                  >
+                    {describeForeign(t.foreign, locale)}
+                  </span>
+                )}
                 {t.notDuplicate && (
                   <button
                     className="pill bg-canvas text-muted shrink-0 hover:text-ink"

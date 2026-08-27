@@ -33,6 +33,7 @@ const fmt = await server.ssrLoadModule('/src/lib/format.ts')
 const PA = await server.ssrLoadModule('/src/lib/parse.ts')
 const MO = await server.ssrLoadModule('/src/lib/month.ts')
 const EV = await server.ssrLoadModule('/src/lib/events.ts')
+const FX = await server.ssrLoadModule('/src/lib/fx.ts')
 
 const NOW = fmt.currentMonth()
 const round = (n) => Math.round(n * 100) / 100
@@ -1646,6 +1647,74 @@ console.log('\n── AG. The cards have to add up ──')
   eq('the month reports what came out of the pot', moved.map((m) => `${m.label}:${m.drawn}`).join(','), 'Quarterly tax:3600')
   eq('… as a fall in the pot', moved[0].net, -3600)
   eq('a month that touched no pot reports none', P.potMovements(flatData, [M(0)]).length, 0)
+}
+
+console.log('\n── AH. A spend paid in another currency ──')
+{
+  // $50 at the ECB's reference rate for the day. Stored in the account's own
+  // currency, with the receipt kept beside it.
+  const rate = 0.86453
+  eq('the amount stored is the converted one', FX.convert(50, rate), 43.23)
+
+  const logged = {
+    date: `${M(0)}-14`, amount: -43.23,
+    foreign: { amount: 50, currency: 'USD', rate, rateDate: `${M(0)}-14` },
+  }
+
+  // Three ways the statement can carry it back.
+  ok('a statement posting the dollars is recognised', FX.foreignLineMatches(logged, { date: `${M(0)}-14`, amount: -50 }))
+  ok('… so is one posting our own conversion', FX.foreignLineMatches(logged, { date: `${M(0)}-14`, amount: -43.23 }))
+  ok(
+    '… and one posting the bank’s, which is never the reference rate',
+    FX.foreignLineMatches(logged, { date: `${M(0)}-16`, amount: -44.1 }),
+  )
+  ok('a foreign charge settling two days late still matches', FX.foreignLineMatches(logged, { date: `${M(0)}-16`, amount: -43.23 }))
+
+  // But not anything of roughly that size.
+  ok('a week later is a different spend', !FX.foreignLineMatches(logged, { date: `${M(0)}-22`, amount: -43.23 }))
+  ok('a charge well outside the spread is a different spend', !FX.foreignLineMatches(logged, { date: `${M(0)}-14`, amount: -52 }))
+  ok('a line with no foreign amount is never matched loosely', !FX.foreignLineMatches({ date: `${M(0)}-14`, amount: -43.23 }, { date: `${M(0)}-14`, amount: -44.1 }))
+
+  // End to end: the pair is offered so the month isn't counted twice.
+  const d = base({
+    transactions: [
+      tx({ id: 'mine', date: `${M(0)}-14`, description: 'Dinner in New York', amount: -43.23, category: 'Dining', source: 'manual',
+           foreign: { amount: 50, currency: 'USD', rate, rateDate: `${M(0)}-14` } }),
+      tx({ id: 'bank', date: `${M(0)}-16`, description: 'JOES PIZZA NEW YORK', amount: -44.1, category: 'Dining' }),
+    ],
+  })
+  const pairs = MO.duplicatePairs(d, M(0))
+  eq('the logged spend and the charge that settled it are paired', pairs.length, 1)
+  eq('… the hand-logged one being the one to drop', pairs[0].manual.id, 'mine')
+  eq('… and the statement the record to keep', pairs[0].imported.id, 'bank')
+  eq('until one goes, the month counts both', MO.computeMonthPulse(d, M(0), `${M(0)}-20`).spent, 87.33)
+
+  // Two dollar spends on one day don't both claim the same charge.
+  const two = base({
+    transactions: [
+      tx({ id: 'a', date: `${M(0)}-14`, description: 'Lunch', amount: -43.23, category: 'Dining', source: 'manual',
+           foreign: { amount: 50, currency: 'USD', rate, rateDate: `${M(0)}-14` } }),
+      tx({ id: 'b', date: `${M(0)}-14`, description: 'Dinner', amount: -43.23, category: 'Dining', source: 'manual',
+           foreign: { amount: 50, currency: 'USD', rate, rateDate: `${M(0)}-14` } }),
+      tx({ id: 'bank', date: `${M(0)}-15`, description: 'RESTAURANT', amount: -44.1, category: 'Dining' }),
+    ],
+  })
+  eq('one charge can only settle one of them', MO.duplicatePairs(two, M(0)).length, 1)
+
+  // The event tally works the same way: a bar bill logged in dollars is
+  // answered by the charge, whichever figure the card posts.
+  const ev = {
+    id: 'e1', label: 'New York', kind: 'travel', startDate: `${M(0)}-12`, endDate: `${M(0)}-18`,
+    budget: 900, category: 'Travel', createdAt: `${M(0)}-01`,
+    expenses: [{ id: 'x1', date: `${M(0)}-14`, label: 'Bar', amount: 43.23, category: 'Dining',
+                 foreign: { amount: 50, currency: 'USD', rate, rateDate: `${M(0)}-14` } }],
+  }
+  const charge = tx({ id: 'c', date: `${M(0)}-15`, description: 'BAR NYC', amount: -44.1, category: 'Dining' })
+  const hit = EV.matchingExpense(ev, charge)
+  eq('the logged bar bill is recognised in the charge', hit?.id, 'x1')
+  const trip = base({ events: [ev], transactions: [charge] })
+  EV.tagTransactionToEvent(trip, 'e1', 'c')
+  eq('… so tagging it retires the line rather than doubling it', EV.eventStatus(trip, trip.events[0], `${M(0)}-20`).spent, 44.1)
 }
 
 console.log('\n── S. The assistant reads individual transactions, not just totals ──')

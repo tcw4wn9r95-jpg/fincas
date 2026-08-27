@@ -1,5 +1,6 @@
 import type { AppData, EventExpense, Provision, SpecialEvent, Transaction } from './types'
 import { provisionStatus } from './provisions'
+import { foreignLineMatches } from './fx'
 
 // Special events (a trip, a party) are budgeted as a lump and spent in a burst.
 // Two things feed the running total, and they must never both count the same
@@ -239,10 +240,20 @@ export function eventCandidates(data: AppData, e: SpecialEvent): EventTaggedTx[]
   ].sort((a, b) => a.tx.date.localeCompare(b.tx.date))
 }
 
-/** The logged line a newly tagged transaction most likely already stands for. */
+/**
+ * The logged line a newly tagged transaction most likely already stands for.
+ *
+ * A line paid abroad answers to either figure — the original currency, or the
+ * bank's own conversion of it — since a trip is exactly when a hand-logged
+ * spend and the charge that settles it are quoted in different money.
+ */
 export function matchingExpense(e: SpecialEvent, tx: Transaction): EventExpense | undefined {
   const amount = round2(Math.abs(tx.amount))
-  return pendingExpenses(e).find((x) => Math.abs(x.amount - amount) < 0.005)
+  const pending = pendingExpenses(e)
+  return (
+    pending.find((x) => Math.abs(x.amount - amount) < 0.005) ??
+    pending.find((x) => x.foreign && foreignLineMatches({ ...x, amount: -x.amount }, tx))
+  )
 }
 
 /**
