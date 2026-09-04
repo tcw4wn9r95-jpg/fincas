@@ -138,6 +138,16 @@ export function IconInsights(p: IconProps) {
     </svg>
   )
 }
+export function IconTax(p: IconProps) {
+  // A public building with a coin: the tax office, not a calculator.
+  return (
+    <svg {...base} {...p}>
+      <path d="M3 9.5 12 4l9 5.5" />
+      <path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8" />
+      <path d="M3 21h18" />
+    </svg>
+  )
+}
 export function IconCheck(p: IconProps) {
   return (
     <svg {...base} {...p}>

@@ -420,10 +420,10 @@ export function startingBalance(data: AppData): number {
  * balance; `startingBalance` is where a projection starts, and mid-month the
  * two are deliberately different.
  */
-export function balanceToday(data: AppData): number {
-  const now = currentMonth()
+export function balanceToday(data: AppData, today = todayISO()): number {
+  const now = today.slice(0, 7)
   if (!hasBalanceAnchor(data)) return 0
-  return round2(startingBalance(data) + netBetween(data, now, `${now}-00`, todayISO()))
+  return round2(startingBalance(data) + netBetween(data, now, `${now}-00`, today))
 }
 
 // Defined with the categories themselves (and re-exported here, where most

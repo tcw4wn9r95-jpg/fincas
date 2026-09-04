@@ -3,6 +3,7 @@
 // user's own Google Drive via JSON export. None of it touches GitHub.
 
 import type { ForeignAmount } from './fx'
+import type { TaxData } from './tax'
 
 export type { ForeignAmount }
 
@@ -318,6 +319,12 @@ export interface AppData {
    * needs somewhere to live, or the default would simply reapply itself.
    */
   autoPaySkips?: string[]
+  /**
+   * Income tax: the household's own facts, the years already assessed, and the
+   * advance-payment schedule. Absent until a tax file is loaded or the first
+   * year is typed in — the rest of the app works without it.
+   */
+  tax?: TaxData
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */

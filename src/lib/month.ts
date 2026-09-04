@@ -649,11 +649,11 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
  * habit, because the question this gets asked is "can I afford X" — which is
  * unanswerable from a spend-to-date total alone.
  */
-export function monthPulseText(data: AppData, month = currentMonth()): string {
+export function monthPulseText(data: AppData, month = currentMonth(), today = todayISO()): string {
   const { currency, locale } = data.settings
   const fx = (n: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(n)
-  const p = computeMonthPulse(data, month)
+  const p = computeMonthPulse(data, month, today)
   const lines: string[] = []
 
   lines.push(

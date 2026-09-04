@@ -34,11 +34,17 @@ const PA = await server.ssrLoadModule('/src/lib/parse.ts')
 const MO = await server.ssrLoadModule('/src/lib/month.ts')
 const EV = await server.ssrLoadModule('/src/lib/events.ts')
 const FX = await server.ssrLoadModule('/src/lib/fx.ts')
+const TX = await server.ssrLoadModule('/src/lib/tax.ts')
 
 const NOW = fmt.currentMonth()
 const round = (n) => Math.round(n * 100) / 100
 /** The month `n` months from this one — the whole bench is relative to today. */
 const M = (n) => fmt.addMonths(NOW, n)
+/** How many days month `n` actually has — the bench runs in every month. */
+const daysIn = (n) => {
+  const [y, m] = M(n).split('-').map(Number)
+  return new Date(y, m, 0).getDate()
+}
 /** The last day of month `n` — where a statement's closing balance lands. */
 const endOf = (n) => {
   const [y, m] = M(n).split('-').map(Number)
@@ -508,7 +514,7 @@ console.log('\n── M. Rolling a recorded balance forward, day by day ──')
     ],
   })
   eq('the days already lived through come back out', F.startingBalance(typedToday), 5000 - 2000)
-  eq('… and what is held today is still what was typed', F.balanceToday(typedToday), 5000)
+  eq('… and what is held today is still what was typed', F.balanceToday(typedToday, today), 5000)
 
   // 6. The ledger's last settled row lands on the recorded balance.
   const led = F.buildLedger(
@@ -990,7 +996,7 @@ console.log('\n── X. The month in progress: what is left once what is coming
 
   const food = p.categories.find((c) => c.category === 'Food')
   eq('a category reports what it has left', food.left, 250)
-  eq('… and where even pacing would put it by the 10th', food.paceTarget, round((400 * 10) / 31))
+  eq('… and where even pacing would put it by the 10th', food.paceTarget, round((400 * 10) / daysIn(0)))
 
   // ── The same spend, typed and then imported ──
   const doubled = base({
@@ -1018,10 +1024,18 @@ console.log('\n── X. The month in progress: what is left once what is coming
   ok('… while a variable budget is not', !p.categories.find((c) => c.category === 'Food').committed)
 
   // What the assistant is handed.
-  const text = MO.monthPulseText(d, M(0))
+  const text = MO.monthPulseText(d, M(0), today)
   ok('the assistant is told what is still expected out', text.includes('still expects'))
   ok('… and what is free to spend', text.includes('Free to spend'))
-  const movable = text.split('\n').find((l) => l.startsWith('Running behind plan')) ?? ''
+  const movableIn = (t) => t.split('\n').find((l) => l.startsWith('Running behind plan')) ?? ''
+  // 150 of a 400 budget on day 10 of the month is ahead of an even pace, not
+  // behind it — so there is nothing here to offer, and saying otherwise would
+  // have the assistant lend out money already spoken for.
+  ok('a budget running ahead of pace is not offered as movable', !movableIn(text).includes('Food'))
+
+  // The same month with one shop instead of two: now it genuinely is behind.
+  const behind = base({ ...d, transactions: d.transactions.filter((t) => t.id !== 'f1') })
+  const movable = movableIn(MO.monthPulseText(behind, M(0), today))
   ok('unspent grocery budget is offered as movable', movable.includes('Food'))
   ok('an unpaid rent is never offered as movable', !movable.includes('Housing'))
 }
@@ -1156,7 +1170,8 @@ console.log('\n── Z. A planned event books its own line, prorated across the
     id: 'e1',
     label: 'Lisbon trip',
     kind: 'travel',
-    // Four days in this month, five in the next: 9 days in all.
+    // From the 28th into the 5th of next month. How many days that is in each
+    // depends on the month's length, so the shares are derived, not assumed.
     startDate: `${M(0)}-28`,
     endDate: `${M(1)}-05`,
     budget: 900,
@@ -1176,27 +1191,31 @@ console.log('\n── Z. A planned event books its own line, prorated across the
     ],
   })
 
-  eq('the budget splits by the days it runs in each month', EV.eventBudgetForMonth(ev, M(0)), 400)
-  eq('… and the rest belongs to the next', EV.eventBudgetForMonth(ev, M(1)), 500)
+  const hereDays = daysIn(0) - 28 + 1
+  const totalDays = hereDays + 5
+  const hereShare = round((900 * hereDays) / totalDays)
+  const nextShare = round(900 - hereShare)
+  eq('the budget splits by the days it runs in each month', EV.eventBudgetForMonth(ev, M(0)), hereShare)
+  eq('… and the rest belongs to the next', EV.eventBudgetForMonth(ev, M(1)), nextShare)
   eq('the two shares are the whole budget, counted once', EV.eventBudgetForMonth(ev, M(0)) + EV.eventBudgetForMonth(ev, M(1)), 900)
   eq('a month it never touches gets nothing', EV.eventBudgetForMonth(ev, M(-1)), 0)
 
   const r0 = F.computeReview(d, M(0))
   const row = r0.categories.find((c) => c.eventId === 'e1')
   eq('the event gets a line of its own, named after it', row.category, 'Lisbon trip')
-  eq('… budgeted at this month\'s share', row.planned, 400)
+  eq("… budgeted at this month's share", row.planned, hereShare)
   eq('… carrying the spending tagged to it', row.actual, 120)
 
   // The tagged restaurant must have left Dining, or the month counts it twice.
   const dining = r0.categories.find((c) => c.category === 'Dining')
   eq('tagged spending leaves its ordinary category', dining.actual, 40)
   eq('… so the month total still counts every euro exactly once', r0.expenses, 160)
-  eq('and the plan carries the event share on top of the ordinary budget', r0.plannedExpenses, 600)
+  eq('and the plan carries the event share on top of the ordinary budget', r0.plannedExpenses, round(200 + hereShare))
 
   // The next month picks up the rest of the trip.
   const r1 = F.computeReview(d, M(1))
   const row1 = r1.categories.find((c) => c.eventId === 'e1')
-  eq('the following month books the remaining share', row1.planned, 500)
+  eq('the following month books the remaining share', row1.planned, nextShare)
   eq('… and the spending that happened in it', row1.actual, 300)
 
   // The event's own screen is unchanged: it still sees the whole trip.
@@ -1715,6 +1734,143 @@ console.log('\n── AH. A spend paid in another currency ──')
   const trip = base({ events: [ev], transactions: [charge] })
   EV.tagTransactionToEvent(trip, 'e1', 'c')
   eq('… so tagging it retires the line rather than doubling it', EV.eventStatus(trip, trip.events[0], `${M(0)}-20`).spent, 44.1)
+}
+
+console.log('\n── AI. Luxembourg tax, against a real bulletin d’impôt ──')
+{
+  // The only test that means anything here: reproduce an assessment the ACD
+  // actually issued, line by line, to the euro. A bracket estimate for this
+  // household came out roughly €11,800 light, so nothing is approximated —
+  // the tarif is stocked as published and checked against the real figures.
+  const settings = {
+    taxClass: '2', bothEmployed: true, householdSize: 2,
+    occupancyStart: '2022-12-01', occupancyYearCountsAsFirst: true,
+  }
+
+  // The scale itself, before any household facts.
+  const { scale, published } = TX.scaleForYear('2025')
+  ok('a published tarif is used for a year that has one', published)
+  eq('the top rate is 42%', scale.bands.at(-1).rate, 0.42)
+  eq('class 2 halves, taxes, and doubles', TX.taxForClass(scale, 180700, '2'), 46002)
+  eq('… which is exactly what the 2025 bulletin says', TX.baseTax(scale, 90350) * 2, 46002)
+
+  const y2025 = {
+    year: '2025',
+    people: [
+      { label: 'Taxpayer', gross: 117362.93, socialSecurity: 12943.63, lrcp: 1200, withholding: 14649.40, expensesLumpSum: 540, source: 'certificate' },
+      { label: 'Spouse', gross: 104773.34, socialSecurity: 11544.21, lrcp: 1200, withholding: 12407.40, expensesLumpSum: 540, source: 'certificate' },
+    ],
+    mortgageInterest: 36579.38,
+    insurancePremiums: 415.07,
+    privatePension: 0,
+    advancesPaid: 29500,
+  }
+  const r = TX.computeLuTax(settings, y2025)
+
+  eq('net employment income', r.netEmploymentIncome, 221056.27)
+  eq('mortgage interest is capped at the household ceiling', r.netRentalIncome, -8000)
+  eq('total net income', r.totalNetIncome, 213056.27)
+  eq('premiums under the floor are worth the floor, not themselves', r.allowedArt111, 960)
+  eq('total special expenses', r.totalSpecialExpenses, 27847.84)
+  eq('taxable income', r.taxableIncome, 185208.43)
+  eq('adjusted for the abattement extraprofessionnel', r.adjustedTaxableIncome, 180708.43)
+  eq('rounded down to the nearest 50 for the scale', r.roundedForScale, 180700)
+  eq('income tax per the scale', r.incomeTax, 46002)
+  eq('fonds pour l’emploi at 7%', r.fondsPourLEmploi, 3220.14)
+  eq('total tax due', Math.round(r.totalTaxDue), 49222)
+  eq('less withholding, the balance the bulletin carried', Math.round(r.totalTaxDue - r.withholding), 22165)
+  eq('less the advances already paid, a refund', Math.round(r.balance), -7335)
+  eq('the effective rate the bulletin reports', Math.round(r.effectiveRatePct * 100) / 100, 27.24)
+  ok('a year built from certificates is not marked an estimate', !r.estimated)
+
+  // What a deduction is worth, which is the whole reason to model this.
+  ok('the marginal rate is in the mid-40s or above', r.marginalRatePct > 40 && r.marginalRatePct < 50)
+
+  // The tiered mortgage ceiling, and the year it turns over.
+  eq('in year 4 of occupancy the ceiling is 4000 each', TX.mortgageCeiling(settings, '2025').perPerson, 4000)
+  eq('… still 4000 in 2026', TX.mortgageCeiling(settings, '2026').perPerson, 4000)
+  eq('… and steps down to 3000 in 2027', TX.mortgageCeiling(settings, '2027').perPerson, 3000)
+  eq(
+    'reading the first full year as year one moves that step a year later',
+    TX.mortgageCeiling({ ...settings, occupancyYearCountsAsFirst: false }, '2027').perPerson,
+    4000,
+  )
+  eq('and it never expires, only settles at 2000', TX.mortgageCeiling(settings, '2040').perPerson, 2000)
+
+  // A year with no published tarif is computed on the last one, and says so.
+  const ahead = TX.scaleForYear('2026')
+  ok('a year with no published tarif is flagged', !ahead.published)
+  eq('… and falls back to the most recent one', ahead.scale.year, '2025')
+
+  // The untapped lever the household has never used.
+  const withPension = TX.computeLuTax(settings, { ...y2025, privatePension: 6400 })
+  ok('a private pension contribution cuts the tax', withPension.totalTaxDue < r.totalTaxDue)
+  // And it drags the insurance premiums in with it. Those 415.07 were worth
+  // nothing while the category sat under the 960 floor; once the pension lifts
+  // it over, every euro underneath starts counting — so the deduction gained is
+  // not the contribution less the floor, it is the whole category less the floor.
+  eq('the category now stands on its own figures', withPension.allowedArt111, 6815.07)
+  eq(
+    '… so the gain is the whole category over the floor, at the marginal rate',
+    Math.round(r.totalTaxDue - withPension.totalTaxDue),
+    Math.round((withPension.allowedArt111 - 960) * (r.marginalRatePct / 100)),
+    // The scale works in 50-euro steps, so the saving lands within one of them.
+    25,
+  )
+  eq('the marginal rate is 39% on each half, plus the 7% surcharge', r.marginalRatePct, 41.73)
+
+  // A year whose own tarif is not stocked is not computed at all when the ACD
+  // has already assessed it: running 2024 income through the 2025 scale came
+  // out €1,600 light, and quoting that at someone holding the real bulletin is
+  // worse than quoting the bulletin.
+  const y2024 = {
+    year: '2024',
+    people: [
+      { label: 'Taxpayer', gross: 131180.07, socialSecurity: 14431.59, lrcp: 1200, withholding: 16502, expensesLumpSum: 540, source: 'certificate' },
+      { label: 'Spouse', gross: 114110.75, socialSecurity: 12548.60, lrcp: 1200, withholding: 16882.20, expensesLumpSum: 540, source: 'certificate' },
+    ],
+    mortgageInterest: 39731.26, insurancePremiums: 806.32, privatePension: 0, advancesPaid: 0,
+  }
+  const bulletin2024 = {
+    year: '2024', adjustedTaxableIncome: 201370.63, incomeTax: 55551, totalTaxDue: 59439,
+    withholding: 33384.20, advancesPaid: 0, balance: 26054.80,
+  }
+  const r24 = TX.computeLuTax(settings, y2024, bulletin2024)
+  ok('an unstocked year takes its tax from the bulletin', r24.taxFromBulletin)
+  eq('… at the assessed figure', r24.totalTaxDue, 59439)
+  eq('… with the fonds pour l’emploi it actually carried', r24.fondsPourLEmploi, 3888)
+  // Every line the model does own still has to match, or the deference is
+  // hiding a fault rather than avoiding one.
+  eq('the income lines are the model’s own, and agree', r24.netEmploymentIncome, 244210.82)
+  eq('… as does taxable income', r24.taxableIncome, 205870.63)
+  eq('… and the adjusted figure the bulletin scaled from', r24.adjustedTaxableIncome, 201370.63)
+  eq('… and the balance it carried forward', Math.round(r24.balance), 26055)
+  ok('without a bulletin it would have to compute, and say which scale', !TX.computeLuTax(settings, y2024).taxFromBulletin)
+
+  // Reading a part year against a whole one is how a September forecast turns
+  // into a 25% pay cut.
+  const cash = base({
+    transactions: [
+      ...Array.from({ length: 12 }, (_, i) =>
+        tx({ date: `2025-${String(i + 1).padStart(2, '0')}-28`, description: 'PAY', amount: 1000, category: 'Income' })),
+      ...Array.from({ length: 9 }, (_, i) =>
+        tx({ date: `2026-${String(i + 1).padStart(2, '0')}-28`, description: 'PAY', amount: 1100, category: 'Income' })),
+    ],
+  })
+  eq('a full year counts everything', TX.incomeReceivedIn(cash, '2025').amount, 12000)
+  eq('… and the same stretch of it counts only that', TX.incomeReceivedIn(cash, '2025', 9).amount, 9000)
+  eq('nine months of this year', TX.incomeReceivedIn(cash, '2026').amount, 9900)
+  eq(
+    'compared like with like, the raise shows as a raise',
+    round(TX.incomeReceivedIn(cash, '2026').amount / TX.incomeReceivedIn(cash, '2025', 9).amount),
+    1.1,
+  )
+
+  // Estimating a year nobody has a certificate for.
+  const est = TX.estimateYear('2026', y2025, 1.03)
+  ok('every person on an estimated year is marked as one', est.people.every((p) => p.source === 'estimated'))
+  ok('… and the computation carries the warning up', TX.computeLuTax(settings, est).estimated)
+  eq('… scaled off the certified year', est.people[0].gross, 120883.82)
 }
 
 console.log('\n── S. The assistant reads individual transactions, not just totals ──')

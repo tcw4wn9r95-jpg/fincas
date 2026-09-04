@@ -5,6 +5,7 @@ import { MoneyDate } from './components/MoneyDate'
 import { CurrentMonth } from './components/CurrentMonth'
 import { Events } from './components/Events'
 import { Insights } from './components/Insights'
+import { Tax } from './components/Tax'
 import { Chat } from './components/Chat'
 import { Plan } from './components/Plan'
 import { Settings } from './components/Settings'
@@ -15,6 +16,7 @@ import {
   IconWeek,
   IconEvent,
   IconInsights,
+  IconTax,
   IconChat,
   IconPlan,
   IconSettings,
@@ -30,6 +32,7 @@ type Tab =
   | 'money-date'
   | 'events'
   | 'insights'
+  | 'tax'
   | 'assistant'
   | 'plan'
   | 'settings'
@@ -56,14 +59,15 @@ const TRACK: NavItem[] = [
 const REST: NavItem[] = [
   { id: 'assistant', label: 'Assistant', icon: IconChat, hint: 'Ask about your money' },
   { id: 'insights', label: 'Insights', icon: IconInsights, hint: 'Trends worth knowing' },
+  { id: 'tax', label: 'Tax', icon: IconTax, hint: 'What you owe, and when' },
   { id: 'plan', label: 'Plan', icon: IconPlan, hint: 'Income, bills, provisions' },
   { id: 'settings', label: 'Settings', icon: IconSettings, hint: 'Keys, backup, data' },
 ]
 
 const GROUPS: { title: string; items: NavItem[] }[] = [
   { title: 'Track', items: TRACK },
-  { title: 'Understand', items: REST.slice(0, 2) },
-  { title: 'Set up', items: REST.slice(2) },
+  { title: 'Understand', items: REST.slice(0, 3) },
+  { title: 'Set up', items: REST.slice(3) },
 ]
 
 export function App() {
@@ -180,6 +184,7 @@ export function App() {
             )}
             {tab === 'events' && <Events />}
             {tab === 'insights' && <Insights goToSettings={() => go('settings')} />}
+            {tab === 'tax' && <Tax />}
             {tab === 'assistant' && (
               <Chat
                 goToSettings={() => go('settings')}
