@@ -413,6 +413,14 @@ export function ProvisionModal({
                   // already been split by hand — in which case that split is
                   // the answer and nothing is added on top of it.
                   const autoPays = transactionAllocations(tx).length === 0
+                  // What saving would actually draw: what the pot holds, what
+                  // this line still needs, and what is left of the budget —
+                  // the pot pays for the plan, not for going over it.
+                  const willDraw = fund
+                    ? round2(
+                        Math.min(total, fund.funded, Math.max(0, e.budget - fund.drawn)),
+                      )
+                    : 0
                   return (
                     <div key={e.id}>
                       <button
@@ -455,10 +463,18 @@ export function ProvisionModal({
                           {fund.funded > 0.005 ? (
                             autoPays ? (
                               <p className="text-xs text-muted">
-                                {fx(fund.funded)} saved up for this — saving takes{' '}
-                                {fx(Math.min(total, fund.funded))} of it out for this spend, so it
-                                never lands on the month. Override the figure on the “Pull from
-                                savings” tab if only part of it came from the pot.
+                                {fx(fund.funded)} saved up for this
+                                {willDraw > 0.005 ? (
+                                  <>
+                                    {' '}
+                                    — saving takes {fx(willDraw)} of it out for this spend, so that
+                                    much never lands on the month.
+                                    {total - willDraw > 0.005 &&
+                                      ` The other ${fx(total - willDraw)} is over the budget, so this month carries it.`}
+                                  </>
+                                ) : (
+                                  ', but the budget is already fully claimed — this is overspend, so the month carries it. It still counts against the event.'
+                                )}
                               </p>
                             ) : (
                               <div className="flex flex-wrap items-center justify-between gap-2">

@@ -114,16 +114,23 @@ export function eventProvision(
  * having a full pot *and* a budget left to spend, which is the same money
  * counted twice.
  *
- * Deliberately bounded three ways, because a draw that is wrong is worse than
+ * Deliberately bounded four ways, because a draw that is wrong is worse than
  * one that is missing:
  *
  *  - never more than the pot holds, so an event never spends money it was
- *    never given. What the pot cannot cover falls on the month, and the event
- *    screen says so out loud rather than quietly overdrawing;
+ *    never given;
+ *  - never past the budget. The pot was funded to pay for the plan, and money
+ *    spent beyond the plan is overspend: it belongs to the month, where it can
+ *    be felt. A pot that happens to hold more than the budget would otherwise
+ *    absorb a blown budget without anything anywhere saying so;
  *  - never more of the line than is still unallocated, so a transaction already
  *    split across other pots keeps those splits intact;
  *  - never over an allocation someone typed. A figure entered by hand is a
  *    decision; only the app's own draw (`auto`) is topped up or taken back.
+ *
+ * Whichever way it is bounded, the tagging itself always stands: what the pot
+ * will not cover still counts as this event's spending, because the point of
+ * tagging is to know what the trip really cost.
  */
 export function drawFromEventFund(d: AppData, e: SpecialEvent, t: Transaction): number {
   // Money coming back is not a spend the pot can pay for, and putting a refund
@@ -137,8 +144,13 @@ export function drawFromEventFund(d: AppData, e: SpecialEvent, t: Transaction): 
   if (existing.some((a) => a.role === 'contribution')) return 0
   const mine = existing.find((a) => a.provisionId === fund.id)
   if (mine && !mine.auto) return 0
-  const available = potBalance(d, fund.id).balance
-  const amount = round2(Math.min(unallocatedAmount(t), Math.max(0, available)))
+  const pot = potBalance(d, fund.id)
+  // The pot's own drawdowns are this event's, so what it has already paid is
+  // what has been claimed against the budget.
+  const budgetLeft = round2(Math.max(0, e.budget - pot.drawn))
+  const amount = round2(
+    Math.min(unallocatedAmount(t), Math.max(0, pot.balance), budgetLeft),
+  )
   if (amount < 0.005) return 0
   // Rebuilt rather than mutated in place: `transactionAllocations` hands back
   // fabricated rows for legacy single-link data, where editing the copy would
@@ -256,13 +268,10 @@ export interface EventStatus {
   /** Taken back out of that pot to pay for the event. */
   fundDrawn: number
   /**
-   * Spending the pot did not cover, so the month is paying for it: either it
-   * ran dry, or there was never a pot at all. The honest counterpart to
-   * `fundDrawn` — and the figure that used to be guessed at as
-   * `spent − setAside`, which went wrong the moment the pot started emptying.
-   *
-   * A month's question, not the event's: the event screen asks only whether you
-   * are inside the budget, so this is read where money and month meet.
+   * Confirmed spending the pot did not cover, so a month is carrying it: the
+   * pot ran dry, the spend went past the budget, or there was never a pot at
+   * all. Always `confirmed − fundDrawn`, so the two account for every euro that
+   * has actually left the bank and the split can be shown without a remainder.
    */
   outOfPocket: number
   hasProvision: boolean
@@ -299,11 +308,12 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
   const fundStatus = fund ? provisionStatus(data, fund) : undefined
   const setAside = fundStatus?.funded ?? 0
   const fundDrawn = fundStatus?.drawn ?? 0
-  // Spending logged by hand has not reached the bank, so the pot still holds
-  // the cash — but it is promised, and counting it as uncovered would report a
-  // shortfall that only exists until the statement lands.
-  const committed = round2(Math.min(pending, setAside))
-  const outOfPocket = round2(Math.max(0, spent - fundDrawn - committed))
+  // Measured against confirmed spending alone, so the two parts always add back
+  // up to it. A line logged by hand has not reached the bank, so no month is
+  // carrying it yet and the pot has not paid it either — counting it here would
+  // report a shortfall that exists only until the statement lands, and would
+  // leave the split on screen adding up to less than the total it sits under.
+  const outOfPocket = round2(Math.max(0, confirmed - fundDrawn))
 
   const phase: EventPhase = today < e.startDate ? 'upcoming' : today > e.endDate ? 'past' : 'live'
 

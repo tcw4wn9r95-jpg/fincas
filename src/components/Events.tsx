@@ -650,6 +650,18 @@ function EventDetail({
             <span className="tabular-nums text-sage">Logged by hand {fx(status.pending)}</span>
           )}
         </div>
+        {/* What it really cost, and out of whose pocket. Not a running
+            commentary on the pot — it appears only once something has landed
+            on the month, which is the one fact the budget figures above cannot
+            tell you: overspend on a provisioned trip is real money out of this
+            month, and it is worth seeing the split rather than only the total. */}
+        {status.hasProvision && status.outOfPocket > 0.005 && (
+          <p className="text-xs text-muted mt-2">
+            Of the {fx(status.confirmed)} that has landed, {fx(status.fundDrawn)} came out of what
+            you set aside and{' '}
+            <span className="text-clay">{fx(status.outOfPocket)} out of the month</span>.
+          </p>
+        )}
       </div>
 
       {/* Saving up for it — while it is still ahead, and only then.
