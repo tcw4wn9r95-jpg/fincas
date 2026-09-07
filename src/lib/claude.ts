@@ -255,6 +255,7 @@ export async function streamTransactionAdvice(
     '- Allocating has a direction: "set aside" adds to a pot, "pull from savings" takes money out of one to cover this spend. Pulling is the right call when the money for this really came out of a pot, whatever the spend was for.',
     '- The emergency fund is the catch-all pot for money not earmarked for any named bill.',
     '- Events (trips, parties) have their own budget and dates; spending inside those dates can be tagged to the event so it is judged against that budget instead of the month.',
+    '- Tagging a spend to an event that has a pot also takes the money out of that pot, up to what it holds — the user does not need to pull from savings separately. Anything the pot cannot cover falls on the month.',
     '- Teaching a rule makes every future import with matching wording take a category automatically. Worth suggesting for anything recurring.',
     '- Money put into a pot is reported as savings, not as spending.',
     '',

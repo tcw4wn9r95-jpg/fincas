@@ -167,6 +167,13 @@ export interface ProvisionAllocation {
    * (`provisionRoleFor`), since savings can pay for anything.
    */
   role: 'contribution' | 'drawdown'
+  /**
+   * Written by the app rather than typed: the draw an event's own pot makes
+   * when a spend is tagged to it. Marked so untagging can give it back —
+   * a figure someone entered by hand is a decision and must survive, while
+   * one this app inferred should disappear with the reason for it.
+   */
+  auto?: boolean
 }
 
 export interface Goal {
@@ -253,6 +260,15 @@ export interface SpecialEvent {
   category: string
   /** The sinking fund saving up for it, when one was created. */
   provisionId?: string
+  /**
+   * Whether spending tagged to this event comes out of its own pot. Absent
+   * means yes, which is the whole point of having provisioned: the money was
+   * put by so the trip would not land on the month it happens in, and asking
+   * the user to say so again for every single spend is asking them to do the
+   * same thing twice. Set false to keep the pot untouched and let the spending
+   * fall on the month after all.
+   */
+  payFromFund?: boolean
   /** Logged live during the event — see `EventExpense`. */
   expenses: EventExpense[]
   notes?: string

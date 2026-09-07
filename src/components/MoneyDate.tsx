@@ -808,6 +808,10 @@ export function MoneyDate({
                     <div className="text-xs text-muted mt-1.5">
                       {e.over ? `${fx(-e.remaining)} over budget` : `${fx(e.remaining)} under budget`}
                       {e.pendingCount > 0 && ` · ${e.pendingCount} logged line${e.pendingCount === 1 ? '' : 's'} still to confirm`}
+                      {/* Why a trip can cost four figures and barely move the
+                          month: its pot paid, in the months that filled it. */}
+                      {e.fundDrawn > 0.005 && ` · ${fx(e.fundDrawn)} paid out of its pot`}
+                      {e.outOfPocket > 0.005 && ` · ${fx(e.outOfPocket)} carried by this month`}
                     </div>
                   </button>
                 ))}

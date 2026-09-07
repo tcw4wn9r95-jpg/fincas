@@ -1,5 +1,12 @@
 import type { AppData, EventExpense, Provision, SpecialEvent, Transaction } from './types'
-import { provisionStatus } from './provisions'
+import {
+  addAllocation,
+  dropAllocations,
+  potBalance,
+  provisionStatus,
+  transactionAllocations,
+  unallocatedAmount,
+} from './provisions'
 import { foreignLineMatches } from './fx'
 
 // Special events (a trip, a party) are budgeted as a lump and spent in a burst.
@@ -96,6 +103,93 @@ export function eventProvision(
   return e.provisionId ? data.provisions.find((p) => p.id === e.provisionId) : undefined
 }
 
+/**
+ * Whether an event's own pot pays for its spending. Absent means yes: money is
+ * put by ahead of a trip precisely so the trip does not land on the month it
+ * happens in, and having to say so again for every single spend is the same
+ * decision made twice.
+ */
+export function eventPaysFromFund(e: Pick<SpecialEvent, 'payFromFund'>): boolean {
+  return e.payFromFund !== false
+}
+
+/**
+ * Take a spend out of the event's own pot, in place on a store draft, and
+ * return what it drew.
+ *
+ * This is the other half of tagging. Filing a charge under a trip says what it
+ * was for; this says where the money came from — and when a pot was funded for
+ * exactly this, the answer is not in doubt. Leaving it to a second pass through
+ * the allocation pop-up meant a trip that was fully provisioned still read as
+ * having a full pot *and* a budget left to spend, which is the same money
+ * counted twice.
+ *
+ * Deliberately bounded three ways, because a draw that is wrong is worse than
+ * one that is missing:
+ *
+ *  - never more than the pot holds, so an event never spends money it was
+ *    never given. What the pot cannot cover falls on the month, and the event
+ *    screen says so out loud rather than quietly overdrawing;
+ *  - never more of the line than is still unallocated, so a transaction already
+ *    split across other pots keeps those splits intact;
+ *  - never over an allocation someone typed. A figure entered by hand is a
+ *    decision; only the app's own draw (`auto`) is topped up or taken back.
+ */
+export function drawFromEventFund(d: AppData, e: SpecialEvent, t: Transaction): number {
+  // Money coming back is not a spend the pot can pay for, and putting a refund
+  // back into the pot is a decision rather than a consequence of tagging.
+  if (t.amount >= 0) return 0
+  const fund = eventProvision(d, e)
+  if (!fund) return 0
+  const existing = transactionAllocations(t)
+  // One line moves money one way — the pop-up picks a single direction for the
+  // whole split — so a transfer that is putting money away is left alone.
+  if (existing.some((a) => a.role === 'contribution')) return 0
+  const mine = existing.find((a) => a.provisionId === fund.id)
+  if (mine && !mine.auto) return 0
+  const available = potBalance(d, fund.id).balance
+  const amount = round2(Math.min(unallocatedAmount(t), Math.max(0, available)))
+  if (amount < 0.005) return 0
+  // Rebuilt rather than mutated in place: `transactionAllocations` hands back
+  // fabricated rows for legacy single-link data, where editing the copy would
+  // change nothing at all.
+  const total = mine ? round2(mine.amount + amount) : amount
+  if (mine) dropAllocations(t, (a) => a.provisionId === fund.id)
+  addAllocation(t, { provisionId: fund.id, amount: total, role: 'drawdown', auto: true })
+  return amount
+}
+
+/**
+ * Give back what tagging took. Only the draws this app made itself: a figure
+ * someone typed is theirs, and a spend leaving an event is no reason to undo a
+ * decision they made on purpose.
+ */
+export function releaseEventFund(e: Pick<SpecialEvent, 'provisionId'>, t: Transaction): void {
+  if (!e.provisionId) return
+  dropAllocations(t, (a) => !!a.auto && a.role === 'drawdown' && a.provisionId === e.provisionId)
+}
+
+/**
+ * Pay for everything this event has already cost out of what is still in its
+ * pot — the catch-up for spends tagged before the money was there, or before
+ * this app drew on the pot at all. Returns what it drew in total.
+ *
+ * Oldest first, until the pot runs dry: the money went in to be spent in the
+ * order the trip happened, and a rule that spends it in date order is one the
+ * reader can predict. Unlike tagging, this ignores `payFromFund` — it only ever
+ * runs because someone asked for it in as many words.
+ */
+export function settleEventFromFund(d: AppData, eventId: string): number {
+  const e = d.events?.find((x) => x.id === eventId)
+  if (!e || !eventProvision(d, e)) return 0
+  let drawn = 0
+  const spends = d.transactions
+    .filter((t) => t.eventId === eventId && t.amount < 0)
+    .sort((a, b) => a.date.localeCompare(b.date))
+  for (const t of spends) drawn = round2(drawn + drawFromEventFund(d, e, t))
+  return drawn
+}
+
 /** Same spend seen twice — used to keep the weekly sample from double-counting the statement. */
 const dedupeKey = (t: Transaction) => `${t.date}|${t.amount}`
 
@@ -148,6 +242,23 @@ export interface EventStatus {
   over: boolean
   /** Funded so far by the linked provision, if there is one. */
   setAside: number
+  /** Taken back out of that pot to pay for the event. */
+  fundDrawn: number
+  /**
+   * Pot money already spoken for by hand-logged spending. A logged line is not
+   * a bank movement, so the pot really does still hold the cash — but it is
+   * promised, and reading it as spare is how the same euro gets planned twice.
+   */
+  fundCommitted: number
+  /** `setAside` less what is spoken for: what the pot can still pay for. */
+  fundAvailable: number
+  /**
+   * Spending the pot did not cover, so the month is paying for it: either it
+   * ran dry, or there was never a pot at all. The honest counterpart to
+   * `fundDrawn` — and the figure that used to be guessed at as
+   * `spent − setAside`, which went wrong the moment the pot started emptying.
+   */
+  outOfPocket: number
   hasProvision: boolean
   phase: EventPhase
   /** Days until it starts (upcoming), or days it runs / ran. */
@@ -179,7 +290,14 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
   pending = round2(pending)
   const spent = round2(confirmed + pending)
   const fund = eventProvision(data, e)
-  const setAside = fund ? provisionStatus(data, fund).funded : 0
+  const fundStatus = fund ? provisionStatus(data, fund) : undefined
+  const setAside = fundStatus?.funded ?? 0
+  const fundDrawn = fundStatus?.drawn ?? 0
+  // What is left in the pot is claimed by the spending you have logged but the
+  // bank has not yet shown you — that money is going to leave.
+  const fundCommitted = round2(Math.min(pending, setAside))
+  const fundAvailable = round2(Math.max(0, setAside - fundCommitted))
+  const outOfPocket = round2(Math.max(0, spent - fundDrawn - fundCommitted))
 
   const phase: EventPhase = today < e.startDate ? 'upcoming' : today > e.endDate ? 'past' : 'live'
 
@@ -198,6 +316,10 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
     pct: e.budget > 0 ? Math.round((spent / e.budget) * 100) : 0,
     over: spent > e.budget + 0.005,
     setAside,
+    fundDrawn,
+    fundCommitted,
+    fundAvailable,
+    outOfPocket,
     hasProvision: !!fund,
     phase,
     daysToStart: daysBetween(today, e.startDate),
@@ -301,13 +423,23 @@ export function tagTransactionToEvent(
   /** Retire this logged line as the transaction's counterpart, whatever it says. */
   matchExpenseId?: string,
 ): void {
-  const lists = [d.transactions, d.sampleTransactions ?? []]
-  for (const list of lists) {
+  // Only real transactions move a pot: the weekly sample is a duplicate view of
+  // the same spending (see `AppData.sampleTransactions`), and drawing on its
+  // rows too would take the same euro out of the pot twice.
+  const lists: [Transaction[], boolean][] = [
+    [d.transactions, true],
+    [d.sampleTransactions ?? [], false],
+  ]
+  for (const [list, real] of lists) {
     for (const t of list) {
       if (t.id !== txId) continue
-      // Leaving an event releases whatever was standing in for this line.
+      // Leaving an event releases whatever was standing in for this line — the
+      // logged expense it retired, and the draw its pot made for it.
       const previous = t.eventId ? d.events?.find((x) => x.id === t.eventId) : undefined
-      if (previous) for (const x of previous.expenses) if (x.matchedTxId === txId) x.matchedTxId = undefined
+      if (previous) {
+        for (const x of previous.expenses) if (x.matchedTxId === txId) x.matchedTxId = undefined
+        if (real) releaseEventFund(previous, t)
+      }
       t.eventId = eventId
       if (!eventId) continue
       const e = d.events?.find((x) => x.id === eventId)
@@ -316,6 +448,10 @@ export function tagTransactionToEvent(
         ? e.expenses.find((x) => x.id === matchExpenseId)
         : matchingExpense(e, t)
       if (chosen) chosen.matchedTxId = t.id
+      // The other half of the same decision: what it was for, and where the
+      // money came from. Saying only the first is what left a fully funded trip
+      // showing a full pot and an untouched budget at the same time.
+      if (real && eventPaysFromFund(e)) drawFromEventFund(d, e, t)
     }
   }
 }
@@ -340,7 +476,11 @@ export function eventSummaryLine(e: EventStatus, fx: (n: number) => string): str
     `${e.label} [${e.category}, ${when}, ${e.startDate}${e.endDate !== e.startDate ? `–${e.endDate}` : ''}]: ` +
     `${fx(e.spent)} spent of ${fx(e.budget)} budget` +
     (e.pending > 0.005 ? ` (${fx(e.pending)} of that logged by hand, not yet in a statement)` : '') +
-    (e.hasProvision ? `, ${fx(e.setAside)} set aside` : '') +
+    (e.hasProvision
+      ? `, ${fx(e.setAside)} left in its pot` +
+        (e.fundDrawn > 0.005 ? ` after ${fx(e.fundDrawn)} paid out of it` : '') +
+        (e.outOfPocket > 0.005 ? `, ${fx(e.outOfPocket)} of it paid by the month instead` : '')
+      : '') +
     (e.over ? ` — over by ${fx(-e.remaining)}` : `, ${fx(e.remaining)} left`)
   )
 }

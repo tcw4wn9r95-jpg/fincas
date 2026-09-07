@@ -80,6 +80,19 @@ export function unallocatedAmount(t: Transaction): number {
 }
 
 /**
+ * Add one allocation to a transaction, in place. The mirror of
+ * `dropAllocations`, and normalising through `transactionAllocations` for the
+ * same reason: a pre-split transaction must gain a second bucket rather than
+ * quietly lose the one it already had.
+ */
+export function addAllocation(t: Transaction, alloc: ProvisionAllocation): void {
+  t.provisionAllocations = [...transactionAllocations(t), alloc]
+  t.provisionId = undefined
+  t.provisionRole = undefined
+  t.provisionAmount = undefined
+}
+
+/**
  * Drop the matching allocations from a transaction, in place. Legacy
  * single-link data is normalised through `transactionAllocations` first, so a
  * pre-split transaction can't quietly survive its provision being deleted or
@@ -96,6 +109,35 @@ export function dropAllocations(
   t.provisionId = undefined
   t.provisionRole = undefined
   t.provisionAmount = undefined
+}
+
+export interface PotBalance {
+  /** Paid in over all time. */
+  contributed: number
+  /** Taken back out to pay for something. */
+  drawn: number
+  /** contributed − drawn. Negative when more came out than ever went in. */
+  balance: number
+}
+
+/**
+ * What one pot holds, straight off the allocations. The single place that sum
+ * is done: `provisionStatus` and `emergencyFundStatus` both dress it up, and so
+ * does the event funding, which has to read a pot's balance in the middle of an
+ * update — before any status object exists, and after the draw it made a moment
+ * ago for the previous line.
+ */
+export function potBalance(data: AppData, provisionId: string): PotBalance {
+  let contributed = 0
+  let drawn = 0
+  for (const t of data.transactions) {
+    for (const a of transactionAllocations(t)) {
+      if (a.provisionId !== provisionId) continue
+      if (a.role === 'drawdown') drawn += a.amount
+      else contributed += a.amount
+    }
+  }
+  return { contributed: round2(contributed), drawn: round2(drawn), balance: round2(contributed - drawn) }
 }
 
 /**
@@ -121,23 +163,14 @@ export interface EmergencyFundStatus {
 
 /** The emergency fund's balance, derived live from tagged transactions. */
 export function emergencyFundStatus(data: AppData): EmergencyFundStatus {
-  let contributed = 0
-  let drawn = 0
-  for (const t of data.transactions) {
-    for (const a of transactionAllocations(t)) {
-      if (a.provisionId !== EMERGENCY_FUND_ID) continue
-      if (a.role === 'drawdown') drawn += a.amount
-      else contributed += a.amount
-    }
-  }
-  const net = round2(contributed - drawn)
+  const { contributed, drawn, balance: net } = potBalance(data, EMERGENCY_FUND_ID)
   const targetAmount = data.emergencyFund?.targetAmount ?? 0
   const balance = Math.max(0, net)
   return {
     targetAmount,
     balance,
-    contributed: round2(contributed),
-    drawn: round2(drawn),
+    contributed,
+    drawn,
     pct: targetAmount > 0 ? Math.min(100, Math.round((balance / targetAmount) * 100)) : 0,
     overdrawn: Math.max(0, -net),
   }
@@ -179,16 +212,7 @@ export interface ProvisionStatus {
 
 /** A provision's accrued balance and progress, derived live from tagged transactions. */
 export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
-  let contributed = 0
-  let drawn = 0
-  for (const t of data.transactions) {
-    for (const a of transactionAllocations(t)) {
-      if (a.provisionId !== p.id) continue
-      if (a.role === 'drawdown') drawn += a.amount
-      else contributed += a.amount
-    }
-  }
-  const balance = round2(contributed - drawn)
+  const { contributed, drawn, balance } = potBalance(data, p.id)
   const funded = Math.max(0, balance)
   const overdrawn = Math.max(0, -balance)
   const pct = p.targetAmount > 0 ? Math.min(100, Math.round((funded / p.targetAmount) * 100)) : 0
@@ -220,8 +244,8 @@ export function provisionStatus(data: AppData, p: Provision): ProvisionStatus {
     startDate: start,
     notStarted,
     funded,
-    contributed: round2(contributed),
-    drawn: round2(drawn),
+    contributed,
+    drawn,
     pct,
     monthsRemaining,
     suggestedMonthly,

@@ -11,6 +11,7 @@ import {
   type EmergencyFundStatus,
   type ProvisionStatus,
 } from '../lib/provisions'
+import { eventPaysFromFund } from '../lib/events'
 import type { ProvisionAllocation, SpecialEvent, Transaction } from '../lib/types'
 import { IconClose, IconProvision } from './icons'
 import { Portal } from './Portal'
@@ -273,12 +274,24 @@ export function ProvisionModal({
     setAmount(p.id, String(suggestProvisionAmount(tx, p, Math.max(0, remaining), direction)))
   }
 
+  /**
+   * Whether a saved row is still the draw this app made rather than a figure
+   * someone decided on. Merely opening this pop-up and pressing Save must not
+   * silently adopt the app's own working — the mark is what lets untagging the
+   * event give the money back — so an untouched row keeps it and a changed one
+   * loses it.
+   */
+  function autoFor(id: string, amount: number): boolean {
+    const was = transactionAllocations(tx).find((a) => a.provisionId === id)
+    return !!was?.auto && was.role === direction && Math.abs(was.amount - amount) < 0.005
+  }
+
   function save() {
     const next: ProvisionAllocation[] = []
     for (const p of allocatable) {
       const amount = round2(Math.max(0, parseAmount(amounts[p.id] ?? '') || 0))
       if (amount <= 0) continue
-      next.push({ provisionId: p.id, amount, role: direction })
+      next.push({ provisionId: p.id, amount, role: direction, ...(autoFor(p.id, amount) && { auto: true }) })
     }
     const toFund = round2(Math.max(0, parseAmount(amounts[EMERGENCY_FUND_ID] ?? '') || 0))
     if (toFund > 0) next.push({ provisionId: EMERGENCY_FUND_ID, amount: toFund, role: direction })
@@ -334,7 +347,7 @@ export function ProvisionModal({
             </div>
             <p className="text-xs text-muted mt-2">
               {onEventTab
-                ? 'Counts this spend against the event’s budget as well as the month’s — filed under the event rather than its category, so it is only ever counted once.'
+                ? 'Files this spend under the event rather than its category, so it is only ever counted once — and if the event has a pot with money in it, that pot pays for it.'
                 : pulling
                   ? `Reduces the pots below by what you take out. ${tx.category} stays the reason for the spend — this only says where the money came from.`
                   : 'Adds to the pots below, saving up for what they’re for.'}
@@ -397,6 +410,11 @@ export function ProvisionModal({
                 {orderedEvents.map((e) => {
                   const picked = eventId === e.id
                   const fund = e.provisionId ? statusById.get(e.provisionId) : undefined
+                  // Saving does the draw itself, so long as this line has not
+                  // already been split by hand — in which case that split is
+                  // the answer and nothing is added on top of it.
+                  const autoPays =
+                    eventPaysFromFund(e) && transactionAllocations(tx).length === 0
                   return (
                     <div key={e.id}>
                       <button
@@ -437,23 +455,30 @@ export function ProvisionModal({
                       {picked && fund && (
                         <div className="mt-1.5 rounded-xl border border-forest/25 bg-forest-tint/10 p-3">
                           {fund.funded > 0.005 ? (
-                            <>
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <span className="text-sm">
-                                  {fx(fund.funded)} saved up for this
-                                </span>
-                                <button
-                                  className="btn-subtle text-xs shrink-0"
-                                  onClick={() => payFromFund(fund.id, fund.funded)}
-                                >
-                                  Pay for this out of it
-                                </button>
-                              </div>
-                              <p className="text-xs text-muted mt-1">
-                                Takes {fx(Math.min(total, fund.funded))} out of the pot instead of
-                                letting it land on this month.
+                            autoPays ? (
+                              <p className="text-xs text-muted">
+                                {fx(fund.funded)} saved up for this — saving takes{' '}
+                                {fx(Math.min(total, fund.funded))} of it out for this spend, so it
+                                never lands on the month. Override the figure on the “Pull from
+                                savings” tab if only part of it came from the pot.
                               </p>
-                            </>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-sm">{fx(fund.funded)} saved up for this</span>
+                                  <button
+                                    className="btn-subtle text-xs shrink-0"
+                                    onClick={() => payFromFund(fund.id, fund.funded)}
+                                  >
+                                    Pay for this out of it
+                                  </button>
+                                </div>
+                                <p className="text-xs text-muted mt-1">
+                                  This event is set not to pay itself out of its pot, so nothing
+                                  comes out unless you say so here.
+                                </p>
+                              </>
+                            )
                           ) : (
                             <p className="text-xs text-muted">
                               Its pot is empty, so this comes out of the month. Put money in from
