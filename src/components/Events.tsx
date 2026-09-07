@@ -5,12 +5,10 @@ import {
   allEventStatuses,
   eventCandidates,
   eventProvision,
-  eventPaysFromFund,
   eventProvisionDraft,
   eventStatus,
   eventTransactions,
   pendingExpenses,
-  settleEventFromFund,
   tagTransactionToEvent,
   type EventStatus,
 } from '../lib/events'
@@ -161,8 +159,9 @@ export function Events() {
     if (
       funded > 0.005 &&
       !confirm(
-        `Stop provisioning for "${e.label}"? The ${formatMoney(funded, currency, locale)} already ` +
-          'set aside stays in your plan as a provision of its own — it just stops being this event’s fund.',
+        `Stop saving for "${e.label}"? The ${formatMoney(funded, currency, locale)} already ` +
+          'set aside stays in your plan as a pot of its own — it just stops being this event’s fund, ' +
+          'and stops paying for what you spend.',
       )
     )
       return
@@ -225,19 +224,6 @@ export function Events() {
   }
 
   /**
-   * Pay for what the event has already cost out of what is still in its pot —
-   * the catch-up for spending tagged before the pot could pay for it, or before
-   * this app drew on pots at all. Tagging does this by itself now; this is the
-   * one button that puts an old trip right without reopening every line.
-   */
-  function settleFromFund(id: string) {
-    update((d) => {
-      settleEventFromFund(d, id)
-      return d
-    })
-  }
-
-  /**
    * Claim a real transaction for the event. If a logged line was already
    * standing in for the same amount, that line retires instead of double-counting.
    */
@@ -264,7 +250,6 @@ export function Events() {
         })()}
         onStartFund={() => startFund(open.id)}
         onStopFund={() => stopFund(open.id)}
-        onSettleFromFund={() => settleFromFund(open.id)}
         onLog={(x) => logExpense(open.id, x)}
         onRemoveExpense={(x) => removeExpense(open.id, x)}
         onTag={(txId, tagged) => tagTransaction(open.id, txId, tagged)}
@@ -338,12 +323,15 @@ export function Events() {
             </div>
             <BudgetBar e={e} />
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted mt-2">
-              {e.hasProvision && <span>{fx(e.fundAvailable)} left in its pot</span>}
+              {/* Only while it is still ahead: saving up is the live question
+                  before it happens, and afterwards the budget is. */}
+              {e.hasProvision && e.phase === 'upcoming' && (
+                <span>
+                  {fx(e.setAside)} of {fx(e.budget)} saved
+                </span>
+              )}
               {e.pendingCount > 0 && (
                 <span className="text-sage">{e.pendingCount} logged, not yet confirmed</span>
-              )}
-              {e.hasProvision && e.outOfPocket > 0.005 && (
-                <span className="text-clay">{fx(e.outOfPocket)} paid by the month</span>
               )}
             </div>
           </button>
@@ -494,7 +482,7 @@ function NewEventForm({
           onChange={(e) => setProvision(e.target.checked)}
         />
         <span className="text-sm">
-          <span className="font-medium">Provision for this</span>
+          <span className="font-medium">Save up for this</span>
           <span className="block text-muted text-xs mt-0.5">
             Creates a provision due{' '}
             {startDate
@@ -504,9 +492,8 @@ function NewEventForm({
                   year: 'numeric',
                 })
               : 'on the start date'}{' '}
-            targeting {amount > 0 ? formatMoney(amount, currency, locale) : 'the budget'}, so you can
-            allocate toward it when you reconcile — and spending you tag to the event comes back
-            out of it by itself.
+            targeting {amount > 0 ? formatMoney(amount, currency, locale) : 'the budget'}. Put money
+            in when you reconcile; what you spend on the day comes back out of it by itself.
           </span>
         </span>
       </label>
@@ -553,7 +540,6 @@ function EventDetail({
   fund,
   onStartFund,
   onStopFund,
-  onSettleFromFund,
 }: {
   event: SpecialEvent
   status: EventStatus
@@ -566,8 +552,6 @@ function EventDetail({
   fund?: ProvisionStatus
   onStartFund: () => void
   onStopFund: () => void
-  /** Draw on the pot for spending already tagged but never charged to it. */
-  onSettleFromFund: () => void
   onLog: (x: {
     date: string
     label: string
@@ -614,10 +598,6 @@ function EventDetail({
 
   const pending = pendingExpenses(event)
   const matched = event.expenses.filter((x) => x.matchedTxId)
-  const paysFromFund = eventPaysFromFund(event)
-  // Worth offering only when there is both something unpaid and something to
-  // pay it with — otherwise it is a button that would do nothing.
-  const canSettle = !!fund && status.outOfPocket > 0.005 && status.fundAvailable > 0.005
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -669,161 +649,72 @@ function EventDetail({
           {status.pending > 0.005 && (
             <span className="tabular-nums text-sage">Logged by hand {fx(status.pending)}</span>
           )}
-          {status.hasProvision && (
-            <span className="tabular-nums">
-              Left in its pot <span className="text-ink">{fx(status.fundAvailable)}</span>
-            </span>
-          )}
         </div>
-        {/* The two figures either side of this card are the same money seen
-            twice — what is left to spend, and what is left to spend it with —
-            so anywhere they disagree needs saying, not leaving to be noticed. */}
-        {status.hasProvision && status.fundDrawn > 0.005 && (
-          <p className="text-xs text-muted mt-2">
-            {fx(status.fundDrawn)} of this came straight out of its pot, so it never landed on the
-            month.
-          </p>
-        )}
-        {status.hasProvision && status.fundCommitted > 0.005 && (
-          <p className="text-xs text-muted mt-1">
-            {fx(status.fundCommitted)} more is spoken for by what you've logged by hand — the pot
-            still holds it until the statement arrives.
-          </p>
-        )}
-        {/* Only worth saying where a pot was supposed to cover it. Without one,
-            everything came out of the month and the Spent figure already said so. */}
-        {status.hasProvision && status.outOfPocket > 0.005 && (
-          <p className="text-xs text-clay mt-1">
-            {fx(status.outOfPocket)} was carried by the month instead — more than its pot could
-            cover.
-          </p>
-        )}
       </div>
 
-      {/* Provisioning for it — the money side, kept apart from the spending
-          side above so the two questions ("what has it cost" and "have I saved
-          for it") don't have to be read out of the same row of figures. */}
-      <div className="card p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-lg">Provisioning for it</h3>
-            <p className="text-sm text-muted">
-              {fund
-                ? paysFromFund
-                  ? 'Its own pot in your plan. Put money in when you reconcile; spending you tag to this event comes back out of it by itself.'
-                  : 'Its own pot in your plan. Set to leave the pot alone — spending you tag to this event falls on the month instead.'
-                : 'Not saving for this one yet — it comes out of whichever month it lands in.'}
-            </p>
+      {/* Saving up for it — while it is still ahead, and only then.
+          Before it happens the useful question is "have I put enough by"; once
+          it starts, the only question is whether you are sticking to the
+          budget, and a running commentary on the pot emptying answered a
+          question nobody was asking. The pot pays for the event by itself, so
+          there is nothing here to operate — after the start date this section
+          is simply gone, and what became of the pot is the plan's business. */}
+      {status.phase === 'upcoming' && (
+        <div className="card p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-lg">Saving up for it</h3>
+              <p className="text-sm text-muted">
+                {fund
+                  ? 'Money put by ahead of time, so this pays for itself when it happens.'
+                  : 'Not saving for this one yet — it comes out of whichever month it lands in.'}
+              </p>
+            </div>
+            {fund ? (
+              <button className="btn-subtle text-xs shrink-0" onClick={onStopFund}>
+                Stop saving
+              </button>
+            ) : (
+              <button className="btn-primary shrink-0" onClick={onStartFund}>
+                Save up for this
+              </button>
+            )}
           </div>
-          {fund ? (
-            <button className="btn-subtle text-xs shrink-0" onClick={onStopFund}>
-              Stop provisioning
-            </button>
-          ) : (
-            <button className="btn-primary shrink-0" onClick={onStartFund}>
-              Provision for this
-            </button>
-          )}
-        </div>
 
-        {fund ? (
-          <div className="mt-4 space-y-2">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                {/* Before it happens the question is "have I saved enough";
-                    after, it is "how much of this did the pot actually pay
-                    for". Same two numbers, and reading them the wrong way
-                    round is how a pot that did its job reads as one that was
-                    never funded. */}
-                <div className="label">
-                  {status.phase === 'upcoming' ? 'Set aside' : 'Left in the pot'}
+          {fund ? (
+            <div className="mt-4 space-y-2">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <div className="label">Set aside</div>
+                  <div className="stat-value tabular-nums text-forest">{fx(fund.funded)}</div>
                 </div>
-                <div className="stat-value tabular-nums text-forest">{fx(fund.funded)}</div>
-              </div>
-              <div className="text-right">
-                <div className="label">
-                  {status.phase === 'upcoming' ? 'Still to save' : 'Paid out of it'}
-                </div>
-                <div className="stat-value tabular-nums">
-                  {status.phase === 'upcoming'
-                    ? fx(Math.max(0, fund.targetAmount - fund.funded))
-                    : fx(fund.drawn)}
+                <div className="text-right">
+                  <div className="label">Still to save</div>
+                  <div className="stat-value tabular-nums">
+                    {fx(Math.max(0, fund.targetAmount - fund.funded))}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="h-2 rounded-full bg-line overflow-hidden">
-              <div className="h-full bg-forest rounded-full" style={{ width: `${fund.pct}%` }} />
-            </div>
-            <p className="text-xs text-muted">
-              {status.phase !== 'upcoming'
-                ? fund.drawn > 0.005
-                  ? `${fx(fund.drawn)} of what it cost came out of this pot rather than out of the month.`
-                  : `${fx(fund.funded)} is still sitting there — nothing has been charged to it yet.`
-                : fund.funded >= fund.targetAmount - 0.005
+              <div className="h-2 rounded-full bg-line overflow-hidden">
+                <div className="h-full bg-forest rounded-full" style={{ width: `${fund.pct}%` }} />
+              </div>
+              <p className="text-xs text-muted">
+                {fund.funded >= fund.targetAmount - 0.005
                   ? 'Fully funded — the whole budget is already waiting for it.'
                   : fund.suggestedMonthly && fund.suggestedMonthly > 0
                     ? `${fx(fund.suggestedMonthly)} a month gets there by the time it starts. Allocate to it from the “Set aside” tab next time you reconcile a transfer.`
                     : 'Allocate to it from the “Set aside” tab next time you reconcile a transfer.'}
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-muted mt-3">
+              Starting one creates a provision in your plan for {fx(status.budget)}, due{' '}
+              {shortRange(event.startDate, event.startDate, locale)}. What you spend on the day then
+              comes out of it instead of out of that month.
             </p>
-            {status.fundCommitted > 0.005 && (
-              <p className="text-xs text-muted">
-                {fx(status.fundCommitted)} of that is already spoken for by spending you logged by
-                hand. It comes out for real when the statement does.
-              </p>
-            )}
-            {/* The gap this whole loop exists to close: money still in the pot,
-                and spending the month paid for anyway. It happens when the pot
-                was empty on the day, or when the spend was tagged before the
-                pot could pay for it — and putting it right by hand means
-                reopening every line and typing the same figures again. */}
-            {canSettle && (
-              <div className="rounded-xl border border-gold/40 bg-gold/5 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm">
-                    {fx(status.outOfPocket)} of this was paid by the month, with{' '}
-                    {fx(status.fundAvailable)} still in the pot.
-                  </span>
-                  <button className="btn-primary text-xs shrink-0" onClick={onSettleFromFund}>
-                    Pay {fx(Math.min(status.outOfPocket, status.fundAvailable))} out of the pot
-                  </button>
-                </div>
-                <p className="text-xs text-muted mt-1">
-                  Charges it to the pot instead, oldest spend first — the same thing tagging does on
-                  the day.
-                </p>
-              </div>
-            )}
-            {fund.overdrawn > 0.005 && (
-              <p className="text-xs text-clay">
-                {fx(fund.overdrawn)} more has come out than ever went in — that part was paid by the
-                month, not by this pot.
-              </p>
-            )}
-            {/* An escape hatch, not a step: the default is what people mean by
-                provisioning, and this only exists for the trip somebody would
-                rather let the month carry after all. */}
-            <label className="flex items-start gap-2.5 pt-1 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={paysFromFund}
-                onChange={(ev) => onEdit({ payFromFund: ev.target.checked ? undefined : false })}
-              />
-              <span className="text-xs text-muted">
-                <span className="text-ink">Pay for this event out of its pot</span> — spending you
-                tag to it comes off the pot automatically, up to what the pot holds.
-              </span>
-            </label>
-          </div>
-        ) : (
-          <p className="text-xs text-muted mt-3">
-            Starting one creates a provision in your plan for {fx(status.budget)}, due{' '}
-            {shortRange(event.startDate, event.startDate, locale)}. You can then put money towards
-            it whenever you reconcile, and spending you tag to this event draws it back out by
-            itself.
-          </p>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Log a spend on the spot */}
       <div className="card p-6">

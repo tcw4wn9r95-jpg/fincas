@@ -258,17 +258,14 @@ export interface SpecialEvent {
   budget: number
   /** The category its spending belongs to, e.g. "Travel". */
   category: string
-  /** The sinking fund saving up for it, when one was created. */
-  provisionId?: string
   /**
-   * Whether spending tagged to this event comes out of its own pot. Absent
-   * means yes, which is the whole point of having provisioned: the money was
-   * put by so the trip would not land on the month it happens in, and asking
-   * the user to say so again for every single spend is asking them to do the
-   * same thing twice. Set false to keep the pot untouched and let the spending
-   * fall on the month after all.
+   * The sinking fund saving up for it, when one was created. Having one is the
+   * whole decision: a pot that exists pays for its event, up to what it holds,
+   * with nothing further to set and nothing to switch off. There was briefly a
+   * per-event opt-out and it was one more piece of pot machinery to understand
+   * in a screen that should only be asking whether you are sticking to plan.
    */
-  payFromFund?: boolean
+  provisionId?: string
   /** Logged live during the event — see `EventExpense`. */
   expenses: EventExpense[]
   notes?: string

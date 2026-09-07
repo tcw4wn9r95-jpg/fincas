@@ -1,6 +1,7 @@
 import type { AppData, ChatMessage, ProvisionAllocation, Settings } from './types'
 import { todayISO, uid, currentMonth, addMonths } from './format'
 import { EMERGENCY_FUND_ID, transactionAllocations } from './provisions'
+import { settleEventFunds } from './events'
 
 const STORAGE_KEY = 'fincas.data.v1'
 export const DATA_VERSION = 1
@@ -109,12 +110,16 @@ export function loadData(): AppData {
     if (!raw) return emptyData()
     const parsed = JSON.parse(raw) as AppData
     // Merge in any new default settings keys without clobbering saved ones.
-    return liftStandIns(
-      repairAllocations({
-        ...emptyData(),
-        ...parsed,
-        settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
-      }),
+    // Order matters: repair drops allocations that never had a pot to point
+    // at, and only then is it safe to read a pot's balance and spend it.
+    return settleEventFunds(
+      liftStandIns(
+        repairAllocations({
+          ...emptyData(),
+          ...parsed,
+          settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+        }),
+      ),
     )
   } catch {
     return emptyData()
@@ -183,12 +188,14 @@ export async function importData(file: File): Promise<AppData> {
   if (!parsed || typeof parsed !== 'object' || !('version' in parsed)) {
     throw new Error('That file does not look like a CasaresSan Finances backup.')
   }
-  return repairAllocations({
-    ...emptyData(),
-    ...parsed,
-    settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
-    updatedAt: new Date().toISOString(),
-  })
+  return settleEventFunds(
+    repairAllocations({
+      ...emptyData(),
+      ...parsed,
+      settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+      updatedAt: new Date().toISOString(),
+    }),
+  )
 }
 
 // ── Demo data — lets a first-time user see the app come alive ─────────

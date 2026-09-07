@@ -11,7 +11,6 @@ import {
   type EmergencyFundStatus,
   type ProvisionStatus,
 } from '../lib/provisions'
-import { eventPaysFromFund } from '../lib/events'
 import type { ProvisionAllocation, SpecialEvent, Transaction } from '../lib/types'
 import { IconClose, IconProvision } from './icons'
 import { Portal } from './Portal'
@@ -413,8 +412,7 @@ export function ProvisionModal({
                   // Saving does the draw itself, so long as this line has not
                   // already been split by hand — in which case that split is
                   // the answer and nothing is added on top of it.
-                  const autoPays =
-                    eventPaysFromFund(e) && transactionAllocations(tx).length === 0
+                  const autoPays = transactionAllocations(tx).length === 0
                   return (
                     <div key={e.id}>
                       <button
@@ -463,21 +461,18 @@ export function ProvisionModal({
                                 savings” tab if only part of it came from the pot.
                               </p>
                             ) : (
-                              <>
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <span className="text-sm">{fx(fund.funded)} saved up for this</span>
-                                  <button
-                                    className="btn-subtle text-xs shrink-0"
-                                    onClick={() => payFromFund(fund.id, fund.funded)}
-                                  >
-                                    Pay for this out of it
-                                  </button>
-                                </div>
-                                <p className="text-xs text-muted mt-1">
-                                  This event is set not to pay itself out of its pot, so nothing
-                                  comes out unless you say so here.
-                                </p>
-                              </>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-sm">
+                                  {fx(fund.funded)} saved up for this — this line is already split
+                                  by hand, so that split stands.
+                                </span>
+                                <button
+                                  className="btn-subtle text-xs shrink-0"
+                                  onClick={() => payFromFund(fund.id, fund.funded)}
+                                >
+                                  Pay for this out of it
+                                </button>
+                              </div>
                             )
                           ) : (
                             <p className="text-xs text-muted">
