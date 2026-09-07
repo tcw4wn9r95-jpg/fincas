@@ -8,6 +8,7 @@ import {
   eventProvisionDraft,
   eventStatus,
   eventTransactions,
+  cashExpenses,
   pendingExpenses,
   tagTransactionToEvent,
   type EventStatus,
@@ -46,15 +47,18 @@ function phaseText(e: EventStatus): string {
   return 'Finished'
 }
 
-/** Budget bar: what's confirmed, what's only logged by hand, what's left. */
+/** Budget bar: what's settled, what's only logged by hand, what's left. */
 function BudgetBar({ e }: { e: EventStatus }) {
   const scale = Math.max(e.budget, e.spent, 1)
+  // Cash sits with the confirmed spending, not with the provisional: both are
+  // final, and the pale segment means "might still change", which cash cannot.
+  const settled = e.confirmed + e.cash
   return (
     <div className="h-2 rounded-full bg-line overflow-hidden flex">
       <div
         className={classNames('h-full', e.over ? 'bg-clay' : 'bg-forest')}
-        style={{ width: `${(e.confirmed / scale) * 100}%` }}
-        title="Confirmed by a statement"
+        style={{ width: `${(settled / scale) * 100}%` }}
+        title="Confirmed by a statement, or paid in cash"
       />
       <div
         className={classNames('h-full', e.over ? 'bg-clay/50' : 'bg-sage')}
@@ -201,10 +205,36 @@ export function Events() {
     setOpenId(null)
   }
 
+  /**
+   * Flip a logged line between "waiting for a statement" and "paid in cash".
+   * Cash is a fact about the spend that is easy to remember only afterwards,
+   * and a line stuck waiting for a statement that cannot contain it is exactly
+   * the sort of thing that quietly stops a tally being trusted.
+   */
+  function setExpenseCash(eventId: string, expenseId: string, cash: boolean) {
+    update((d) => {
+      const e = d.events?.find((x) => x.id === eventId)
+      const x = e?.expenses.find((y) => y.id === expenseId)
+      if (!x) return d
+      x.cash = cash || undefined
+      // Nothing is standing in for a cash line, so a match it had picked up is
+      // released rather than left pointing at a transaction it no longer answers.
+      if (cash) x.matchedTxId = undefined
+      return d
+    })
+  }
+
   /** Log a spend on the spot — no statement needed, and it never hits the month's totals. */
   function logExpense(
     id: string,
-    expense: { date: string; label: string; amount: number; category: string; foreign?: ForeignAmount },
+    expense: {
+      date: string
+      label: string
+      amount: number
+      category: string
+      cash?: boolean
+      foreign?: ForeignAmount
+    },
   ) {
     update((d) => {
       const e = d.events?.find((x) => x.id === id)
@@ -252,6 +282,7 @@ export function Events() {
         onStopFund={() => stopFund(open.id)}
         onLog={(x) => logExpense(open.id, x)}
         onRemoveExpense={(x) => removeExpense(open.id, x)}
+        onSetExpenseCash={(x, cash) => setExpenseCash(open.id, x, cash)}
         onTag={(txId, tagged) => tagTransaction(open.id, txId, tagged)}
         candidates={eventCandidates(data, open)}
         tagged={eventTransactions(data, open.id)}
@@ -330,6 +361,7 @@ export function Events() {
                   {fx(e.setAside)} of {fx(e.budget)} saved
                 </span>
               )}
+              {e.cash > 0.005 && <span>{fx(e.cash)} in cash</span>}
               {e.pendingCount > 0 && (
                 <span className="text-sage">{e.pendingCount} logged, not yet confirmed</span>
               )}
@@ -534,6 +566,7 @@ function EventDetail({
   onRemove,
   onLog,
   onRemoveExpense,
+  onSetExpenseCash,
   onTag,
   candidates,
   tagged,
@@ -557,9 +590,12 @@ function EventDetail({
     label: string
     amount: number
     category: string
+    cash?: boolean
     foreign?: ForeignAmount
   }) => void
   onRemoveExpense: (id: string) => void
+  /** Mark a logged line as paid in cash, or hand it back to the statement queue. */
+  onSetExpenseCash: (id: string, cash: boolean) => void
   onTag: (txId: string, tagged: boolean) => void
   candidates: { tx: Transaction; source: 'month' | 'week' }[]
   tagged: { tx: Transaction; source: 'month' | 'week' }[]
@@ -580,6 +616,9 @@ function EventDetail({
   // trip's tally stops being kept at all.
   const [payCurrency, setPayCurrency] = useState(currency)
   const rate = useForeignRate(payCurrency, currency, date)
+  // Sticks between entries: an evening paid in cash is an evening of cash, and
+  // re-ticking the box for every round is how the tally stops being kept.
+  const [cash, setCash] = useState(false)
 
   function submit() {
     if (value <= 0 || !rate.usable) return
@@ -589,6 +628,7 @@ function EventDetail({
       label: label.trim() || 'Expense',
       amount: rate.convert(paid),
       category,
+      ...(cash ? { cash: true } : {}),
       ...(rate.record(paid) ? { foreign: rate.record(paid) } : {}),
     })
     setAmount('')
@@ -598,6 +638,11 @@ function EventDetail({
 
   const pending = pendingExpenses(event)
   const matched = event.expenses.filter((x) => x.matchedTxId)
+  // Everything still standing on its own: waiting for a statement, or cash and
+  // done with. Listed together and in order, because they are one tally.
+  const logged = [...pending, ...cashExpenses(event)].sort((a, b) =>
+    a.date.localeCompare(b.date),
+  )
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -646,6 +691,11 @@ function EventDetail({
           <span className="tabular-nums">
             Confirmed <span className="text-ink">{fx(status.confirmed)}</span>
           </span>
+          {status.cash > 0.005 && (
+            <span className="tabular-nums">
+              Cash <span className="text-ink">{fx(status.cash)}</span>
+            </span>
+          )}
           {status.pending > 0.005 && (
             <span className="tabular-nums text-sage">Logged by hand {fx(status.pending)}</span>
           )}
@@ -732,9 +782,8 @@ function EventDetail({
       <div className="card p-6">
         <h3 className="text-lg">Add an expense</h3>
         <p className="text-sm text-muted mb-4">
-          Log it now, while you're here. It counts against the budget straight away and stays out of
-          your month until the real transaction shows up. Paying in another currency? Pick it and the
-          day's official rate does the sum.
+          Log it now, while you're here. It counts against the budget straight away. Paying in
+          another currency? Pick it and the day's official rate does the sum.
         </p>
         <div className="flex flex-wrap gap-2">
           <input
@@ -781,6 +830,18 @@ function EventDetail({
             <IconPlus width={16} height={16} /> Add
           </button>
         </div>
+        <label className="flex items-start gap-2.5 mt-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={cash}
+            onChange={(e) => setCash(e.target.checked)}
+          />
+          <span className="text-xs text-muted">
+            <span className="text-ink">Paid in cash</span> — counted as spent and done with. Anything
+            else waits to be confirmed by the statement that carries it.
+          </span>
+        </label>
         <RateNote
           fx={rate}
           amount={Math.abs(value)}
@@ -790,9 +851,9 @@ function EventDetail({
           date={date}
         />
 
-        {pending.length > 0 && (
+        {logged.length > 0 && (
           <div className="mt-4 divide-y divide-line/60">
-            {pending.map((x) => (
+            {logged.map((x) => (
               <div key={x.id} className="flex items-center gap-3 py-2 text-sm">
                 <span className="text-muted w-12 shrink-0 tabular-nums">{x.date.slice(5)}</span>
                 <span className="flex-1 min-w-0 truncate">{x.label}</span>
@@ -805,6 +866,22 @@ function EventDetail({
                     {describeForeign(x.foreign, locale)}
                   </span>
                 )}
+                {/* The whole state of a logged line in one click: cash is
+                    settled, anything else is still owed a statement. */}
+                <button
+                  className={classNames(
+                    'pill shrink-0',
+                    x.cash ? 'bg-forest-tint text-forest' : 'bg-sage/15 text-sage',
+                  )}
+                  onClick={() => onSetExpenseCash(x.id, !x.cash)}
+                  title={
+                    x.cash
+                      ? 'Paid in cash — settled. Click if a statement will carry it after all.'
+                      : 'Waiting for a statement. Click if you paid this in cash.'
+                  }
+                >
+                  {x.cash ? 'Cash' : 'Awaiting'}
+                </button>
                 <span className="tabular-nums w-20 text-right shrink-0">{fx(x.amount)}</span>
                 <button
                   className="text-muted hover:text-clay shrink-0"

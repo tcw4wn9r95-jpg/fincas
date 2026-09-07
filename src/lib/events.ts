@@ -238,9 +238,19 @@ export function eventTransactions(data: AppData, eventId: string): EventTaggedTx
   ].sort((a, b) => a.tx.date.localeCompare(b.tx.date))
 }
 
-/** Logged lines still waiting for their real counterpart to turn up. */
+/**
+ * Logged lines still waiting for their real counterpart to turn up. Cash is not
+ * among them: nothing is coming for it, so leaving it here would keep a line
+ * that is already settled in a queue that can never clear, and would offer it
+ * as the match for whatever bank line happened to be the same size.
+ */
 export function pendingExpenses(e: SpecialEvent): EventExpense[] {
-  return e.expenses.filter((x) => !x.matchedTxId)
+  return e.expenses.filter((x) => !x.matchedTxId && !x.cash)
+}
+
+/** Logged lines paid in cash — real, final, and never reconciled against anything. */
+export function cashExpenses(e: SpecialEvent): EventExpense[] {
+  return e.expenses.filter((x) => x.cash)
 }
 
 export type EventPhase = 'upcoming' | 'live' | 'past'
@@ -257,7 +267,13 @@ export interface EventStatus {
   confirmed: number
   /** Logged by hand and not yet matched — your own tally, still unverified. */
   pending: number
-  /** confirmed + pending: the working total to judge the budget against. */
+  /**
+   * Paid in cash: logged by hand and settled, because no statement will ever
+   * carry it. Kept apart from `pending` so the "still to confirm" count only
+   * ever names lines something could still confirm.
+   */
+  cash: number
+  /** confirmed + pending + cash: the working total to judge the budget against. */
   spent: number
   /** budget − spent (negative = over). */
   remaining: number
@@ -281,11 +297,13 @@ export interface EventStatus {
   byCategory: { category: string; amount: number }[]
   txCount: number
   pendingCount: number
+  cashCount: number
 }
 
 export function eventStatus(data: AppData, e: SpecialEvent, today: string): EventStatus {
   const tagged = eventTransactions(data, e.id)
   const pendingList = pendingExpenses(e)
+  const cashList = cashExpenses(e)
 
   const byCat = new Map<string, number>()
   let confirmed = 0
@@ -300,10 +318,16 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
     pending += x.amount
     byCat.set(x.category, round2((byCat.get(x.category) ?? 0) + x.amount))
   }
+  let cash = 0
+  for (const x of cashList) {
+    cash += x.amount
+    byCat.set(x.category, round2((byCat.get(x.category) ?? 0) + x.amount))
+  }
 
   confirmed = round2(confirmed)
   pending = round2(pending)
-  const spent = round2(confirmed + pending)
+  cash = round2(cash)
+  const spent = round2(confirmed + pending + cash)
   const fund = eventProvision(data, e)
   const fundStatus = fund ? provisionStatus(data, fund) : undefined
   const setAside = fundStatus?.funded ?? 0
@@ -327,6 +351,7 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
     budget: e.budget,
     confirmed,
     pending,
+    cash,
     spent,
     remaining: round2(e.budget - spent),
     pct: e.budget > 0 ? Math.round((spent / e.budget) * 100) : 0,
@@ -343,6 +368,7 @@ export function eventStatus(data: AppData, e: SpecialEvent, today: string): Even
       .sort((a, b) => b.amount - a.amount),
     txCount: tagged.length,
     pendingCount: pendingList.length,
+    cashCount: cashList.length,
   }
 }
 
@@ -490,6 +516,7 @@ export function eventSummaryLine(e: EventStatus, fx: (n: number) => string): str
     `${e.label} [${e.category}, ${when}, ${e.startDate}${e.endDate !== e.startDate ? `–${e.endDate}` : ''}]: ` +
     `${fx(e.spent)} spent of ${fx(e.budget)} budget` +
     (e.pending > 0.005 ? ` (${fx(e.pending)} of that logged by hand, not yet in a statement)` : '') +
+    (e.cash > 0.005 ? ` (${fx(e.cash)} of that paid in cash — settled, no statement will carry it)` : '') +
     (e.hasProvision
       ? `, ${fx(e.setAside)} left in its pot` +
         (e.fundDrawn > 0.005 ? ` after ${fx(e.fundDrawn)} paid out of it` : '') +

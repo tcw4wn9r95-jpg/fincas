@@ -236,6 +236,18 @@ export interface EventExpense {
   amount: number
   category: string
   matchedTxId?: string
+  /**
+   * Paid in cash, so no bank line is ever coming for it. That makes it final
+   * the moment it is logged: it is never offered as the counterpart to an
+   * imported transaction, and never sits in the "still to confirm" pile
+   * waiting for a statement that cannot contain it.
+   *
+   * It still stays out of the month's totals, and for the same reason as any
+   * other logged line rather than in spite of being real: the money left the
+   * bank at the cash machine, on a transaction of its own, and counting it
+   * again where it was spent would charge the month twice for one withdrawal.
+   */
+  cash?: boolean
   /** Set when it was paid in another currency — see `Transaction.foreign`. */
   foreign?: ForeignAmount
 }
