@@ -1199,6 +1199,7 @@ export function MoneyDate({
           events={data.events ?? []}
           eventQuestion={eventQuestion}
           onAnswerEventQuestion={answerEventQuestion}
+          onAssignEvent={setTxEvent}
           onSetCard={setTxCard}
           onSetCategory={(id, category) => {
             setTxCategory(id, category)

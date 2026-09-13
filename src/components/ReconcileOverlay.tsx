@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 import { CARD_PAYMENT_CATEGORY, CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { transactionAllocations, type ProvisionStatus } from '../lib/provisions'
+import { eventsDuring } from '../lib/events'
 import type { Account, EventExpense, SpecialEvent, Transaction } from '../lib/types'
-import { IconClose, IconCheck, IconSparkle, IconHelp } from './icons'
+import { IconClose, IconCheck, IconSparkle, IconHelp, IconEvent } from './icons'
 import { Markdown } from './Markdown'
 import type { StreamHandlers } from '../lib/claude'
 import { Portal } from './Portal'
@@ -28,6 +29,7 @@ export function ReconcileOverlay({
   onSetCard,
   eventQuestion,
   onAnswerEventQuestion,
+  onAssignEvent,
   onToggle,
   onConfirmAll,
   onAiCategorize,
@@ -51,6 +53,12 @@ export function ReconcileOverlay({
    */
   eventQuestion?: { tx: Transaction; event: SpecialEvent; logged: EventExpense } | null
   onAnswerEventQuestion?: (same: boolean) => void
+  /**
+   * One-press tagging for a spend that happened while an event was running.
+   * Separate from `onProvision`, which opens the full picker — that is still
+   * the way to file a deposit paid months before the trip it belongs to.
+   */
+  onAssignEvent: (txId: string, eventId: string) => void
   /** Card accounts, so a card payment can say which one it settles. */
   cards: Account[]
   onSetCategory: (id: string, category: string) => void
@@ -316,6 +324,21 @@ export function ReconcileOverlay({
                       onOpen={() => onProvision(t)}
                       eventLabel={eventLabels[t.eventId ?? '']}
                     />
+                    {/* The date already says which trip this could be, so the
+                        question is one press rather than a trip through the
+                        picker. Offered, never applied: a rent payment that
+                        happens to land mid-trip is not trip spending. */}
+                    {eventsDuring(events, t).map((e) => (
+                      <button
+                        key={e.id}
+                        className="pill bg-forest-tint text-forest hover:bg-forest/20 inline-flex items-center gap-1 max-w-full"
+                        onClick={() => onAssignEvent(t.id, e.id)}
+                        title={`This happened during ${e.label} — file it against that budget`}
+                      >
+                        <IconEvent width={13} height={13} className="shrink-0" />
+                        <span className="truncate">Assign to {e.label}</span>
+                      </button>
+                    ))}
                     {(() => {
                       const match = unlinkedMatch(t)
                       return (

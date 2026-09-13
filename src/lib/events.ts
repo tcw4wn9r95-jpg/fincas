@@ -8,6 +8,7 @@ import {
   unallocatedAmount,
 } from './provisions'
 import { foreignLineMatches } from './fx'
+import { NON_CASHFLOW } from './categorize'
 
 // Special events (a trip, a party) are budgeted as a lump and spent in a burst.
 // Two things feed the running total, and they must never both count the same
@@ -400,6 +401,35 @@ export function eventCandidates(data: AppData, e: SpecialEvent): EventTaggedTx[]
     ...monthly.map((tx) => ({ tx, source: 'month' as const })),
     ...weekly.map((tx) => ({ tx, source: 'week' as const })),
   ].sort((a, b) => a.tx.date.localeCompare(b.tx.date))
+}
+
+/**
+ * The events that were running on the day a spend happened — what a reconcile
+ * screen can offer in one press, because the date has already answered "which
+ * one of your trips".
+ *
+ * Not a rule about what belongs to an event: rent landing mid-trip is not trip
+ * spending, which is why `eventCandidates` never tags anything by itself and
+ * why this does not either. It only narrows the question from "which of your
+ * events, out of all of them, on which tab" down to "this one — yes or no",
+ * which is the whole difference between a spend getting filed on the day you
+ * see it and a spend getting filed never.
+ *
+ * A spend outside any event's dates gets nothing here on purpose. A deposit
+ * paid months ahead still belongs to the trip, and that is exactly the case
+ * the full picker exists for.
+ */
+export function eventsDuring(
+  events: SpecialEvent[],
+  t: Pick<Transaction, 'date' | 'amount' | 'category' | 'eventId'>,
+): SpecialEvent[] {
+  // The same test the allocation pop-up applies before it will offer its event
+  // tab at all: money coming back is not event spending, and a transfer between
+  // your own accounts is not spending.
+  if (t.amount >= 0 || NON_CASHFLOW.has(t.category)) return []
+  return events.filter(
+    (e) => e.id !== t.eventId && t.date >= e.startDate && t.date <= e.endDate,
+  )
 }
 
 /**
