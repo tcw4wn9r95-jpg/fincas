@@ -26,6 +26,7 @@ import { SankeyOverlay } from './SankeyOverlay'
 import { ScenarioBar } from './Scenarios'
 import { Logo, IconPlan, IconUpload } from './icons'
 import { DataHealth } from './DataHealth'
+import { potsCheck } from '../lib/funding'
 
 /** How far the headline chart looks back, and forward. */
 const SUMMARY_BACK = 6
@@ -69,6 +70,7 @@ export function Dashboard({
   const fileRef = useRef<HTMLInputElement>(null)
 
   const forecast = useMemo(() => buildForecast(data, forecastHorizon(data)), [data])
+  const pots = useMemo(() => potsCheck(data), [data])
   // The headline chart looks back as well as forward: six settled months with
   // the plan drawn against them, then the plan as it stands today.
   const summary = useMemo(() => buildSummary(data, SUMMARY_BACK, SUMMARY_FORWARD), [data])
@@ -199,6 +201,29 @@ export function Dashboard({
       {/* First, because every figure below is only as good as what it is
           built from. */}
       <DataHealth goTo={goTo} />
+      {/* The one figure that says whether the pots are real: what they claim,
+          against the account they live in. */}
+      {pots.accountName && pots.total > 0.5 && (
+        <button
+          className="w-full text-left text-sm text-muted flex flex-wrap gap-x-2 hover:text-ink transition"
+          onClick={() => goTo('plan')}
+        >
+          <span>
+            Pots claim <span className="text-ink tabular-nums">{fx(pots.total)}</span>
+          </span>
+          <span>·</span>
+          <span>
+            {pots.accountName} holds{' '}
+            <span className="text-ink tabular-nums">{fx(pots.accountBalance ?? 0)}</span>
+          </span>
+          <span>·</span>
+          <span className={classNames('tabular-nums', Math.abs(pots.difference ?? 0) > 1 && 'text-clay')}>
+            {Math.abs(pots.difference ?? 0) <= 1
+              ? 'they agree'
+              : `${fx(Math.abs(pots.difference ?? 0))} ${(pots.difference ?? 0) < 0 ? 'short' : 'unclaimed'}`}
+          </span>
+        </button>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {anchored ? (
           <Stat

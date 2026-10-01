@@ -12,6 +12,8 @@ import { NON_CASHFLOW, isIncomeCategory } from './categorize'
 import { accountBalance, isCardAccount } from './forecast'
 import { duplicatePairs } from './month'
 import { proposeRefile, type RefileProposal } from './refile'
+import { transferCounterparties, counterpartyKey, type Counterparty } from './transfers'
+import { potsCheck } from './funding'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -58,6 +60,8 @@ export type HealthAction =
   | { kind: 'refile'; proposal: RefileProposal }
   | { kind: 'mark-one-off'; txIds: string[] }
   | { kind: 'resolve-duplicates'; months: string[] }
+  | { kind: 'counterparties'; items: Counterparty[] }
+  | { kind: 'set-pots-account'; accountId: string; label: string }
   | { kind: 'open'; tab: 'this-month' | 'money-date' | 'plan'; month?: string; label: string }
 
 export interface HealthIssue {
@@ -182,6 +186,81 @@ export function runHealthChecks(data: AppData): HealthIssue[] {
       amount: round2(candidates.reduce((s, t) => s + t.amount, 0)),
       actions: [{ kind: 'mark-one-off', txIds: candidates.map((t) => t.id) }],
     })
+  }
+
+  // Transfers with no other side: neither income nor spending, on the promise
+  // that they arrived in another of your accounts — which nobody can see.
+  const unknown = transferCounterparties(data).filter((c) => !c.decision && c.moneyIn + c.moneyOut >= 1)
+  if (unknown.length) {
+    const total = round2(unknown.reduce((s, c) => s + c.moneyIn + c.moneyOut, 0))
+    issues.push({
+      id: 'transfers',
+      severity: 'warn',
+      title: `${fx(total)} of transfers have no other side`,
+      detail:
+        'Filed as moves between your own accounts, so they count as neither income nor spending — but the account ' +
+        'at the other end isn’t here. Say whether each is yours (it gets an account, not imported yet) or someone ' +
+        'else’s (then the money was really received or spent, and is filed that way).',
+      amount: total,
+      actions: [{ kind: 'counterparties', items: unknown }],
+    })
+  }
+
+  // Do the pots add up? Their balances come from allocations, which can't tell
+  // a transfer never made from one made twice — only the account holding the
+  // money can.
+  const pots = potsCheck(data)
+  if (pots.total > 0.5) {
+    const holder = data.accounts.find((a) => a.id === pots.accountId)
+    if (!holder) {
+      // The account the set-aside transfers went to is the obvious holder.
+      const saved = data.transactions.filter((t) => ['Savings', 'Provisions'].includes(t.category) && t.amount < 0)
+      const names = new Map<string, number>()
+      for (const t of saved) {
+        const m = t.description.match(/^to [A-Z]{3} (.+)$/i)?.[1]
+        if (m) names.set(counterpartyKey(m), (names.get(counterpartyKey(m)) ?? 0) + 1)
+      }
+      const likely = data.accounts
+        .filter((a) => !isCardAccount(a) && (names.get(counterpartyKey(a.name)) ?? 0) > 0)
+        .sort((a, b) => (names.get(counterpartyKey(b.name)) ?? 0) - (names.get(counterpartyKey(a.name)) ?? 0))[0]
+      issues.push({
+        id: 'pots-unbacked',
+        severity: 'warn',
+        title: `Your pots claim ${fx(pots.total)}, and no account is named as holding it`,
+        detail:
+          'Pot balances are worked out from what you allocated, so a transfer never made or credited twice looks ' +
+          'exactly like one that happened. Naming the account they live in lets the two be compared.' +
+          (likely ? ` Your set-aside transfers went to ${likely.name}.` : ''),
+        amount: pots.total,
+        actions: likely
+          ? [{ kind: 'set-pots-account', accountId: likely.id, label: `It's ${likely.name}` }, { kind: 'open', tab: 'plan', label: 'Choose another' }]
+          : [{ kind: 'open', tab: 'plan', label: 'Choose the account' }],
+      })
+    } else if (!holder.asOf) {
+      issues.push({
+        id: 'pots-no-balance',
+        severity: 'warn',
+        title: `Enter what ${holder.name} holds`,
+        detail: `Your pots claim ${fx(pots.total)} there. Without its real balance there is nothing to check that against.`,
+        actions: [{ kind: 'open', tab: 'plan', label: 'Enter the balance' }],
+      })
+    } else if (pots.difference !== null && Math.abs(pots.difference) > 1) {
+      issues.push({
+        id: 'pots-gap',
+        severity: pots.difference < 0 ? 'error' : 'info',
+        title:
+          pots.difference < 0
+            ? `Your pots claim ${fx(-pots.difference)} more than ${holder.name} holds`
+            : `${holder.name} holds ${fx(pots.difference)} no pot has claimed`,
+        detail:
+          `Pots ${fx(pots.total)} against ${fx(pots.accountBalance ?? 0)} in ${holder.name} as of ${holder.asOf}. ` +
+          (pots.difference < 0
+            ? 'A pot credited for money that never arrived, or the balance is out of date.'
+            : 'Money set aside without being given to a pot — allocate it, or it is spare.'),
+        amount: Math.abs(pots.difference),
+        actions: [{ kind: 'open', tab: 'plan', label: 'Open pots' }],
+      })
+    }
   }
 
   const order: Record<Severity, number> = { error: 0, warn: 1, info: 2 }

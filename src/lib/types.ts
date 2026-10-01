@@ -358,6 +358,12 @@ export interface AppData {
    * year is typed in — the rest of the app works without it.
    */
   tax?: TaxData
+  /**
+   * What each counterparty of an unpaired transfer is, keyed by
+   * `counterpartyKey`: one of yours that isn't imported, or someone else.
+   * Asked once per counterparty rather than per line — see `lib/transfers.ts`.
+   */
+  counterparties?: Record<string, 'mine' | 'external'>
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */

@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { runHealthChecks, type HealthAction, type HealthIssue, type Severity } from '../lib/health'
 import { applyRefile } from '../lib/refile'
+import { decideCounterparty, type Counterparty } from '../lib/transfers'
 import { duplicatePairs, resolveDuplicate } from '../lib/month'
-import { classNames, uid } from '../lib/format'
+import { classNames, formatMoney, uid } from '../lib/format'
 
 type OpenTab = Extract<HealthAction, { kind: 'open' }>['tab']
 
@@ -53,11 +54,25 @@ export function DataHealth({ goTo }: { goTo: (tab: OpenTab, month?: string) => v
       })
       return
     }
-    const lines = a.proposal.summary.map((s) => `• ${s.count} to ${s.toName}, e.g. ${s.examples[0]}`).join('\n')
-    if (!confirm(`Move these lines to the account their statement says they belong to?\n\n${lines}`)) return
-    update((d) => applyRefile(d, a.proposal, uid))
+    if (a.kind === 'set-pots-account') {
+      update((d) => {
+        d.provisionAccountId = a.accountId
+        return d
+      })
+      return
+    }
+    if (a.kind === 'refile') {
+      const lines = a.proposal.summary.map((s) => `• ${s.count} to ${s.toName}, e.g. ${s.examples[0]}`).join('\n')
+      if (!confirm(`Move these lines to the account their statement says they belong to?\n\n${lines}`)) return
+      update((d) => applyRefile(d, a.proposal, uid))
+    }
   }
 
+  function decide(cp: Counterparty, decision: 'mine' | 'external') {
+    update((d) => decideCounterparty(d, cp, decision, uid))
+  }
+
+  const fx = (n: number) => formatMoney(n, data.settings.currency, data.settings.locale, { round: true })
   const worst = issues[0].severity
   return (
     <div className={classNames('card p-5', TONE[worst].border)}>
@@ -76,7 +91,7 @@ export function DataHealth({ goTo }: { goTo: (tab: OpenTab, month?: string) => v
       {open && (
         <ul className="mt-4 space-y-3">
           {issues.map((i) => (
-            <Issue key={i.id} issue={i} onAct={act} />
+            <Issue key={i.id} issue={i} onAct={act} onDecide={decide} fx={fx} />
           ))}
         </ul>
       )}
@@ -84,8 +99,20 @@ export function DataHealth({ goTo }: { goTo: (tab: OpenTab, month?: string) => v
   )
 }
 
-function Issue({ issue, onAct }: { issue: HealthIssue; onAct: (a: HealthAction) => void }) {
+function Issue({
+  issue,
+  onAct,
+  onDecide,
+  fx,
+}: {
+  issue: HealthIssue
+  onAct: (a: HealthAction) => void
+  onDecide: (cp: Counterparty, decision: 'mine' | 'external') => void
+  fx: (n: number) => string
+}) {
   const tone = TONE[issue.severity]
+  const buttons = (issue.actions ?? []).filter((a) => a.kind !== 'counterparties')
+  const counterparties = (issue.actions ?? []).flatMap((a) => (a.kind === 'counterparties' ? a.items : []))
   return (
     <li className={classNames('rounded-lg border bg-canvas px-4 py-3', tone.border)}>
       <div className="flex items-start gap-2.5">
@@ -93,27 +120,68 @@ function Issue({ issue, onAct }: { issue: HealthIssue; onAct: (a: HealthAction) 
         <div className="min-w-0 flex-1">
           <p className="font-medium text-sm">{issue.title}</p>
           <p className="text-sm text-muted mt-0.5 break-words">{issue.detail}</p>
-          {issue.actions && issue.actions.length > 0 && (
+          {buttons.length > 0 && (
             <div className="mt-2.5 flex flex-wrap gap-2">
-              {issue.actions.map((a, n) => (
+              {buttons.map((a, n) => (
                 <button
                   key={n}
                   className={classNames('text-xs', n === 0 ? 'btn-primary' : 'btn-subtle')}
                   onClick={() => onAct(a)}
                 >
-                  {a.kind === 'open'
-                    ? a.label
-                    : a.kind === 'refile'
-                      ? 'Move them'
-                      : a.kind === 'resolve-duplicates'
-                        ? 'Fix all'
-                        : 'Mark as one-off'}
+                  {actionLabel(a)}
                 </button>
               ))}
             </div>
+          )}
+          {/* One question per counterparty, not per line: 569 round-ups to
+              Revpoints are one answer. */}
+          {counterparties.length > 0 && (
+            <ul className="mt-2.5 divide-y divide-line border-t border-line">
+              {counterparties.map((cp) => (
+                <li key={cp.key} className="py-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm break-words">{cp.name}</p>
+                    <p className="text-xs text-muted">
+                      {[cp.moneyIn > 0.5 && `${fx(cp.moneyIn)} in`, cp.moneyOut > 0.5 && `${fx(cp.moneyOut)} out`]
+                        .filter(Boolean)
+                        .join(' · ')}{' '}
+                      · {cp.orphans.length} {cp.orphans.length === 1 ? 'line' : 'lines'}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button className="btn-primary text-xs" onClick={() => onDecide(cp, 'mine')}>
+                      Mine
+                    </button>
+                    <button
+                      className="btn-subtle text-xs"
+                      onClick={() => onDecide(cp, 'external')}
+                      title="Money in is filed as income, money out as a transfer you made"
+                    >
+                      Someone else’s
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>
     </li>
   )
+}
+
+function actionLabel(a: HealthAction): string {
+  switch (a.kind) {
+    case 'open':
+    case 'set-pots-account':
+      return a.label
+    case 'refile':
+      return 'Move them'
+    case 'resolve-duplicates':
+      return 'Fix all'
+    case 'mark-one-off':
+      return 'Mark as one-off'
+    case 'counterparties':
+      return ''
+  }
 }
