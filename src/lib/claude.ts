@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AppData, ChatMessage, Transaction } from './types'
 import { financialSummary, monthReviewText, transactionLedger } from './forecast'
+import { runHealthChecks } from './health'
 import { monthPulseText } from './month'
 import { CATEGORIES } from './categorize'
 import { normDescription, todayISO } from './format'
@@ -18,6 +19,23 @@ import { allEventStatuses } from './events'
 // to Anthropic's API when they ask a question — never to GitHub or any
 // server we control.
 
+/**
+ * What the health checks found, said to the assistant as plainly as to the
+ * user. Advice built on a month counted twice, or a card misread as in credit,
+ * is confidently wrong — so the assistant is told which figures not to trust
+ * yet, and to say so when a question leans on them.
+ */
+function dataHealthText(data: AppData): string {
+  const problems = runHealthChecks(data).filter((i) => i.severity !== 'info')
+  if (!problems.length) return ''
+  return [
+    '--- DATA HEALTH (known problems in the figures above) ---',
+    ...problems.map((i) => `- ${i.title}. ${i.detail}`),
+    'When an answer depends on a figure one of these affects, say so in a sentence and point to the Data health panel on the overview — don\'t present an affected figure as settled.',
+    '--- END DATA HEALTH ---',
+  ].join('\n')
+}
+
 function systemPrompt(data: AppData, focusMonth?: string): string {
   const name = data.settings.name?.trim()
   return [
@@ -34,6 +52,7 @@ function systemPrompt(data: AppData, focusMonth?: string): string {
     '--- FINANCIAL SNAPSHOT ---',
     financialSummary(data),
     '--- END SNAPSHOT ---',
+    dataHealthText(data),
     '--- CURRENT MONTH (in progress) ---',
     monthPulseText(data),
     '--- END CURRENT MONTH ---',
@@ -267,6 +286,7 @@ export async function streamTransactionAdvice(
     '--- FINANCIAL SNAPSHOT ---',
     financialSummary(data),
     '--- END SNAPSHOT ---',
+    dataHealthText(data),
   ].join('\n')
 
   const details = [
