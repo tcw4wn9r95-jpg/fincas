@@ -341,6 +341,21 @@ function userWork(t: Transaction): number {
   return transactionAllocations(t).length + (t.eventId ? 1 : 0) + (t.cardAccountId ? 1 : 0) + (t.reconciled ? 1 : 0)
 }
 
+/**
+ * Settle a counted-twice pair by dropping one side. A re-import pair is one
+ * line saved twice, and the copy kept may be the one saved before an account
+ * was picked, so it takes the account with it.
+ */
+export function resolveDuplicate(d: AppData, pair: DuplicatePair, keep: 'imported' | 'manual'): AppData {
+  const drop = keep === 'imported' ? pair.manual.id : pair.imported.id
+  if (pair.reimport) {
+    const kept = d.transactions.find((t) => t.id === pair.imported.id)
+    if (kept && !kept.accountId) kept.accountId = pair.manual.accountId
+  }
+  d.transactions = d.transactions.filter((t) => t.id !== drop)
+  return d
+}
+
 /** The key one month's assumption about one plan line is stored under. */
 export function assumptionKey(month: string, lineId: string): string {
   return `${month}:${lineId}`

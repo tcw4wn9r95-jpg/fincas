@@ -2,6 +2,7 @@ import type { AppData, ChatMessage, ProvisionAllocation, Settings } from './type
 import { todayISO, uid, currentMonth, addMonths } from './format'
 import { EMERGENCY_FUND_ID, transactionAllocations } from './provisions'
 import { settleEventFunds } from './events'
+import { loadRepairs } from './health'
 
 const STORAGE_KEY = 'fincas.data.v1'
 export const DATA_VERSION = 1
@@ -116,6 +117,7 @@ export function dropRepeatedIds(d: AppData): AppData {
   const last = new Map<string, number>()
   d.transactions.forEach((t, i) => last.set(t.id, i))
   if (last.size === d.transactions.length) return d
+  loadRepairs.repeatedIds += d.transactions.length - last.size
   d.transactions = d.transactions.filter((t, i) => last.get(t.id) === i)
   return d
 }

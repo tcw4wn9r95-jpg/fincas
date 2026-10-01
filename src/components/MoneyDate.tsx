@@ -74,10 +74,13 @@ export function MoneyDate({
   onDiscuss,
   onGoToEvents,
   onGoToPlan,
+  initialMonth,
 }: {
   onDiscuss: (month: string) => void
   onGoToEvents: () => void
   onGoToPlan: () => void
+  /** Opens on this month — set when another screen sent you to it. */
+  initialMonth?: string
 }) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
@@ -105,7 +108,7 @@ export function MoneyDate({
   // Null until the user picks explicitly: the view then follows the newest month
   // that has data (so a fresh July import shows straight away), while a manual
   // pick sticks.
-  const [month, setMonth] = useState<string | null>(null)
+  const [month, setMonth] = useState<string | null>(initialMonth ?? null)
   const activeMonth =
     month && months.includes(month) ? month : monthsWithData(data)[0] ?? currentMonth()
 

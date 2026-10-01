@@ -5,6 +5,7 @@ import { applyStatementBalance, isCardAccount, trackedAccountName } from '../lib
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey, todayISO } from '../lib/format'
 import { foreignLineMatches } from '../lib/fx'
+import { REVOLUT_NAME, revolutAccount } from '../lib/refile'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -229,6 +230,18 @@ export function ImportModal({
         resolvedAccountId = id
         setAutoCreatedCard(foundCardholder)
       }
+    } else if (foundSource === 'revolut' && !accountId && !revolutAccount(data)) {
+      // The first Revolut export creates the account it belongs to, the same
+      // way a card statement creates its card — left to the picker, these
+      // lines landed on whatever account it held.
+      const id = uid()
+      update((d) => {
+        d.accounts.push({ id, name: REVOLUT_NAME, balance: 0, asOf: '' })
+        return d
+      })
+      setAccountId(id)
+      resolvedAccountId = id
+      setAutoCreatedCard(REVOLUT_NAME)
     } else if (foundSource && !accountId) {
       const guess =
         foundSource === 'card'
@@ -653,7 +666,9 @@ export function ImportModal({
                 ))}
               </div>
               <p className="text-xs text-muted mt-2">
-                {autoCreatedCard && accountId
+                {autoCreatedCard === REVOLUT_NAME && accountId
+                  ? 'This is a Revolut export, so its lines go to a Revolut account — created now, since there wasn’t one.'
+                  : autoCreatedCard && accountId
                   ? `Created “${autoCreatedCard}” as a new card, reading the name straight off the statement — a later statement for the same person will find it again on its own.`
                   : cardChosen
                     ? 'Charges on a card are spending the day they happen, and they build up what you owe until a payment closes the gap.'

@@ -92,7 +92,11 @@ export function App() {
   // ready-made prompt (e.g. a current-month recap).
   const [assistantSeed, setAssistantSeed] = useState<AssistantSeed | null>(null)
 
-  function go(next: Tab) {
+  // The month a screen should open on, when another screen sent you there —
+  // a health check pointing at August's duplicates opens August, not today.
+  const [focusMonth, setFocusMonth] = useState<string | undefined>()
+  function go(next: Tab, month?: string) {
+    setFocusMonth(month)
     setTab(next)
     setMoreOpen(false)
   }
@@ -167,9 +171,11 @@ export function App() {
           </header>
 
           <main className="px-4 sm:px-6 lg:px-10 py-6 lg:py-10 pb-24 lg:pb-10 max-w-5xl mx-auto">
-            {tab === 'overview' && <Dashboard goTo={(t) => go(t)} />}
+            {tab === 'overview' && <Dashboard goTo={(t, month) => go(t, month)} />}
             {tab === 'this-month' && (
               <CurrentMonth
+                key={focusMonth}
+                initialMonth={focusMonth}
                 onDiscuss={discussPrompt}
                 onGoToEvents={() => go('events')}
                 onGoToPlan={() => go('plan')}
@@ -177,6 +183,8 @@ export function App() {
             )}
             {tab === 'money-date' && (
               <MoneyDate
+                key={focusMonth}
+                initialMonth={focusMonth}
                 onDiscuss={discussMonth}
                 onGoToEvents={() => go('events')}
                 onGoToPlan={() => go('plan')}

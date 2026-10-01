@@ -13,7 +13,7 @@ export function tx(fields: Partial<Transaction> & { date: string; amount: number
     id: `T${seq}`,
     description: `Line ${seq}`,
     category: fields.amount > 0 ? 'Income' : 'Food',
-    source: 'csv',
+    source: 'manual',
     month: fields.date.slice(0, 7),
     ...fields,
   }

@@ -201,10 +201,23 @@ export function parseCSV(text: string): ParsedResult {
   return { transactions: out, warnings }
 }
 
+/**
+ * A Revolut export never names Revolut — its file is "account-statement_….csv"
+ * and its header is plain English — so it is known by its columns. Missing
+ * this sent every Revolut import to whichever account the picker held, which
+ * for most of this household's history was a credit card.
+ */
+const REVOLUT_HEADER = /^type,product,started date,completed date,description,amount,fee,currency,state,balance/i
+
+export function looksLikeRevolutCSV(text: string): boolean {
+  return REVOLUT_HEADER.test(text.replace(/^\uFEFF/, '').trimStart())
+}
+
 export async function parseCSVFile(file: File): Promise<ParsedResult> {
   const text = await file.text()
   const parsed = parseCSV(text)
-  return { ...parsed, source: sourceHint(text.slice(0, 4000), file.name) }
+  const source = looksLikeRevolutCSV(text) ? 'revolut' : sourceHint(text.slice(0, 4000), file.name)
+  return { ...parsed, source }
 }
 
 // ── PDF ──────────────────────────────────────────────────────────

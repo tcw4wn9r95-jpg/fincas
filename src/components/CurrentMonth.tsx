@@ -5,6 +5,7 @@ import {
   computeMonthPulse,
   monthPulseText,
   type DuplicatePair,
+  resolveDuplicate as settleDuplicate,
 } from '../lib/month'
 import { monthsWithData } from '../lib/forecast'
 import { potMovements } from '../lib/provisions'
@@ -66,10 +67,13 @@ export function CurrentMonth({
   onDiscuss,
   onGoToEvents,
   onGoToPlan,
+  initialMonth,
 }: {
   onDiscuss: (prompt: string) => void
   onGoToEvents: () => void
   onGoToPlan: () => void
+  /** Opens on this month — set when another screen sent you to it. */
+  initialMonth?: string
 }) {
   const { data, update } = useData()
   const { currency, locale } = data.settings
@@ -83,7 +87,7 @@ export function CurrentMonth({
     for (const m of monthsWithData(data)) set.add(m)
     return Array.from(set).sort().reverse()
   }, [data])
-  const [month, setMonth] = useState<string | null>(null)
+  const [month, setMonth] = useState<string | null>(initialMonth ?? null)
   const activeMonth = month && months.includes(month) ? month : currentMonth()
 
   const pulse = useMemo(() => computeMonthPulse(data, activeMonth), [data, activeMonth])
@@ -190,17 +194,7 @@ export function CurrentMonth({
 
   /** Resolve a duplicate by dropping one side; the other stays as the record. */
   function resolveDuplicate(pair: DuplicatePair, keep: 'imported' | 'manual') {
-    update((d) => {
-      const drop = keep === 'imported' ? pair.manual.id : pair.imported.id
-      // A re-import pair is one line saved twice; the copy kept may be the one
-      // saved before an account was picked, so it takes the account with it.
-      if (pair.reimport) {
-        const kept = d.transactions.find((t) => t.id === pair.imported.id)
-        if (kept && !kept.accountId) kept.accountId = pair.manual.accountId
-      }
-      d.transactions = d.transactions.filter((t) => t.id !== drop)
-      return d
-    })
+    update((d) => settleDuplicate(d, pair, keep))
   }
   /**
    * The pairing was wrong: two spends really did happen. Recorded as a flag so

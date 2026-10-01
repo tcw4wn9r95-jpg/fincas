@@ -25,6 +25,7 @@ import { SankeyChart } from './SankeyChart'
 import { SankeyOverlay } from './SankeyOverlay'
 import { ScenarioBar } from './Scenarios'
 import { Logo, IconPlan, IconUpload } from './icons'
+import { DataHealth } from './DataHealth'
 
 /** How far the headline chart looks back, and forward. */
 const SUMMARY_BACK = 6
@@ -58,7 +59,11 @@ function Stat({
   )
 }
 
-export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }) {
+export function Dashboard({
+  goTo,
+}: {
+  goTo: (tab: 'plan' | 'settings' | 'this-month' | 'money-date', month?: string) => void
+}) {
   const { data, setData } = useData()
   const { currency, locale } = data.settings
   const fileRef = useRef<HTMLInputElement>(null)
@@ -191,6 +196,9 @@ export function Dashboard({ goTo }: { goTo: (tab: 'plan' | 'settings') => void }
 
   return (
     <div className="space-y-6 animate-fade-up">
+      {/* First, because every figure below is only as good as what it is
+          built from. */}
+      <DataHealth goTo={goTo} />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {anchored ? (
           <Stat
