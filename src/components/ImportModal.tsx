@@ -381,6 +381,13 @@ export function ImportModal({
       // statement's own line, so it is replaced here too — kept, it sat beside
       // the re-imported copy and the month counted the charge twice.
       const incoming = new Set(tagged.map(dupeKey))
+      // Rows folded in from what's saved come back with their own ids, and the
+      // copy being saved is the one to keep. Which account was picked decides
+      // nothing here: the fold-in ran against the account preselected when the
+      // file was picked, so changing the picker before Save used to keep the
+      // original *and* write the folded copy back — a whole month doubled,
+      // every pair sharing one id.
+      const resaved = new Set(tagged.map((r) => r.id))
       update((d) => {
         // Replacing a month only replaces this account's lines in it — the card
         // statement and the current-account statement cover the same month and
@@ -393,7 +400,8 @@ export function ImportModal({
             : !t.accountId
         d.transactions = [
           ...d.transactions.filter(
-            (t) => !superseded.has(t.id) && !(monthsCovered.has(t.month) && replaced(t)),
+            (t) =>
+              !superseded.has(t.id) && !resaved.has(t.id) && !(monthsCovered.has(t.month) && replaced(t)),
           ),
           ...tagged,
         ]

@@ -104,6 +104,22 @@ export function liftStandIns(d: AppData): AppData {
   return d
 }
 
+/**
+ * Drop the extra copies of any transaction stored more than once under the
+ * same id. An id is the record's identity, so a repeat is never a second
+ * spend — it is the same one written back, which is what a re-import did when
+ * the account was changed before saving (see `ImportModal.save`), counting
+ * every line of the month twice. The last copy wins: it is the one written
+ * from the review, carrying any edit made there.
+ */
+export function dropRepeatedIds(d: AppData): AppData {
+  const last = new Map<string, number>()
+  d.transactions.forEach((t, i) => last.set(t.id, i))
+  if (last.size === d.transactions.length) return d
+  d.transactions = d.transactions.filter((t, i) => last.get(t.id) === i)
+  return d
+}
+
 export function loadData(): AppData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -114,11 +130,13 @@ export function loadData(): AppData {
     // at, and only then is it safe to read a pot's balance and spend it.
     return settleEventFunds(
       liftStandIns(
-        repairAllocations({
-          ...emptyData(),
-          ...parsed,
-          settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
-        }),
+        repairAllocations(
+          dropRepeatedIds({
+            ...emptyData(),
+            ...parsed,
+            settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+          }),
+        ),
       ),
     )
   } catch {
@@ -189,12 +207,14 @@ export async function importData(file: File): Promise<AppData> {
     throw new Error('That file does not look like a CasaresSan Finances backup.')
   }
   return settleEventFunds(
-    repairAllocations({
-      ...emptyData(),
-      ...parsed,
-      settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
-      updatedAt: new Date().toISOString(),
-    }),
+    repairAllocations(
+      dropRepeatedIds({
+        ...emptyData(),
+        ...parsed,
+        settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+        updatedAt: new Date().toISOString(),
+      }),
+    ),
   )
 }
 
