@@ -20,7 +20,13 @@ import {
 import { allEventStatuses, eventSummaryLine, eventBudgetForMonth } from './events'
 import { fundingPlan } from './funding'
 import { describeForeign } from './fx'
-import { CARD_PAYMENT_CATEGORY, NON_CASHFLOW, SAVINGS_CATEGORY, INVESTMENTS_CATEGORY } from './categorize'
+import {
+  CARD_PAYMENT_CATEGORY,
+  NON_CASHFLOW,
+  SAVINGS_CATEGORY,
+  INVESTMENTS_CATEGORY,
+  isIncomeCategory,
+} from './categorize'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -444,8 +450,10 @@ export const PROVISIONED_BRACKET = 'Provisioned'
 /**
  * Actual money in/out per category across a set of months. Positives and
  * negatives inside the same category are netted first (a Health spend minus
- * its reimbursement shows as the net spend), then the net lands on the in or
- * out side by its sign.
+ * its reimbursement shows as the net spend), then the net lands on the side its
+ * category belongs to (`isIncomeCategory`) — so a month the refunds outran the
+ * spending carries a negative expense, never an income. One-off lines are kept
+ * out of both and summed in `exceptional`.
  */
 export function actualsByCategoryRange(
   data: AppData,
@@ -458,8 +466,10 @@ export function actualsByCategoryRange(
   setAsideProvisions: number
   setAsideInvestments: number
   setAsideSavings: number
+  exceptional: number
 } {
   const monthSet = new Set(months)
+  let exceptional = 0
   const net: Record<string, number> = {}
   let setAside = 0
   let setAsideProvisions = 0
@@ -468,6 +478,10 @@ export function actualsByCategoryRange(
   for (const t of data.transactions) {
     if (!monthSet.has(t.month)) continue
     if (NON_CASHFLOW.has(t.category)) continue
+    if (t.oneOff) {
+      exceptional += t.amount
+      continue
+    }
     const aside = setAsideAmount(t)
     setAside += aside
     if (aside) {
@@ -484,12 +498,14 @@ export function actualsByCategoryRange(
   const expense: Record<string, number> = {}
   for (const [cat, n] of Object.entries(net)) {
     const r = round2(n)
-    if (r > 0) income[cat] = r
-    else if (r < 0) expense[cat] = -r
+    if (Math.abs(r) < 0.005) continue
+    if (isIncomeCategory(cat)) income[cat] = r
+    else expense[cat] = -r
   }
   return {
     income,
     expense,
+    exceptional: round2(exceptional),
     setAside: round2(setAside),
     setAsideProvisions: round2(setAsideProvisions),
     setAsideInvestments: round2(setAsideInvestments),
@@ -671,14 +687,19 @@ function monthFlows(
   smoothProvisioned = false,
 ) {
   if (month < now && withData.has(month)) {
-    const { income, expense, setAside, setAsideProvisions, setAsideInvestments, setAsideSavings } =
+    const { income, expense, setAside, setAsideProvisions, setAsideInvestments, setAsideSavings, exceptional } =
       actualsByCategory(data, month, { splitSavings: true })
     const covered = smoothProvisioned ? provisionCoveredByCategoryRange(data, [month]) : {}
-    const inc = Object.values(income).reduce((a, b) => a + b, 0)
+    // One-offs are left out of the month's story but not out of its cash: the
+    // balance this rolls forward has to land where the bank says it does.
+    const inc = Object.values(income).reduce((a, b) => a + b, 0) + exceptional
     let fixed = 0
     let variable = 0
     for (const [cat, amt] of Object.entries(expense)) {
-      const net = round2(Math.max(0, amt - Math.min(amt, round2(covered[cat] ?? 0))))
+      // A refund-heavy category is a negative cost and stays one; only real
+      // spending can be covered by a pot. Clamping at zero here used to drop
+      // the refund from the balance altogether.
+      const net = round2(amt - Math.min(Math.max(0, amt), round2(covered[cat] ?? 0)))
       if (expenseCategoryIsVariable(fixedCats, cat)) variable += net
       else fixed += net
     }
@@ -956,7 +977,9 @@ export function computeHistory(data: AppData): HistoryPoint[] {
   let cumP = 0
   return months.map((m) => {
     const r = computeReview(data, m)
-    cumA += r.net
+    // The running track is cash, so a one-off counts here even though the
+    // month's own bar leaves it out.
+    cumA += r.netWithExceptional
     cumP += r.plannedNet
     return {
       month: m,
@@ -989,6 +1012,7 @@ export function computeReview(data: AppData, month: string): MonthReview {
   let provisionedSpend = 0
   let excludedIn = 0
   let excludedOut = 0
+  let exceptional = 0
   const actualIncomeByCat: Record<string, number> = {}
   const actualExpenseByCat: Record<string, number> = {}
 
@@ -1029,6 +1053,10 @@ export function computeReview(data: AppData, month: string): MonthReview {
       else excludedOut += Math.abs(t.amount)
       continue
     }
+    if (t.oneOff) {
+      exceptional += t.amount + aside
+      continue
+    }
     const key = budgetKey(t)
     netByCat[key] = (netByCat[key] ?? 0) + t.amount + aside
   }
@@ -1057,10 +1085,16 @@ export function computeReview(data: AppData, month: string): MonthReview {
 
   for (const [cat, n] of Object.entries(netByCat)) {
     const net = round2(n)
-    if (net > 0) {
+    if (Math.abs(net) < 0.005) continue
+    if (isIncomeCategory(cat)) {
       income += net
       actualIncomeByCat[cat] = net
-    } else if (net < 0) {
+    } else if (net > 0) {
+      // Refunds outran the spending: a negative cost on its own row, taken
+      // off the month's spending rather than added to its income.
+      actualExpenseByCat[cat] = -net
+      expenses -= net
+    } else {
       const gross = -net
       // The category row keeps the whole spend — a month that paid €3,600 of
       // tax must not read as having paid none — but the total leaves out the
@@ -1073,7 +1107,9 @@ export function computeReview(data: AppData, month: string): MonthReview {
       provisionedSpend += covered
     }
   }
+  income = round2(income)
   expenses = round2(expenses)
+  exceptional = round2(exceptional)
   provisionedSpend = round2(provisionedSpend)
 
   // Planned figures from recurring items for this month.
@@ -1194,6 +1230,8 @@ export function computeReview(data: AppData, month: string): MonthReview {
     // not what it left behind — this figure is the same either way.
     net: round2(income - expenses - setAside),
     netBeforeSetAside: round2(income - expenses),
+    exceptional,
+    netWithExceptional: round2(income - expenses - setAside + exceptional),
     provisionedSpend,
     plannedIncome,
     plannedExpenses,
@@ -1226,6 +1264,19 @@ export function monthReviewText(data: AppData, month: string): string {
       `which before setting anything aside was ${fx(r.netBeforeSetAside)}. ` +
       'Money set aside is reported on its own line, not as spending — it was kept, not consumed.',
   )
+  if (Math.abs(r.exceptional) > 0.5) {
+    lines.push(
+      `One-off items came to ${fx(r.exceptional)} this month and are left out of every figure above, so the ` +
+        `month reads as an ordinary month; with them it came to ${fx(r.netWithExceptional)}. Don't judge the ` +
+        'household\'s usual income or spending by them.',
+    )
+  }
+  if (r.categories.some((c) => c.flow === 'expense' && c.actual < -0.5)) {
+    lines.push(
+      'A category shown with negative spending had more refunded than spent this month (a reimbursement ' +
+        'arriving after the cost it repays) — it lowers spending, it is not income.',
+    )
+  }
   if (r.provisionedSpend > 0.5) {
     lines.push(
       `A further ${fx(r.provisionedSpend)} of bills was paid this month out of provisions. That is real ` +

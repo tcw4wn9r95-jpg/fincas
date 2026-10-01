@@ -130,6 +130,14 @@ export interface Transaction {
   /** Tags this transaction as spending that belongs to a special event. */
   eventId?: string
   /**
+   * Money that happened once and says nothing about an ordinary month — a
+   * bonus or share sale, last year's tax refund. Kept out of income, spending
+   * and every average built on them, and reported on its own line instead:
+   * a €57,000 June made every "usual month" figure meaningless while it sat
+   * inside income. Still counted in the balance, because the cash is real.
+   */
+  oneOff?: boolean
+  /**
    * On a `Card payment` line: which card it settles. Left unset when there is
    * only one card, which is the ordinary case — `cardPaymentTarget()` resolves
    * it either way.
@@ -486,6 +494,13 @@ export interface MonthReview {
   net: number
   /** The same figure before any money was committed to a pot. */
   netBeforeSetAside: number
+  /**
+   * Money in (positive) or out (negative) on lines marked one-off — left out of
+   * every figure above so the month reads as an ordinary month.
+   */
+  exceptional: number
+  /** `net` with the one-offs back in: what the month really did to the balance. */
+  netWithExceptional: number
   /** Spending this month that a provision had already paid for. */
   provisionedSpend: number
   plannedIncome: number

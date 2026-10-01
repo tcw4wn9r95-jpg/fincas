@@ -27,6 +27,8 @@ export function ReconcileOverlay({
   events,
   onSetCategory,
   onSetCard,
+  onSetOneOff,
+  isOneOffCandidate,
   eventQuestion,
   onAnswerEventQuestion,
   onAssignEvent,
@@ -63,6 +65,10 @@ export function ReconcileOverlay({
   cards: Account[]
   onSetCategory: (id: string, category: string) => void
   onSetCard: (id: string, cardAccountId: string | undefined) => void
+  /** Marks a line as happening once — kept out of the month's figures. */
+  onSetOneOff: (id: string, oneOff: boolean) => void
+  /** Whether a line is big enough, against usual income, to ask about. */
+  isOneOffCandidate: (t: Transaction) => boolean
   onToggle: (id: string, reconciled: boolean) => void
   onConfirmAll: () => void
   onAiCategorize?: () => void
@@ -316,6 +322,25 @@ export function ReconcileOverlay({
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} />
+                    {/* Offered on what a month can be thrown by: a big receipt,
+                        or a large refund from a year already closed. Shown on
+                        any line once set, so it can be taken back. */}
+                    {(t.oneOff || isOneOffCandidate(t)) && (
+                      <button
+                        className={classNames(
+                          'pill inline-flex items-center gap-1',
+                          t.oneOff ? 'bg-gold/20 text-gold' : 'bg-canvas text-muted hover:text-ink border border-line',
+                        )}
+                        onClick={() => onSetOneOff(t.id, !t.oneOff)}
+                        title={
+                          t.oneOff
+                            ? 'Counted as a one-off: outside the month\'s income and spending. Click to count it normally.'
+                            : 'Happens once — a bonus, a share sale, last year\'s tax refund. Keeps it out of the month\'s figures and averages.'
+                        }
+                      >
+                        {t.oneOff ? 'One-off ✓' : 'One-off?'}
+                      </button>
+                    )}
                     <ProvisionButton
                       tx={t}
                       provisions={provisions}

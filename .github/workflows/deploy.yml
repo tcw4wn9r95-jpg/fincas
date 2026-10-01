@@ -31,6 +31,9 @@ jobs:
           cache: npm
 
       - run: npm ci
+      # The money logic is tested before anything is published: nothing sits
+      # between main and the live site, so a failing test is the only gate.
+      - run: npm test
       - run: npm run build # relative base ('./') — portable to any path
 
       - name: Publish dist to gh-pages

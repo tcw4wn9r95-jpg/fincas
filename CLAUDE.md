@@ -16,9 +16,11 @@ npm ci        # once per container
 npm run build # tsc -b && vite build — both must pass
 ```
 
-There is no test runner. For logic changes under `src/lib`, bundle the touched
-modules and run the cases through node rather than reasoning about them on
-paper:
+`npm test` runs the vitest suite in `src/test` — the deploy runs it first and
+publishes nothing if it fails. Logic changes under `src/lib` come with a test
+there, built from `src/test/fixture.ts` (synthetic rows only: real financial
+data never enters this repo). For a one-off check against a backup, bundle the
+touched modules and run them through node:
 
 ```
 npx esbuild scratch/check.ts --bundle --format=esm --platform=node \

@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useData } from '../store'
+import { oneOffSpotter } from '../lib/health'
 import {
   computeReview,
   cardPaymentTarget,
@@ -37,6 +38,9 @@ import { SankeyOverlay } from './SankeyOverlay'
 import { IconUpload, IconChat, IconTag, IconCheck, IconTrash } from './icons'
 
 function VarianceBar({ planned, actual }: { planned: number; actual: number }) {
+  // A net refund is a negative cost: there is no bar to draw for it, and a
+  // negative width would draw nothing anyway while pretending to be a figure.
+  actual = Math.max(0, actual)
   const max = Math.max(planned, actual, 1)
   return (
     <div className="space-y-1 min-w-[120px]">
@@ -106,6 +110,7 @@ export function MoneyDate({
     month && months.includes(month) ? month : monthsWithData(data)[0] ?? currentMonth()
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
+  const spotOneOff = useMemo(() => oneOffSpotter(data), [data])
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
   // Event id → name, so a tagged row says which trip it belongs to.
   const eventLabels = useMemo(
@@ -648,6 +653,20 @@ export function MoneyDate({
                   <p className="text-[11px] text-muted leading-snug mt-1">
                     What the month earned over what you lived on, before you committed{' '}
                     {fx(review.setAside)} of it to future bills.
+                  </p>
+                </div>
+              )}
+              {/* One-offs sit outside every figure above, so the month reads as
+                  a month; the balance still gets them, and so does this line. */}
+              {Math.abs(review.exceptional) > 0.5 && (
+                <div className="mt-2.5 pt-2.5 border-t border-line">
+                  <div className="text-xs text-muted">One-off items</div>
+                  <div className="tabular-nums font-medium text-lg leading-tight">
+                    {fx(review.exceptional, { signed: true })}
+                  </div>
+                  <p className="text-[11px] text-muted leading-snug mt-1">
+                    Left out of the figures above. With them the month comes to{' '}
+                    {fx(review.netWithExceptional, { signed: true })}.
                   </p>
                 </div>
               )}
@@ -1215,6 +1234,14 @@ export function MoneyDate({
             if (category !== 'Other' && !needsCard) setReconciled(id, true)
           }}
           onToggle={setReconciled}
+          isOneOffCandidate={spotOneOff}
+          onSetOneOff={(id, oneOff) =>
+            update((d) => {
+              const t = d.transactions.find((x) => x.id === id)
+              if (t) t.oneOff = oneOff || undefined
+              return d
+            })
+          }
           onConfirmAll={reconcileAllSuggestions}
           onAiCategorize={hasApiKey(data) ? runAiCategorize : undefined}
           onProvision={(t) => setProvisioning(t.id)}

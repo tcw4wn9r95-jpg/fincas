@@ -45,6 +45,20 @@ export const CARD_PAYMENT_CATEGORY = 'Card payment'
 
 export const NON_CASHFLOW = new Set<string>(['Internal', CARD_PAYMENT_CATEGORY])
 
+export const INCOME_CATEGORY = 'Income'
+
+/**
+ * Whether a category's net for a period is income or spending. Its name
+ * decides, never its sign: a month where the health insurer paid back more
+ * than was spent on doctors has a negative health cost, not a health income.
+ * Deciding by sign was the earlier rule, and it reported July's €7,335 tax
+ * refund and €800 of reimbursements as income — inflating income and hiding
+ * that the costs they refunded had landed the month before.
+ */
+export function isIncomeCategory(category: string): boolean {
+  return category === INCOME_CATEGORY
+}
+
 /**
  * Money kept rather than spent. Reported on its own line instead of inside
  * expenses — putting €500 into a provision is not the same kind of event as

@@ -34,6 +34,27 @@ const SHORTFALL_COLOR = '#a24a34' // deeper clay — spending beyond income
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
+/** The label net refunds are drawn under, as a source of money. */
+export const REFUNDS_LABEL = 'Refunds'
+
+/**
+ * A flow can't be negative, but a category can be — refunds that outran the
+ * spending. Its net comes back as money in, under one "Refunds" source, so the
+ * picture still adds up to what the month kept instead of losing it.
+ */
+function drawableSides(
+  income: Record<string, number>,
+  expense: Record<string, number>,
+): { income: Record<string, number>; expense: Record<string, number> } {
+  const outIncome = { ...income }
+  const outExpense: Record<string, number> = {}
+  for (const [cat, v] of Object.entries(expense)) {
+    if (v >= 0) outExpense[cat] = v
+    else outIncome[REFUNDS_LABEL] = (outIncome[REFUNDS_LABEL] ?? 0) - v
+  }
+  return { income: outIncome, expense: outExpense }
+}
+
 /**
  * Build the income → hub → expenses/savings flow graph for a netted category
  * breakdown. `provisionCovered` (category → amount) splits off the portion of
@@ -42,12 +63,13 @@ const round2 = (n: number) => Math.round(n * 100) / 100
  * reads as money you'd already accounted for rather than a fresh hit.
  */
 export function buildSankey(
-  income: Record<string, number>,
-  expense: Record<string, number>,
+  rawIncome: Record<string, number>,
+  rawExpense: Record<string, number>,
   provisionCovered: Record<string, number> = {},
   /** Money deliberately kept, drawn apart from what merely wasn't spent. */
   setAside = 0,
 ): SankeyGraph {
+  const { income, expense } = drawableSides(rawIncome, rawExpense)
   const incomeCats = Object.entries(income)
     .filter(([, v]) => v > 0.5)
     .sort((a, b) => b[1] - a[1])
@@ -141,14 +163,15 @@ export function buildSankey(
  * already covered by a provision — for the Sankey's full-page detail view.
  */
 export function describeSankeyFlow(
-  income: Record<string, number>,
-  expense: Record<string, number>,
+  rawIncome: Record<string, number>,
+  rawExpense: Record<string, number>,
   provisionCovered: Record<string, number>,
   currency: string,
   locale: string,
   setAside = 0,
 ): string[] {
   const fx = (n: number) => formatMoney(n, currency, locale, { round: true })
+  const { income, expense } = drawableSides(rawIncome, rawExpense)
   const incomeCats = Object.entries(income).filter(([, v]) => v > 0.5)
   const expenseCats = Object.entries(expense)
     .filter(([, v]) => v > 0.5)
