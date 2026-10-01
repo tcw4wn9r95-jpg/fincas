@@ -248,10 +248,19 @@ export interface CategoryPulse {
 const TREND_MONTHS = 3
 
 export interface DuplicatePair {
-  /** The line typed by hand before any statement existed. */
+  /**
+   * The line typed by hand before any statement existed — or, when `reimport`
+   * is set, the earlier import's copy of the line, which is the one to drop.
+   */
   manual: Transaction
   /** The imported line that appears to be the same spend. */
   imported: Transaction
+  /**
+   * Both sides came off statements: the same line imported twice under
+   * different accounts, so replacing one account's month left the other copy
+   * standing. See `duplicatePairs`.
+   */
+  reimport?: boolean
 }
 
 /**
@@ -290,6 +299,34 @@ export function duplicatePairs(data: AppData, month: string): DuplicatePair[] {
     if (hit) {
       claimed.add(hit.id)
       out.push({ manual, imported: hit })
+    }
+  }
+
+  // The same statement line saved twice under different accounts — typically
+  // a month first imported with no account picked, then re-imported against
+  // one. Re-importing only replaces the picked account's lines, so the first
+  // copy stayed and the month counted the charge twice. Identical lines on the
+  // *same* account are left alone: one statement can genuinely hold two.
+  const lineKey = (t: Transaction) => `${t.date}|${t.amount}|${t.description.trim().toLowerCase()}`
+  const byLine = new Map<string, Transaction[]>()
+  for (const t of imported) {
+    if (claimed.has(t.id) || t.notDuplicate) continue
+    const list = byLine.get(lineKey(t))
+    if (list) list.push(t)
+    else byLine.set(lineKey(t), [t])
+  }
+  for (const list of byLine.values()) {
+    for (const stale of list) {
+      if (claimed.has(stale.id)) continue
+      // The untagged copy is the stale one when there is one: the tagged copy
+      // is what the later, deliberate import wrote.
+      const keep = list.find(
+        (t) => !claimed.has(t.id) && t.id !== stale.id && t.accountId !== stale.accountId && (!stale.accountId || !!t.accountId),
+      )
+      if (!keep) continue
+      claimed.add(stale.id)
+      claimed.add(keep.id)
+      out.push({ manual: stale, imported: keep, reimport: true })
     }
   }
   return out
@@ -780,8 +817,10 @@ export function monthPulseText(data: AppData, month = currentMonth(), today = to
 
   if (p.duplicates.length) {
     lines.push(
-      `${p.duplicates.length} hand-logged spend(s) look like they were also imported from a statement, so the ` +
-        'totals above are overstated by that much until the user resolves them on the Current month screen.',
+      `${p.duplicates.length} spend(s) are counted twice — hand-logged lines a statement later brought in, or ` +
+        'one statement line imported under two accounts — so the totals above are overstated by ' +
+        `${fx(p.duplicates.reduce((s, d) => s + Math.abs(d.manual.amount), 0))} until the user resolves them on ` +
+        'the Current month screen.',
     )
   }
   return lines.join('\n')

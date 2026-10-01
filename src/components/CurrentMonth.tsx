@@ -285,8 +285,10 @@ export function CurrentMonth({
             {pulse.duplicates.length} {pulse.duplicates.length === 1 ? 'spend is' : 'spends are'} counted twice
           </h3>
           <p className="text-sm text-muted mb-3">
-            An import has brought in the real version of spends you logged by hand. Both are counting, so
-            the month is overstated by{' '}
+            {pulse.duplicates.every((p) => p.reimport)
+              ? 'The same statement lines were saved twice, under different accounts.'
+              : 'An import has brought in the real version of spends you logged by hand.'}{' '}
+            Both are counting, so the month is overstated by{' '}
             {fx(pulse.duplicates.reduce((s, p) => s + Math.abs(p.manual.amount), 0))} until you pick one.
           </p>
           <div className="space-y-2">
@@ -298,7 +300,9 @@ export function CurrentMonth({
                 <div className="grid gap-1 mb-2.5">
                   <div className="flex items-baseline justify-between gap-3 text-sm">
                     <span className="min-w-0 break-words">
-                      <span className="text-muted text-xs">yours · {p.manual.date.slice(5)} </span>
+                      <span className="text-muted text-xs">
+                        {p.reimport ? 'earlier import' : 'yours'} · {p.manual.date.slice(5)}{' '}
+                      </span>
                       {p.manual.description}
                     </span>
                     <span className="tabular-nums shrink-0">{fx(Math.abs(p.manual.amount))}</span>
@@ -315,9 +319,13 @@ export function CurrentMonth({
                   <button className="btn-primary text-xs" onClick={() => resolveDuplicate(p, 'imported')}>
                     <IconCheck width={14} height={14} /> Keep the statement
                   </button>
-                  <button className="btn-subtle text-xs" onClick={() => resolveDuplicate(p, 'manual')}>
-                    Keep mine
-                  </button>
+                  {/* Two copies of one statement line: keeping the older,
+                      account-less one would only swap which copy is wrong. */}
+                  {!p.reimport && (
+                    <button className="btn-subtle text-xs" onClick={() => resolveDuplicate(p, 'manual')}>
+                      Keep mine
+                    </button>
+                  )}
                   <button
                     className="btn-subtle text-xs"
                     onClick={() => keepBoth(p)}

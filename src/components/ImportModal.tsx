@@ -376,15 +376,24 @@ export function ImportModal({
     } else if (replaceMonths) {
       // Overwrite every month this import covers with exactly what's reviewed.
       const monthsCovered = new Set(tagged.map((r) => r.month))
+      // A line this file carries that is already saved with no account: the
+      // same month imported earlier before an account was picked. It is this
+      // statement's own line, so it is replaced here too — kept, it sat beside
+      // the re-imported copy and the month counted the charge twice.
+      const incoming = new Set(tagged.map(dupeKey))
       update((d) => {
         // Replacing a month only replaces this account's lines in it — the card
         // statement and the current-account statement cover the same month and
-        // must not evict each other.
+        // must not evict each other. With no account picked that means the
+        // untagged lines, which are all the review folded in; this used to
+        // drop every account's lines for the month instead.
+        const replaced = (t: Transaction) =>
+          accountId
+            ? t.accountId === accountId || (!t.accountId && incoming.has(dupeKey(t)))
+            : !t.accountId
         d.transactions = [
           ...d.transactions.filter(
-            (t) =>
-              !superseded.has(t.id) &&
-              (!monthsCovered.has(t.month) || (accountId ? t.accountId !== accountId : false)),
+            (t) => !superseded.has(t.id) && !(monthsCovered.has(t.month) && replaced(t)),
           ),
           ...tagged,
         ]
