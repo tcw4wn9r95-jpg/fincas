@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useData } from '../store'
 import { exportData, importData, demoData, emptyData } from '../lib/storage'
 import { connectDrive, saveToDrive, loadFromDrive } from '../lib/drive'
+import { ImportHistory } from './ImportHistory'
 import { IconDownload, IconUpload, IconLock, IconTrash, IconTag } from './icons'
 
 const MODELS = [
@@ -165,6 +166,8 @@ export function Settings() {
       </div>
 
       {/* Data */}
+      <ImportHistory />
+
       <div className="card p-6 space-y-4">
         <h3 className="text-lg">Your data</h3>
         <p className="text-sm text-muted">

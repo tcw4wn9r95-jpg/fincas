@@ -25,6 +25,12 @@ export interface ParsedResult {
    * anything about the figures.
    */
   cardholderName?: string
+  /**
+   * The file's own arithmetic, where it states balances: opening + lines
+   * should land on closing. Current-account statements print both figures; a
+   * Revolut export carries a running balance on every completed line.
+   */
+  tieOut?: { opening?: number; closing: number; agrees?: boolean; difference?: number }
 }
 
 /**
@@ -169,10 +175,41 @@ export function parseCSV(text: string): ParsedResult {
 
   const dayFirst = inferDayFirst(result.data.map((row) => row[dateF]))
 
-  for (const row of result.data) {
+  // Revolut's own columns, when present. Read so that a payment that never
+  // happened isn't imported, a fee isn't silently lost, and the running
+  // balance can prove every line was read — the importer used to ignore all
+  // three.
+  const col = (re: RegExp) => fields.find((f) => re.test(f.trim()))
+  const stateF = col(/^state$/i)
+  const feeF = col(/^fee$/i)
+  const balanceF = col(/^balance$/i)
+  const productF = col(/^product$/i)
+  const currencyF = col(/^currency$/i)
+  const completedF = col(/^completed date$/i)
+  let dropped = 0
+  let pending = 0
+  const foreign = new Map<string, number>()
+  const currencies = new Map<string, number>()
+  if (currencyF) for (const row of result.data) {
+    const c = (row[currencyF] ?? '').trim()
+    if (c) currencies.set(c, (currencies.get(c) ?? 0) + 1)
+  }
+  const homeCurrency = [...currencies.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  const chain: Array<{ group: string; at: string; order: number; amount: number; fee: number; balance: number }> = []
+
+  for (const [order, row] of result.data.entries()) {
     const date = normalizeDate(row[dateF], dayFirst)
     if (!date) continue
     const description = (descF ? row[descF] : '') || 'Transaction'
+    const state = stateF ? (row[stateF] ?? '').trim().toUpperCase() : ''
+    // Reverted, declined and failed payments never moved money.
+    if (state === 'REVERTED' || state === 'DECLINED' || state === 'FAILED') {
+      dropped++
+      continue
+    }
+    if (state === 'PENDING') pending++
+    const currency = currencyF ? (row[currencyF] ?? '').trim() : ''
+    if (currency && homeCurrency && currency !== homeCurrency) foreign.set(currency, (foreign.get(currency) ?? 0) + 1)
 
     let amount: number | null = null
     if (amountF && row[amountF]) {
@@ -195,10 +232,74 @@ export function parseCSV(text: string): ParsedResult {
       source: 'csv',
       month: date.slice(0, 7),
     })
+    // A fee is charged on top of the amount and only shows in its own column;
+    // as its own line it is counted, and the running balance still adds up.
+    const fee = feeF ? Math.abs(cleanAmount(row[feeF]) ?? 0) : 0
+    if (fee > 0.005) {
+      out.push({
+        id: uid(),
+        date,
+        description: `Fee: ${description.trim()}`,
+        amount: -fee,
+        category: 'Fees',
+        source: 'csv',
+        month: date.slice(0, 7),
+      })
+    }
+    const balance = balanceF ? cleanAmount(row[balanceF]) : null
+    if (balance != null && state !== 'PENDING') {
+      chain.push({
+        group: `${productF ? row[productF] : ''}|${currency}`,
+        at: (completedF && row[completedF]) || row[dateF],
+        order,
+        amount,
+        fee,
+        balance,
+      })
+    }
   }
 
+  if (dropped) warnings.push(`Left out ${dropped} payment${dropped === 1 ? '' : 's'} marked reverted, declined or failed — no money moved.`)
+  if (pending)
+    warnings.push(`${pending} line${pending === 1 ? ' is' : 's are'} still pending. Re-importing once ${pending === 1 ? 'it completes' : 'they complete'} won't duplicate ${pending === 1 ? 'it' : 'them'}.`)
+  if (foreign.size)
+    warnings.push(
+      `${[...foreign.entries()].map(([c, n]) => `${n} line${n === 1 ? '' : 's'} in ${c}`).join(', ')} — imported at face value, as though in ${homeCurrency}. Check those amounts.`,
+    )
   if (!out.length) warnings.push('No rows could be parsed. Check the date and amount columns.')
-  return { transactions: out, warnings }
+  return { transactions: out, warnings, tieOut: runningBalanceCheck(chain) }
+}
+
+/**
+ * Prove a running-balance export was read whole: each completed line's
+ * balance must be the previous one plus its amount less its fee. Checked per
+ * product and currency, since a savings vault and a CAD pocket keep balances
+ * of their own; reported for the busiest one, failing if any breaks.
+ */
+function runningBalanceCheck(
+  chain: Array<{ group: string; at: string; order: number; amount: number; fee: number; balance: number }>,
+): ParsedResult['tieOut'] {
+  if (chain.length < 2) return undefined
+  const groups = new Map<string, typeof chain>()
+  for (const c of chain) groups.set(c.group, [...(groups.get(c.group) ?? []), c])
+  let difference = 0
+  let main: typeof chain = []
+  for (const g of groups.values()) {
+    g.sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order)
+    for (let i = 1; i < g.length; i++) {
+      const gap = g[i].balance - (g[i - 1].balance + g[i].amount - g[i].fee)
+      if (Math.abs(gap) > 0.011) difference += Math.abs(gap)
+    }
+    if (g.length > main.length) main = g
+  }
+  const first = main[0]
+  const last = main[main.length - 1]
+  return {
+    opening: Math.round((first.balance - first.amount + first.fee) * 100) / 100,
+    closing: last.balance,
+    agrees: difference < 0.011,
+    difference: Math.round(difference * 100) / 100,
+  }
 }
 
 /**
@@ -448,15 +549,23 @@ export async function parsePDFFile(file: File): Promise<ParsedResult> {
       'No transactions detected. Some PDF statements are scanned images with no text layer — try exporting a CSV from your bank instead.',
     )
   } else if (statement?.complete) {
-    // The statement's own arithmetic agrees, so every row was read. No need to
-    // ask the user to double-check what the bank has already confirmed.
-    warnings.push(
-      'Every row checks out: the opening balance plus these rows lands exactly on the statement’s closing balance.',
-    )
+    // The statement's own arithmetic agrees, so every row was read — the
+    // import says so itself (`tieOut`), with no need for a note as well.
   } else {
     warnings.push('PDF parsing is best-effort. Please review the rows and signs before saving.')
   }
-  return { transactions: out, warnings, statement, source, cardholderName }
+  const tieOut = statement
+    ? {
+        opening: statement.openingBalance,
+        closing: statement.closingBalance,
+        agrees: statement.complete,
+        difference:
+          statement.openingBalance == null
+            ? undefined
+            : Math.round(Math.abs(statement.openingBalance + statement.rowsTotal - statement.closingBalance) * 100) / 100,
+      }
+    : undefined
+  return { transactions: out, warnings, statement, source, cardholderName, tieOut }
 }
 
 /**

@@ -134,6 +134,22 @@ export function runHealthChecks(data: AppData, today = todayISO()): HealthIssue[
     })
   }
 
+  // An import whose own statement disagreed with the lines it brought in: a
+  // line missed or read twice, on the bank's word rather than a heuristic.
+  for (const b of data.imports ?? []) {
+    if (b.tieOut?.agrees !== false) continue
+    issues.push({
+      id: `tie-out:${b.id}`,
+      severity: 'error',
+      title: `An import doesn’t match its statement by ${fx(b.tieOut.difference ?? 0)}`,
+      detail:
+        `${b.files.join(', ') || 'An import'} (${b.periodStart} to ${b.periodEnd}): its balances don’t follow from ` +
+        'the lines it brought in, so one was missed or read twice. Re-import it, or undo it from Settings.',
+      amount: b.tieOut.difference,
+      actions: [{ kind: 'open', tab: 'money-date', month: b.periodEnd.slice(0, 7), label: 'Open the month' }],
+    })
+  }
+
   // Lines filed under an account their own shape says they don't belong to.
   const refile = proposeRefile(data)
   if (refile.moves.length) {

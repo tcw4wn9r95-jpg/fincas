@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData } from '../store'
-import { parseFile, type StatementSummary } from '../lib/parse'
+import { parseFile, type ParsedResult, type StatementSummary } from '../lib/parse'
 import { applyStatementBalance, isCardAccount, trackedAccountName } from '../lib/forecast'
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey, todayISO } from '../lib/format'
 import { foreignLineMatches } from '../lib/fx'
 import { REVOLUT_NAME, revolutAccount } from '../lib/refile'
+import { dupeKey, foldSaved, saveImport } from '../lib/importer'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -54,7 +55,6 @@ interface ImportModalProps {
   onSaved?: () => void
 }
 
-const dupeKey = (t: Transaction) => `${t.date}|${t.amount}|${t.description}`
 
 export function ImportModal({
   onClose,
@@ -74,6 +74,10 @@ export function ImportModal({
   // see `readStatementSummary`. Held so Save can move the account with it.
   const [statement, setStatement] = useState<StatementSummary | null>(null)
   const [applyBalance, setApplyBalance] = useState(true)
+  // What kind of file this was, and whether its own arithmetic agreed — kept
+  // with the import's record, and shown before Save.
+  const [fileSource, setFileSource] = useState<ParsedResult['source']>()
+  const [tieOut, setTieOut] = useState<ParsedResult['tieOut']>()
   // Which account these lines belong to. It decides what a card statement does
   // to the debt, so it is asked plainly rather than inferred and hoped for —
   // the file only preselects.
@@ -151,6 +155,7 @@ export function ImportModal({
     // can't steal the pick from the first.
     let foundCardholder: string | undefined
     let skipped = 0
+    const checks: NonNullable<ParsedResult['tieOut']>[] = []
     for (const file of picked) {
       names.push(file.name)
       try {
@@ -162,6 +167,7 @@ export function ImportModal({
           foundStatement = res.statement
         }
         if (res.source && !foundSource) foundSource = res.source
+        if (res.tieOut) checks.push(res.tieOut)
         if (res.cardholderName && !foundCardholder) foundCardholder = res.cardholderName
         for (const t of res.transactions) {
           // Check against the pre-existing set only — not rows added earlier in
@@ -182,6 +188,17 @@ export function ImportModal({
       } catch (err) {
         warns.push(`${file.name}: ${err instanceof Error ? err.message : 'could not be read'}`)
       }
+    }
+    if (foundSource) setFileSource(foundSource)
+    if (checks.length) {
+      // Several files at once: the batch agrees only if every file does.
+      const last = checks[checks.length - 1]
+      setTieOut({
+        opening: checks[0].opening,
+        closing: last.closing,
+        agrees: checks.every((c) => c.agrees === true) ? true : checks.some((c) => c.agrees === false) ? false : undefined,
+        difference: Math.round(checks.reduce((s, c) => s + (c.difference ?? 0), 0) * 100) / 100,
+      })
     }
     if (foundStatement) {
       setStatement(foundStatement)
@@ -256,32 +273,13 @@ export function ImportModal({
     }
     if (skipped) warns.unshift(`Skipped ${skipped} row${skipped === 1 ? '' : 's'} already staged.`)
     if (!added.length && !warns.length) warns.push('No new transactions found in that file.')
-    setRows((prev) => {
-      let next = [...prev, ...added]
-      // Replace mode: fold in this same account's own saved rows for the
-      // months this import touches, so re-importing a fuller statement over a
-      // partial earlier one doesn't lose rows the new file doesn't repeat.
-      //
-      // Scoped to this account on purpose. A different account's rows for the
-      // same month are already untouched by Save (it only ever replaces this
-      // account's lines) — echoing them into the review here would make Save
-      // write a second, re-tagged copy of them right back in, duplicating
-      // every other account's month whenever two statements share one.
-      if (replaceMonths) {
-        const monthsCovered = new Set(next.map((r) => r.month))
-        // Avoid re-adding a saved row that a freshly-imported row already covers,
-        // but never dedup saved rows against each other (identical pairs survive).
-        const importedKeys = new Set(next.map(dupeKey))
-        for (const t of savedStream) {
-          const sameAccount = resolvedAccountId ? t.accountId === resolvedAccountId : !t.accountId
-          if (sameAccount && monthsCovered.has(t.month) && !importedKeys.has(dupeKey(t))) {
-            next.push(t)
-          }
-        }
-        next = next.slice().sort((a, b) => a.date.localeCompare(b.date))
-      }
-      return next
-    })
+    // Replace mode: fold in this same account's own saved rows for the months
+    // this import touches, so re-importing a fuller statement over a partial
+    // earlier one doesn't lose rows the new file doesn't repeat. Scoped to this
+    // account on purpose — see `foldSaved`, which the picker re-runs too.
+    setRows((prev) =>
+      replaceMonths ? foldSaved([...prev, ...added], savedStream, resolvedAccountId) : [...prev, ...added],
+    )
     setFiles((prev) => [...prev, ...names])
     setWarnings(warns)
     setBusy(false)
@@ -371,63 +369,42 @@ export function ImportModal({
   const [keepManual, setKeepManual] = useState(false)
   const supersededIds = keepManual ? [] : manualDupes.map((p) => p.manual.id)
 
+  /**
+   * Changing the account re-runs the fold-in, so the review always shows what
+   * Save will write. Before, the fold-in ran once for the account preselected
+   * when the file was picked; changing the picker afterwards saved the
+   * original lines *and* the folded copies — every line of July, twice.
+   */
+  function pickAccount(id: string) {
+    setAccountId(id)
+    if (replaceMonths) setRows((prev) => foldSaved(prev, savedStream, id))
+  }
+
   function save() {
     if (!rows.length) return
-    // Stamp the account onto a freshly parsed line — a charge only counts
-    // against a card's debt if it says which card it was made on. A row that
-    // already carries an account is one folded in from what's already saved
-    // (replaceMonths, above), shown so its own edits aren't lost on a
-    // re-import; relabelling it to whatever is picked here — including after
-    // the picker is changed by hand, later than the fold-in ran — would write
-    // a second, re-tagged copy of someone else's month back in as this one's.
-    const tagged = accountId ? rows.map((r) => (r.accountId ? r : { ...r, accountId })) : rows
-    // Hand-logged lines this file is bringing in for real — dropped as it saves,
-    // so the same spend never sits in the month twice.
-    const superseded = new Set(supersededIds)
     if (onImport) {
-      onImport(tagged)
-    } else if (replaceMonths) {
-      // Overwrite every month this import covers with exactly what's reviewed.
-      const monthsCovered = new Set(tagged.map((r) => r.month))
-      // A line this file carries that is already saved with no account: the
-      // same month imported earlier before an account was picked. It is this
-      // statement's own line, so it is replaced here too — kept, it sat beside
-      // the re-imported copy and the month counted the charge twice.
-      const incoming = new Set(tagged.map(dupeKey))
-      // Rows folded in from what's saved come back with their own ids, and the
-      // copy being saved is the one to keep. Which account was picked decides
-      // nothing here: the fold-in ran against the account preselected when the
-      // file was picked, so changing the picker before Save used to keep the
-      // original *and* write the folded copy back — a whole month doubled,
-      // every pair sharing one id.
-      const resaved = new Set(tagged.map((r) => r.id))
-      update((d) => {
-        // Replacing a month only replaces this account's lines in it — the card
-        // statement and the current-account statement cover the same month and
-        // must not evict each other. With no account picked that means the
-        // untagged lines, which are all the review folded in; this used to
-        // drop every account's lines for the month instead.
-        const replaced = (t: Transaction) =>
-          accountId
-            ? t.accountId === accountId || (!t.accountId && incoming.has(dupeKey(t)))
-            : !t.accountId
-        d.transactions = [
-          ...d.transactions.filter(
-            (t) =>
-              !superseded.has(t.id) && !resaved.has(t.id) && !(monthsCovered.has(t.month) && replaced(t)),
-          ),
-          ...tagged,
-        ]
-        if (statement && applyBalance) applyStatementBalance(d, statement)
-        return d
-      })
-    } else {
-      update((d) => {
-        d.transactions = [...d.transactions.filter((t) => !superseded.has(t.id)), ...tagged]
-        if (statement && applyBalance) applyStatementBalance(d, statement)
-        return d
-      })
+      onImport(accountId ? rows.map((r) => (r.accountId ? r : { ...r, accountId })) : rows)
+      onClose()
+      return
     }
+    update((d) => {
+      saveImport(d, {
+        rows,
+        accountId,
+        replaceMonths: !!replaceMonths,
+        // Hand-logged lines this file is bringing in for real — dropped as it
+        // saves, so the same spend never sits in the month twice.
+        supersededIds,
+        files,
+        source: fileSource,
+        periodEnd: statement?.asOf,
+        tieOut,
+        batchId: uid(),
+        at: new Date().toISOString(),
+      })
+      if (statement && applyBalance) applyStatementBalance(d, statement)
+      return d
+    })
     onClose()
     onSaved?.()
   }
@@ -658,7 +635,7 @@ export function ImportModal({
                         ? 'bg-forest text-paper border-forest'
                         : 'border-line text-muted hover:text-forest',
                     )}
-                    onClick={() => setAccountId(accountId === a.id ? '' : a.id)}
+                    onClick={() => pickAccount(accountId === a.id ? '' : a.id)}
                   >
                     {a.name}
                     {isCardAccount(a) && ' (card)'}
@@ -674,6 +651,26 @@ export function ImportModal({
                     ? 'Charges on a card are spending the day they happen, and they build up what you owe until a payment closes the gap.'
                     : 'Naming the account keeps each statement’s lines separate, so a card and a current account covering the same month never overwrite each other.'}
               </p>
+            </div>
+          )}
+
+          {/* The file's own arithmetic, said before anything is saved: the one
+              check that proves every line was read once. */}
+          {tieOut && tieOut.agrees !== undefined && (
+            <div
+              className={classNames(
+                'mt-4 rounded-lg border px-4 py-3 text-sm',
+                tieOut.agrees ? 'border-forest/30 bg-forest-tint/30' : 'border-clay/40 bg-clay/5',
+              )}
+            >
+              <span className="font-medium">
+                {tieOut.agrees ? '✓ Matches the statement' : `✗ Off from the statement by ${fx(tieOut.difference ?? 0)}`}
+              </span>
+              <span className="block text-xs text-muted mt-0.5">
+                {tieOut.agrees
+                  ? `${tieOut.opening != null ? `Opening ${fx(tieOut.opening)} plus these lines lands` : 'These lines land'} exactly on its closing ${fx(tieOut.closing)}, so every line was read once.`
+                  : 'Its balances don’t follow from these lines — one was missed or read twice. Compare against the statement before saving; the import will be marked as not matching.'}
+              </span>
             </div>
           )}
 
