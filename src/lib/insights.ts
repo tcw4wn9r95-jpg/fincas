@@ -1,6 +1,6 @@
 import type { AppData } from './types'
+import { settledMonths } from './coverage'
 import {
-  monthsWithData,
   computeReview,
   spendSeriesByCategory,
   streak,
@@ -69,7 +69,9 @@ const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.lengt
 
 /** Derive trends and watch-outs from the user's reconciled money-date history. */
 export function deriveInsights(data: AppData): Insights | null {
-  const months = monthsWithData(data).slice().sort().slice(-6)
+  // Settled months only: an unfinished month, or one still waiting on a
+  // statement, reads as a collapse in income and drags every average with it.
+  const months = settledMonths(data).slice(-6)
   if (months.length === 0) return null
 
   const reviews = months.map((m) => computeReview(data, m))

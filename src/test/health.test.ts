@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { runHealthChecks, loadRepairs } from '../lib/health'
+import { runHealthChecks as allChecks, loadRepairs } from '../lib/health'
 import { duplicatePairs, resolveDuplicate } from '../lib/month'
 import { applyRefile } from '../lib/refile'
 import { dropRepeatedIds } from '../lib/storage'
 import { emergencyFundStatus, EMERGENCY_FUND_ID } from '../lib/provisions'
 import { account, household, tx } from './fixture'
 
-const ids = (d: ReturnType<typeof household>) => runHealthChecks(d).map((i) => i.id)
+// Fixtures here hold a line or two per month, which the month-completeness
+// check rightly calls provisional; these tests are about the other checks.
+const checks = (d: Parameters<typeof allChecks>[0]) => allChecks(d).filter((i) => i.id !== 'provisional')
+
+const ids = (d: ReturnType<typeof household>) => checks(d).map((i) => i.id)
 
 describe('data health', () => {
   it('passes a clean household', () => {
@@ -14,7 +18,7 @@ describe('data health', () => {
       [tx({ date: '2026-07-01', amount: 3000, category: 'Income', source: 'pdf', description: 'CREDIT TRANSFER FROM X', accountId: 'BANK' })],
       { accounts: [account({ id: 'BANK', name: 'S-Bank', tracked: true })] },
     )
-    expect(runHealthChecks(d)).toEqual([])
+    expect(checks(d)).toEqual([])
   })
 
   it('collapses a record stored twice, keeping the copy written last', () => {
@@ -44,7 +48,7 @@ describe('data health', () => {
     delete (bare as { reconciled?: boolean }).reconciled
     const d = household([worked, bare], { accounts: [account({ id: 'REV', name: 'Revolut' })] })
     expect(emergencyFundStatus(d).balance).toBe(8000)
-    const issue = runHealthChecks(d).find((i) => i.id === 'duplicates')!
+    const issue = checks(d).find((i) => i.id === 'duplicates')!
     expect(issue.actions?.[0]).toEqual({ kind: 'resolve-duplicates', months: ['2026-08'] })
     for (const p of duplicatePairs(d, '2026-08')) resolveDuplicate(d, p, 'imported')
     expect(d.transactions).toHaveLength(1)
@@ -61,7 +65,7 @@ describe('data health', () => {
       { accounts: [card, account({ id: 'BANK', name: 'S-Bank', tracked: true })] },
     )
     expect(ids(d)).toEqual(['refile', 'card-credit:CARD'])
-    const refile = runHealthChecks(d)[0].actions![0]
+    const refile = checks(d)[0].actions![0]
     if (refile.kind !== 'refile') throw new Error('expected a refile action')
     applyRefile(d, refile.proposal, () => 'X')
     expect(ids(d)).toEqual([])

@@ -1,6 +1,8 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useData } from '../store'
 import { oneOffSpotter } from '../lib/health'
+import { monthCoverage } from '../lib/coverage'
+import { MonthStatus } from './MonthStatus'
 import {
   computeReview,
   cardPaymentTarget,
@@ -114,6 +116,7 @@ export function MoneyDate({
 
   const review = useMemo(() => computeReview(data, activeMonth), [data, activeMonth])
   const spotOneOff = useMemo(() => oneOffSpotter(data), [data])
+  const coverage = useMemo(() => monthCoverage(data, activeMonth), [data, activeMonth])
   const provisionStatuses = useMemo(() => allProvisionStatuses(data), [data])
   // Event id → name, so a tagged row says which trip it belongs to.
   const eventLabels = useMemo(
@@ -584,6 +587,7 @@ export function MoneyDate({
         </div>
       ) : (
         <>
+          <MonthStatus coverage={coverage} />
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <div className="card p-5">
               <div className="label">Money in</div>

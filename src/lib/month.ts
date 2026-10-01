@@ -10,6 +10,7 @@ import {
 } from './forecast'
 import { NON_CASHFLOW } from './categorize'
 import { potMovements, transactionAllocations } from './provisions'
+import { lastDayOf, monthCoverage, type MonthCoverage } from './coverage'
 import { foreignLineMatches } from './fx'
 import { addMonths, currentMonth, todayISO } from './format'
 
@@ -356,6 +357,36 @@ export function resolveDuplicate(d: AppData, pair: DuplicatePair, keep: 'importe
   return d
 }
 
+/**
+ * Settle the bills a closed month still counts on the user's word alone.
+ * Recording turns each into a hand-logged line — no longer a guess, since the
+ * month is over and the user says it left, from an account that isn't
+ * imported — so the month's review and its live view finally agree. Dropping
+ * takes the word back. Either way nothing is left half-counted.
+ */
+export function settleAssumptions(d: AppData, month: string, how: 'record' | 'drop', newId: () => string): AppData {
+  const pulse = computeMonthPulse(d, month)
+  const next = { ...(d.assumedPaid ?? {}) }
+  for (const a of pulse.assumed) {
+    if (a.auto) continue
+    delete next[assumptionKey(month, a.id)]
+    if (how === 'drop') continue
+    const day = String(Math.min(a.day, Number(lastDayOf(month).slice(8)))).padStart(2, '0')
+    d.transactions.push({
+      id: newId(),
+      date: `${month}-${day}`,
+      description: `${a.label} — paid from an account not imported`,
+      amount: -Math.abs(a.amount),
+      category: a.category,
+      source: 'manual',
+      month,
+      reconciled: true,
+    })
+  }
+  d.assumedPaid = next
+  return d
+}
+
 /** The key one month's assumption about one plan line is stored under. */
 export function assumptionKey(month: string, lineId: string): string {
   return `${month}:${lineId}`
@@ -450,6 +481,13 @@ export interface MonthPulse {
    */
   assumed: AssumedBill[]
   assumedTotal: number
+  /** Whether every account is in for the month — see `monthCoverage`. */
+  coverage: MonthCoverage
+  /**
+   * In a closed month: plan lines that never charged and nobody marked paid.
+   * Counted nowhere — listed so a missed bill is a question, not a silence.
+   */
+  neverCharged: PendingBill[]
   /**
    * Plan lines that cost nothing this month but land in a later one — an annual
    * premium, a quarterly tax. Deliberately absent from every figure here: this
@@ -503,6 +541,9 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   // what `committedLeft` below counts and what the category table already says.
   const pending: PendingBill[] = []
   const assumed: AssumedBill[] = []
+  const neverCharged: PendingBill[] = []
+  const coverage = monthCoverage(data, month, today)
+  const closed = coverage.state === 'complete'
   // Assumed spending per category, so a pocket the month takes on trust fills
   // its own budget line and nobody else's.
   const assumedByCat: Record<string, number> = {}
@@ -525,6 +566,26 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
       continue
     }
     const typicalDay = typicalDayFor(data, item, amount, month)
+    const marked = data.assumedPaid?.[assumptionKey(month, item.id)] !== undefined
+    // Once every account is in for the month, a bill nobody vouched for that
+    // never charged didn't happen — at least not from any account imported.
+    // An automatic assumption stops counting then, and so does a bill still
+    // waiting: both are listed as expected-but-never-charged instead. A bill
+    // the user marked paid by hand stays: that is their word that it left
+    // from somewhere, often an account not imported, and the health panel
+    // asks them to settle it.
+    if (closed && !marked) {
+      neverCharged.push({
+        id: item.id,
+        label: item.label,
+        category: item.category,
+        amount: round2(amount),
+        typicalDay,
+        overdue: true,
+        unassumed: FIXED_COST_CATEGORIES.has(item.category),
+      })
+      continue
+    }
     if (takenOnTrust !== null && takenOnTrust > 0.005) {
       assumedByCat[item.category] = round2((assumedByCat[item.category] ?? 0) + takenOnTrust)
       assumed.push({
@@ -534,7 +595,7 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
         amount: takenOnTrust,
         planAmount: round2(amount),
         day: typicalDay,
-        auto: data.assumedPaid?.[assumptionKey(month, item.id)] === undefined,
+        auto: !marked,
       })
       continue
     }
@@ -604,7 +665,9 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
   // change in behaviour look identical without it.
   const prevMonths: string[] = []
   for (let i = 1; i <= TREND_MONTHS; i++) prevMonths.push(addMonths(month, -i))
-  const withData = prevMonths.filter((m) => data.transactions.some((t) => t.month === m))
+  // A provisional month is missing whole accounts, so it would pull a
+  // category's "usual" down; only complete months set it.
+  const withData = prevMonths.filter((m) => monthCoverage(data, m, today).state === 'complete')
   const past = withData.length ? actualsByCategoryRange(data, withData, { splitSavings: true }) : null
 
   const categories: CategoryPulse[] = review.categories
@@ -698,6 +761,8 @@ export function computeMonthPulse(data: AppData, month = currentMonth(), today =
       review.income + incomeExpected - spent - committedLeft - review.setAside - setAsideLeft,
     ),
     categories,
+    coverage,
+    neverCharged,
     duplicates: duplicatePairs(data, month),
     manualTxs: monthTxs.filter((t) => t.source === 'manual').sort((a, b) => b.date.localeCompare(a.date)),
     transactionCount: monthTxs.length,

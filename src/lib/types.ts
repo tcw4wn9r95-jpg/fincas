@@ -93,6 +93,8 @@ export interface Transaction {
   month: string
   /** Marked true once reviewed/confirmed in the reconcile flow. */
   reconciled?: boolean
+  /** The import that brought this line in — see `ImportBatch`. Absent on older lines and hand-logged ones. */
+  importId?: string
   /**
    * Set when the spend happened in another currency. `amount` above is always
    * in the account's own currency — every figure in the app reads that field,
@@ -182,6 +184,34 @@ export interface ProvisionAllocation {
    * one this app inferred should disappear with the reason for it.
    */
   auto?: boolean
+}
+
+/**
+ * One import, recorded as the event it was: which files, which account, what
+ * period, how many lines, and whether the statement's own arithmetic agreed.
+ * Before this an import left no trace but its lines, so nothing could say
+ * which file a line came from, undo an import, or show that one went wrong —
+ * and four separate bugs duplicated months without anything noticing.
+ */
+export interface ImportBatch {
+  id: string
+  /** ISO timestamp of the save. */
+  at: string
+  files: string[]
+  accountId?: string
+  source?: 'current' | 'card' | 'revolut'
+  /** First and last dates among the lines, or the statement's own period end. */
+  periodStart: string
+  periodEnd: string
+  rows: number
+  /** Sum of the lines, signed. */
+  total: number
+  /**
+   * The statement's own check, where it states its balances: opening + lines
+   * should land on closing. `agrees` is false when it doesn't — a line missed
+   * or read twice.
+   */
+  tieOut?: { opening?: number; closing: number; agrees?: boolean; difference?: number }
 }
 
 export interface Goal {
@@ -364,6 +394,8 @@ export interface AppData {
    * Asked once per counterparty rather than per line — see `lib/transfers.ts`.
    */
   counterparties?: Record<string, 'mine' | 'external'>
+  /** Every import saved, newest last — see `ImportBatch`. */
+  imports?: ImportBatch[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */
   categoryBudgets: Record<string, number>
   /** User-taught rules that override auto-categorisation on future imports. */

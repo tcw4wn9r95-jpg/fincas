@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
+import { MonthStatus } from './MonthStatus'
 import {
   assumptionKey,
   computeMonthPulse,
@@ -277,6 +278,7 @@ export function CurrentMonth({
         </div>
       </div>
 
+      <MonthStatus coverage={pulse.coverage} />
       {/* Hand-logged lines a statement has now brought in again. Loud, because
           until one side goes the month reads high by exactly this much. */}
       {pulse.duplicates.length > 0 && (
@@ -569,7 +571,10 @@ export function CurrentMonth({
       </div>
 
       {/* ── Variable spending ── */}
-      {(variableRows.length > 0 || pulse.pending.length > 0 || pulse.assumed.length > 0) && (
+      {(variableRows.length > 0 ||
+        pulse.pending.length > 0 ||
+        pulse.assumed.length > 0 ||
+        pulse.neverCharged.length > 0) && (
         <div className="card p-5">
           <h3 className="text-lg">Variable spending</h3>
           <p className="text-sm text-muted mb-3">
@@ -703,6 +708,37 @@ export function CurrentMonth({
                         <IconTrash width={15} height={15} />
                       </button>
                     </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* A closed month's missing bills: no longer assumed, since every
+              account is in and none of them charged it. One press says it was
+              paid from somewhere else after all. */}
+          {pulse.neverCharged.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-line">
+              <div className="label mb-2">Expected but never charged</div>
+              <p className="text-xs text-muted mb-2">
+                Every account is in for this month and none of them shows these, so they aren't counted. If one was
+                paid from an account you don't import, say so and it counts.
+              </p>
+              <div className="space-y-2">
+                {pulse.neverCharged.map((b) => (
+                  <div
+                    key={b.id}
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-lg border border-line bg-canvas px-4 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium break-words">{b.label}</div>
+                      <div className="text-xs text-muted">
+                        {b.category} · {fx(b.amount)} planned around the {b.typicalDay}
+                      </div>
+                    </div>
+                    <button className="btn-subtle text-xs shrink-0" onClick={() => markPaid(b.id, b.amount)}>
+                      It was paid
+                    </button>
                   </div>
                 ))}
               </div>

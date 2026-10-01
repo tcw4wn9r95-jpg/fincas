@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { counterpartyOf, decideCounterparty, pairTransfers, transferCounterparties } from '../lib/transfers'
-import { runHealthChecks } from '../lib/health'
+import { runHealthChecks as allChecks } from '../lib/health'
 import { computeReview } from '../lib/forecast'
 import { EMERGENCY_FUND_ID } from '../lib/provisions'
 import { account, household, tx } from './fixture'
+
+// Fixtures here hold a line or two per month, which the month-completeness
+// check rightly calls provisional; these tests are about the other checks.
+const checks = (d: Parameters<typeof allChecks>[0]) => allChecks(d).filter((i) => i.id !== 'provisional')
 
 describe('who a transfer went to', () => {
   it.each([
@@ -38,10 +42,10 @@ describe('transfers between your own accounts', () => {
     const [cp] = transferCounterparties(d)
     expect(cp.name).toBe('CASARES SILVA-SANTOS RODRIGUEZ')
     expect(cp.moneyIn).toBe(7000)
-    expect(runHealthChecks(d).map((i) => i.id)).toEqual(['transfers'])
+    expect(checks(d).map((i) => i.id)).toEqual(['transfers'])
     decideCounterparty(d, cp, 'mine', () => 'JOINT')
     expect(d.accounts.at(-1)).toMatchObject({ id: 'JOINT', name: 'CASARES SILVA-SANTOS RODRIGUEZ' })
-    expect(runHealthChecks(d)).toEqual([])
+    expect(checks(d)).toEqual([])
   })
 
   it('file someone else’s money as received or spent', () => {
@@ -62,16 +66,16 @@ describe('pots against the account holding them', () => {
     description: 'To EUR Compte flexible',
     provisionAllocations: [{ provisionId: EMERGENCY_FUND_ID, amount: 4000, role: 'contribution' }],
   })
-  const ids = (d: ReturnType<typeof household>) => runHealthChecks(d).map((i) => i.id)
+  const ids = (d: ReturnType<typeof household>) => checks(d).map((i) => i.id)
 
   it('names the account the set-aside went to, then asks for its balance, then compares', () => {
     const d = household([saved], { accounts: [flexible] })
-    const unbacked = runHealthChecks(d).find((i) => i.id === 'pots-unbacked')!
+    const unbacked = checks(d).find((i) => i.id === 'pots-unbacked')!
     expect(unbacked.actions?.[0]).toMatchObject({ kind: 'set-pots-account', accountId: 'FLEX' })
     d.provisionAccountId = 'FLEX'
     expect(ids(d)).toEqual(['pots-no-balance'])
     d.accounts[0] = { ...flexible, balance: 3000, asOf: '2026-09-30' }
-    const gap = runHealthChecks(d).find((i) => i.id === 'pots-gap')!
+    const gap = checks(d).find((i) => i.id === 'pots-gap')!
     expect(gap.severity).toBe('error')
     expect(gap.amount).toBe(1000)
     d.accounts[0].balance = 4000

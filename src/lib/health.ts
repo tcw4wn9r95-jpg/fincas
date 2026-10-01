@@ -10,7 +10,9 @@
 import type { AppData, Transaction } from './types'
 import { NON_CASHFLOW, isIncomeCategory } from './categorize'
 import { accountBalance, isCardAccount } from './forecast'
-import { duplicatePairs } from './month'
+import { computeMonthPulse, duplicatePairs } from './month'
+import { monthCoverage } from './coverage'
+import { todayISO } from './format'
 import { proposeRefile, type RefileProposal } from './refile'
 import { transferCounterparties, counterpartyKey, type Counterparty } from './transfers'
 import { potsCheck } from './funding'
@@ -62,6 +64,7 @@ export type HealthAction =
   | { kind: 'resolve-duplicates'; months: string[] }
   | { kind: 'counterparties'; items: Counterparty[] }
   | { kind: 'set-pots-account'; accountId: string; label: string }
+  | { kind: 'settle-assumptions'; month: string; how: 'record' | 'drop'; label: string }
   | { kind: 'open'; tab: 'this-month' | 'money-date' | 'plan'; month?: string; label: string }
 
 export interface HealthIssue {
@@ -77,7 +80,7 @@ export interface HealthIssue {
 /** Repairs `loadData` made silently, so the panel can say they happened. */
 export const loadRepairs = { repeatedIds: 0 }
 
-export function runHealthChecks(data: AppData): HealthIssue[] {
+export function runHealthChecks(data: AppData, today = todayISO()): HealthIssue[] {
   const fx = (n: number) =>
     new Intl.NumberFormat(data.settings.locale, {
       style: 'currency',
@@ -261,6 +264,54 @@ export function runHealthChecks(data: AppData): HealthIssue[] {
         actions: [{ kind: 'open', tab: 'plan', label: 'Open pots' }],
       })
     }
+  }
+
+  // Months over but not final: some account hasn't been imported to its end.
+  const months = [...new Set(data.transactions.map((t) => t.month))].sort()
+  const provisional = months.map((m) => monthCoverage(data, m, today)).filter((c) => c.state === 'provisional')
+  if (provisional.length) {
+    issues.push({
+      id: 'provisional',
+      severity: 'warn',
+      title: `${provisional.map((c) => monthName(c.month, data.settings.locale)).join(', ')} ${provisional.length === 1 ? 'isn’t' : 'aren’t'} final yet`,
+      detail:
+        provisional
+          .map(
+            (c) =>
+              `${monthName(c.month, data.settings.locale)} is waiting for ${c.missing.map((m) => m.name).join(' and ')}`,
+          )
+          .join('; ') +
+        '. Until then the month is missing whatever those accounts carry — often the salary — and it is kept out of your averages.',
+      actions: provisional.map((c) => ({
+        kind: 'open' as const,
+        tab: 'money-date' as const,
+        month: c.month,
+        label: `Import for ${monthName(c.month, data.settings.locale)}`,
+      })),
+    })
+  }
+
+  // Closed months still counting a bill on the user's word with no charge on
+  // any imported account. Fine while the month runs; at close it must become
+  // either a recorded spend or nothing, or the month's two screens disagree.
+  for (const c of months.map((m) => monthCoverage(data, m, today)).filter((x) => x.state === 'complete')) {
+    const marked = computeMonthPulse(data, c.month, today).assumed.filter((a) => !a.auto)
+    if (!marked.length) continue
+    const total = round2(marked.reduce((s, a) => s + a.amount, 0))
+    const name = monthName(c.month, data.settings.locale)
+    issues.push({
+      id: `assumed:${c.month}`,
+      severity: 'warn',
+      title: `${name} still counts ${fx(total)} of bills no statement shows`,
+      detail:
+        `${marked.map((a) => a.label).join(', ')} — marked paid, but every account is in for ${name} and none ` +
+        'charged them. If they left from an account you don’t import, record them; if not, drop them.',
+      amount: total,
+      actions: [
+        { kind: 'settle-assumptions', month: c.month, how: 'record', label: 'Record as paid elsewhere' },
+        { kind: 'settle-assumptions', month: c.month, how: 'drop', label: 'Drop them' },
+      ],
+    })
   }
 
   const order: Record<Severity, number> = { error: 0, warn: 1, info: 2 }

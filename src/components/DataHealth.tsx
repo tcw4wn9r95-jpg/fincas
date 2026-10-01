@@ -3,7 +3,7 @@ import { useData } from '../store'
 import { runHealthChecks, type HealthAction, type HealthIssue, type Severity } from '../lib/health'
 import { applyRefile } from '../lib/refile'
 import { decideCounterparty, type Counterparty } from '../lib/transfers'
-import { duplicatePairs, resolveDuplicate } from '../lib/month'
+import { duplicatePairs, resolveDuplicate, settleAssumptions } from '../lib/month'
 import { classNames, formatMoney, uid } from '../lib/format'
 
 type OpenTab = Extract<HealthAction, { kind: 'open' }>['tab']
@@ -52,6 +52,10 @@ export function DataHealth({ goTo }: { goTo: (tab: OpenTab, month?: string) => v
         for (const t of d.transactions) if (ids.has(t.id)) t.oneOff = true
         return d
       })
+      return
+    }
+    if (a.kind === 'settle-assumptions') {
+      update((d) => settleAssumptions(d, a.month, a.how, uid))
       return
     }
     if (a.kind === 'set-pots-account') {
@@ -174,6 +178,7 @@ function actionLabel(a: HealthAction): string {
   switch (a.kind) {
     case 'open':
     case 'set-pots-account':
+    case 'settle-assumptions':
       return a.label
     case 'refile':
       return 'Move them'
