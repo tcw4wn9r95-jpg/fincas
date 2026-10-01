@@ -9,7 +9,7 @@ import {
   FIXED_COST_CATEGORIES,
 } from './forecast'
 import { NON_CASHFLOW } from './categorize'
-import { potMovements } from './provisions'
+import { potMovements, transactionAllocations } from './provisions'
 import { foreignLineMatches } from './fx'
 import { addMonths, currentMonth, todayISO } from './format'
 
@@ -250,7 +250,8 @@ const TREND_MONTHS = 3
 export interface DuplicatePair {
   /**
    * The line typed by hand before any statement existed — or, when `reimport`
-   * is set, the earlier import's copy of the line, which is the one to drop.
+   * is set, whichever copy of the line carries less of the user's own work,
+   * which is the one to drop.
    */
   manual: Transaction
   /** The imported line that appears to be the same spend. */
@@ -316,20 +317,28 @@ export function duplicatePairs(data: AppData, month: string): DuplicatePair[] {
     else byLine.set(lineKey(t), [t])
   }
   for (const list of byLine.values()) {
-    for (const stale of list) {
-      if (claimed.has(stale.id)) continue
-      // The untagged copy is the stale one when there is one: the tagged copy
-      // is what the later, deliberate import wrote.
-      const keep = list.find(
-        (t) => !claimed.has(t.id) && t.id !== stale.id && t.accountId !== stale.accountId && (!stale.accountId || !!t.accountId),
-      )
-      if (!keep) continue
-      claimed.add(stale.id)
-      claimed.add(keep.id)
-      out.push({ manual: stale, imported: keep, reimport: true })
+    for (const a of list) {
+      if (claimed.has(a.id)) continue
+      const b = list.find((t) => !claimed.has(t.id) && t.id !== a.id && t.accountId !== a.accountId)
+      if (!b) continue
+      claimed.add(a.id)
+      claimed.add(b.id)
+      // Keep the copy the user worked on. The later import is the bare one:
+      // the pot splits, event tags and drawdowns were made on the copy saved
+      // first, and dropping that one by default — as this first did, on the
+      // reasoning that the account-tagged copy was the deliberate one — threw
+      // away every allocation it carried. The account is carried over on
+      // resolve (`resolveDuplicate`), so nothing of the other copy is lost.
+      const [drop, keep] = userWork(a) > userWork(b) || (userWork(a) === userWork(b) && !!a.accountId) ? [b, a] : [a, b]
+      out.push({ manual: drop, imported: keep, reimport: true })
     }
   }
   return out
+}
+
+/** How much of a row is the user's own doing rather than what the file said. */
+function userWork(t: Transaction): number {
+  return transactionAllocations(t).length + (t.eventId ? 1 : 0) + (t.cardAccountId ? 1 : 0) + (t.reconciled ? 1 : 0)
 }
 
 /** The key one month's assumption about one plan line is stored under. */

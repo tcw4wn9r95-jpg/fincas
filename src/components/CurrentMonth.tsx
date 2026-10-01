@@ -192,6 +192,12 @@ export function CurrentMonth({
   function resolveDuplicate(pair: DuplicatePair, keep: 'imported' | 'manual') {
     update((d) => {
       const drop = keep === 'imported' ? pair.manual.id : pair.imported.id
+      // A re-import pair is one line saved twice; the copy kept may be the one
+      // saved before an account was picked, so it takes the account with it.
+      if (pair.reimport) {
+        const kept = d.transactions.find((t) => t.id === pair.imported.id)
+        if (kept && !kept.accountId) kept.accountId = pair.manual.accountId
+      }
       d.transactions = d.transactions.filter((t) => t.id !== drop)
       return d
     })
@@ -301,7 +307,7 @@ export function CurrentMonth({
                   <div className="flex items-baseline justify-between gap-3 text-sm">
                     <span className="min-w-0 break-words">
                       <span className="text-muted text-xs">
-                        {p.reimport ? 'earlier import' : 'yours'} · {p.manual.date.slice(5)}{' '}
+                        {p.reimport ? 'extra copy' : 'yours'} · {p.manual.date.slice(5)}{' '}
                       </span>
                       {p.manual.description}
                     </span>
@@ -309,7 +315,9 @@ export function CurrentMonth({
                   </div>
                   <div className="flex items-baseline justify-between gap-3 text-sm">
                     <span className="min-w-0 break-words">
-                      <span className="text-muted text-xs">statement · {p.imported.date.slice(5)} </span>
+                      <span className="text-muted text-xs">
+                        {p.reimport ? 'kept, with your edits' : 'statement'} · {p.imported.date.slice(5)}{' '}
+                      </span>
                       {p.imported.description}
                     </span>
                     <span className="tabular-nums shrink-0">{fx(Math.abs(p.imported.amount))}</span>
@@ -317,7 +325,7 @@ export function CurrentMonth({
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button className="btn-primary text-xs" onClick={() => resolveDuplicate(p, 'imported')}>
-                    <IconCheck width={14} height={14} /> Keep the statement
+                    <IconCheck width={14} height={14} /> {p.reimport ? 'Remove the extra copy' : 'Keep the statement'}
                   </button>
                   {/* Two copies of one statement line: keeping the older,
                       account-less one would only swap which copy is wrong. */}
