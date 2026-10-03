@@ -13,6 +13,7 @@ import {
   buildSummary,
   balanceToday,
   totalBalance,
+  currentAccount,
 } from '../lib/forecast'
 import { buildSankey, describeSankeyFlow } from '../lib/sankey'
 import { provisionCoveredByCategoryRange } from '../lib/provisions'
@@ -121,10 +122,7 @@ export function Dashboard({
   // gains or loses, with money committed to future bills already spoken for.
   const avgNet = forecast.reduce((s, f) => s + f.netResult, 0) / forecast.length
   const lowest = forecast.reduce((min, f) => (f.balance < min.balance ? f : min), forecast[0])
-  const savingsRate =
-    thisMonth && thisMonth.income > 0
-      ? Math.round((thisMonth.net / thisMonth.income) * 100)
-      : 0
+  const current = currentAccount(data)
 
   const empty = data.accounts.length === 0 && data.recurring.length === 0
 
@@ -201,45 +199,24 @@ export function Dashboard({
       {/* First, because every figure below is only as good as what it is
           built from. */}
       <DataHealth goTo={goTo} />
-      {/* The one figure that says whether the pots are real: what they claim,
-          against the account they live in. */}
-      {pots.accountName && pots.total > 0.5 && (
-        <button
-          className="w-full text-left text-sm text-muted flex flex-wrap gap-x-2 hover:text-ink transition"
-          onClick={() => goTo('plan')}
-        >
-          <span>
-            Pots claim <span className="text-ink tabular-nums">{fx(pots.total)}</span>
-          </span>
-          <span>·</span>
-          <span>
-            {pots.accountName} holds{' '}
-            <span className="text-ink tabular-nums">{fx(pots.accountBalance ?? 0)}</span>
-          </span>
-          <span>·</span>
-          <span className={classNames('tabular-nums', Math.abs(pots.difference ?? 0) > 1 && 'text-clay')}>
-            {Math.abs(pots.difference ?? 0) <= 1
-              ? 'they agree'
-              : `${fx(Math.abs(pots.difference ?? 0))} ${(pots.difference ?? 0) < 0 ? 'short' : 'unclaimed'}`}
-          </span>
-        </button>
-      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* The one balance kept: the current account, from its own
+            statements, re-anchored every time one is imported. */}
         {anchored ? (
           <Stat
-            label="Total balance"
+            label={current?.name ?? 'Current account'}
             value={fx(balance)}
             sub={
               Math.abs(balance - recorded) > 0.5
-                ? `rolled forward from ${fx(recorded)}`
-                : `${data.accounts.length} ${data.accounts.length === 1 ? 'account' : 'accounts'}`
+                ? `statement ${current?.asOf}: ${fx(recorded)}, plan run since`
+                : `as of its statement, ${current?.asOf}`
             }
           />
         ) : (
-          <button className="card p-5 text-left hover:shadow-lift transition" onClick={() => goTo('plan')}>
-            <div className="label">Total balance</div>
+          <button className="card p-5 text-left hover:shadow-lift transition" onClick={() => goTo('money-date')}>
+            <div className="label">Current account</div>
             <div className="stat-value text-muted">—</div>
-            <div className="mt-1 text-sm text-forest">Add an account to see it</div>
+            <div className="mt-1 text-sm text-forest">Import a current-account statement to see it</div>
           </button>
         )}
         <Stat
@@ -259,10 +236,13 @@ export function Dashboard({
           sub={`next ${forecast.length} months`}
         />
         <Stat
-          label="Savings rate"
-          value={`${savingsRate}%`}
-          tone={savingsRate >= 0 ? 'good' : 'warn'}
-          sub="of income kept, set aside included"
+          label="Savings"
+          value={fx(pots.total)}
+          sub={
+            pots.total > 0.5
+              ? `emergency fund ${fx(pots.emergency)} · pots ${fx(pots.provisions)}`
+              : 'nothing allocated to a pot yet'
+          }
         />
       </div>
 

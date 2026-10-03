@@ -18,10 +18,9 @@ import {
   transactionAllocations,
 } from './provisions'
 import { allEventStatuses, eventSummaryLine, eventBudgetForMonth } from './events'
-import { fundingPlan } from './funding'
+import { fundingPlan, potsCheck } from './funding'
 import { describeForeign } from './fx'
 import {
-  CARD_PAYMENT_CATEGORY,
   NON_CASHFLOW,
   SAVINGS_CATEGORY,
   INVESTMENTS_CATEGORY,
@@ -160,130 +159,37 @@ export function nextOccurrence(item: RecurringItem, fromMonth = currentMonth()):
   return undefined
 }
 
-/** Cash accounts hold money; a card holds a debt. Absent kind is cash. */
+/**
+ * Whether lines came off a card statement. Only a label now: card balances are
+ * not tracked, so a card's charges are simply spending the day they happen and
+ * paying the bill is a Card payment, outside every total.
+ */
 export function isCardAccount(a: Account): boolean {
   return a.kind === 'card'
 }
 
 /**
- * The card a payment settles. Named on the transaction when there is a choice;
- * with a single card — the ordinary case — naming it every time would be
- * ceremony, so an unnamed payment settles the only card there is.
+ * The current account: the one balance this app keeps, and it keeps itself —
+ * every current-account statement imported sets it to the closing figure the
+ * bank printed. Card debts and typed balances for every other account were
+ * dropped: they had to be maintained by hand, drifted, and a misfiled line
+ * could put a card €52k in credit. One figure the bank vouches for, re-anchored
+ * every month, is worth more than six that nobody does.
  */
-export function cardPaymentTarget(data: AppData, t: Transaction): string | undefined {
-  if (t.cardAccountId) return t.cardAccountId
-  const cards = data.accounts.filter(isCardAccount)
-  return cards.length === 1 ? cards[0].id : undefined
+export function currentAccount(data: AppData): Account | undefined {
+  return data.accounts.find((a) => a.tracked && !isCardAccount(a))
 }
 
-/**
- * What an account holds, as of `through` (default: no limit).
- *
- * A cash account states its own balance — the bank's word, from a statement or
- * typed. A card can't: what you owe is what you have charged less what you have
- * paid, and the statement's own figure is a snapshot between the two. So a card
- * carries only an opening balance, and the debt is derived from the charges
- * filed against it and the payments that settled them — the same
- * derived-not-stored rule the pots follow, and the reason re-importing a month
- * can never move it twice.
- */
-/**
- * Whether a transaction represents money leaving one of the *cash* accounts —
- * as opposed to a card's own statement, which usually prints its own line for
- * the same payment ("payment received, thank you"). Both lines describe the
- * same real transfer; only the cash side is the source of truth for it, since
- * that is the account the money actually left. Without this, a card payment
- * imported from both statements settles the debt twice.
- */
-function paidFromCash(data: AppData, t: Transaction): boolean {
-  if (!t.accountId) return true
-  const account = data.accounts.find((a) => a.id === t.accountId)
-  return !account || !isCardAccount(account)
-}
-
-export function accountBalance(data: AppData, account: Account, through?: string): number {
-  if (!isCardAccount(account)) return account.balance
-  let balance = account.balance
-  for (const t of data.transactions) {
-    if (through && t.date > through) continue
-    // Charges on the card deepen the debt; they arrive negative already. A row
-    // categorized as a card payment is excluded here even when it is filed
-    // directly against this card, because that is the card's own echo of a
-    // payment already counted below, not a purchase.
-    if (t.accountId === account.id && t.category !== CARD_PAYMENT_CATEGORY) balance += t.amount
-    // A payment made from a cash account closes the gap, lifting the debt by
-    // its own size. One filed against a card — its own "payment received"
-    // line — is that same echo, so it does nothing here either.
-    else if (
-      t.category === CARD_PAYMENT_CATEGORY &&
-      paidFromCash(data, t) &&
-      cardPaymentTarget(data, t) === account.id
-    ) {
-      balance += Math.abs(t.amount)
-    }
-  }
-  return round2(balance)
-}
-
-/**
- * What has actually moved on a card since it was opened: everything charged,
- * everything paid off. The balance alone can't be read backwards into these —
- * a debt that looks unchanged could be nothing happening, or a month of
- * spending exactly cancelled by a payment — so this is what a card's row shows
- * its work with, the same way `potsCheck` shows its own.
- */
-export function cardActivity(data: AppData, account: Account): { charged: number; paid: number } {
-  let charged = 0
-  let paid = 0
-  for (const t of data.transactions) {
-    if (t.accountId === account.id && t.category !== CARD_PAYMENT_CATEGORY) charged += -t.amount
-    else if (
-      t.category === CARD_PAYMENT_CATEGORY &&
-      paidFromCash(data, t) &&
-      cardPaymentTarget(data, t) === account.id
-    ) {
-      paid += Math.abs(t.amount)
-    }
-  }
-  return { charged: round2(charged), paid: round2(paid) }
-}
-
-/**
- * Everything you hold, less everything you owe on a card, at the point the cash
- * balances are anchored to.
- *
- * Cutting the card at the anchor is what keeps the projection honest: from there
- * the roll-forward charges card spending as it happens, so counting charges made
- * after the anchor here as well would take them twice.
- */
+/** What the current account held at its last statement. */
 export function totalBalance(data: AppData): number {
-  const anchor = latestAsOf(data)
-  return round2(
-    data.accounts.reduce((sum, a) => {
-      const balance = accountBalance(data, a, anchor || undefined)
-      // A card can only ever subtract. Paid past zero it sits in credit with the
-      // issuer, which is not money you hold — and it is more often the sign that
-      // charges were imported without being filed against the card at all.
-      return sum + (isCardAccount(a) ? Math.min(0, balance) : balance)
-    }, 0),
-  )
-}
-
-/** What is owed across every card, as a positive number. */
-export function cardDebt(data: AppData): number {
-  const anchor = latestAsOf(data)
-  return round2(
-    -data.accounts
-      .filter(isCardAccount)
-      .reduce((sum, a) => sum + Math.min(0, accountBalance(data, a, anchor || undefined)), 0),
-  )
+  return round2(currentAccount(data)?.balance ?? 0)
 }
 
 /** The account created to follow the current-account statements. */
 export const trackedAccountName = 'S-Bank'
 
 /**
- * Move the tracked account onto the balance a statement just stated, creating
+ * Move the current account onto the balance a statement just stated, creating
  * it the first time — the account nobody wants to maintain by hand shouldn't
  * have to be set up by hand either.
  *
@@ -298,7 +204,7 @@ export function applyStatementBalance(
   d: AppData,
   statement: { closingBalance: number; asOf: string },
 ): void {
-  let account = d.accounts.find((a) => a.tracked && !isCardAccount(a))
+  let account = currentAccount(d)
   if (!account) {
     account = { id: uid(), name: trackedAccountName, balance: 0, asOf: '', tracked: true }
     d.accounts.push(account)
@@ -309,26 +215,21 @@ export function applyStatementBalance(
 }
 
 /**
- * Whether there is any recorded balance to project from. With no account there
- * is no starting point, and a balance line drawn from zero is a guess wearing
- * the clothes of a fact — callers use this to show the flows alone, and to ask
- * for an account rather than inventing one.
+ * Whether there is a statement balance to project from. Without one there is
+ * no starting point, and a balance line drawn from zero is a guess wearing the
+ * clothes of a fact — callers show the flows alone instead.
  */
 export function hasBalanceAnchor(data: AppData): boolean {
-  // A tracked account still waiting for its first statement holds no figure and
-  // no date — it is a promise of a balance, not one. A card is never an anchor
-  // either: a debt is not a starting point to project from.
-  return data.accounts.some((a) => !!a.asOf && !isCardAccount(a))
+  return !!currentAccount(data)?.asOf
 }
 
 /**
- * The first month the recorded balances do *not* already account for.
+ * The first month the recorded balance does *not* already account for.
  *
  * A balance is true as of its own date, so everything up to and including that
  * month is already inside it: a statement's closing figure for February is
  * February's ending balance, which is exactly March's opening one. Rolling the
- * plan over February as well — as this used to — would count that month twice
- * and hand the forecast a starting point a whole month out.
+ * plan over February as well would count that month twice.
  *
  * A figure dated in the current month is simply "what's there now": there is
  * nothing left to roll, so the anchor never runs past the current month.
@@ -341,20 +242,19 @@ export function anchorMonth(data: AppData): string {
   return next > now ? now : next
 }
 
-/**
- * The latest date any recorded *cash* balance is true as of. A card's date is
- * only when its opening debt was taken, and everything since is derived, so it
- * says nothing about how current the picture is.
- */
+/** The date the current account's balance is true as of: its last statement. */
 function latestAsOf(data: AppData): string {
-  let latest = ''
-  for (const a of data.accounts) {
-    if (isCardAccount(a)) continue
-    // A tracked account's date is the statement's, which moves as months are
-    // imported; a manual one's is whenever it was last typed.
-    if (a.asOf && a.asOf > latest) latest = a.asOf
-  }
-  return latest
+  return currentAccount(data)?.asOf ?? ''
+}
+
+/**
+ * What a planned month does to the current account: income, less spending, less
+ * what moves to savings — plus back the bills a pot pays for, which leave
+ * savings rather than the current account. Counting both the monthly
+ * set-aside and the bill it saves for would drain the account twice for one tax.
+ */
+function currentAccountNet(p: { income: number; expenses: number; setAside: number; potPaid: number }): number {
+  return p.income - p.expenses - p.setAside + p.potPaid
 }
 
 function daysInMonth(month: string): number {
@@ -363,32 +263,21 @@ function daysInMonth(month: string): number {
 }
 
 /**
- * What a month did across part of itself: after `after`, through `through`.
+ * What the plan says a month does to the current account across part of
+ * itself: after `after`, through `through`, pro rata by days.
  *
- * A balance is true on a *day*, not a month, and statements rarely fall on the
- * last one — so rolling only whole months either skips the tail of the month a
- * balance was taken in, or counts a month that figure had already lived
- * through. Imported months answer this exactly, from the dated transactions
- * themselves. A month with nothing imported falls back to its share of the plan
- * by days, which is the best available guess and is exactly right at either end.
+ * Always the plan, never the imported lines. The balance is the current
+ * account's, and every day after its last statement is by definition a day
+ * with none of its lines imported — the salary, the loans, the transfer to
+ * savings all live there. Rolling forward on whatever else was imported (a
+ * Revolut export, a card) read September as an €11,700 loss: all its spending,
+ * none of its pay. The plan stands in until the next statement re-anchors it.
  */
 function netBetween(data: AppData, month: string, after: string, through: string): number {
   const days = daysInMonth(month)
-  if (data.transactions.some((t) => t.month === month)) {
-    let net = 0
-    for (const t of data.transactions) {
-      if (t.month !== month || t.date <= after || t.date > through) continue
-      if (NON_CASHFLOW.has(t.category)) continue
-      // Money set aside stays inside the accounts this balance covers, so it is
-      // added back exactly as `monthFlows` does for a whole month.
-      net += t.amount + setAsideAmount(t)
-    }
-    return round2(net)
-  }
-  const { income, expenses } = plannedFlowsForMonth(data, month)
   const from = Math.min(Math.max(Number(after.slice(8, 10)) || 0, 0), days)
   const to = Math.min(Math.max(Number(through.slice(8, 10)) || 0, 0), days)
-  return round2((income - expenses) * (Math.max(0, to - from) / days))
+  return round2(currentAccountNet(plannedFlowsForMonth(data, month)) * (Math.max(0, to - from) / days))
 }
 
 /**
@@ -396,11 +285,11 @@ function netBetween(data: AppData, month: string, after: string, through: string
  * current month*, which is where the forecast and the ledger both begin. This
  * keeps the starting point current as real months pass, with no re-import.
  *
- * Three pieces, in order: whatever is left of the month the balance was taken
- * in, then every whole month since, on real figures where the month has been
- * imported and on the plan where it hasn't. A balance dated inside the current
- * month is the other direction — it already contains part of this month, so
- * that part comes back out.
+ * Three pieces, in order: whatever is left of the month the statement was
+ * taken in, then every whole month since — on the plan, since none of the
+ * current account's own lines after its statement are in (see `netBetween`).
+ * A statement dated inside the current month is the other direction — it
+ * already contains part of this month, so that part comes back out.
  */
 export function startingBalance(data: AppData): number {
   const now = currentMonth()
@@ -412,10 +301,8 @@ export function startingBalance(data: AppData): number {
   if (anchor >= now) return round2(bal - netBetween(data, now, `${now}-00`, asOf))
 
   let rolled = bal + netBetween(data, anchor, asOf, `${anchor}-31`)
-  const withData = new Set(monthsWithData(data))
-  const fixedCats = fixedCategories(data)
   for (let m = addMonths(anchor, 1); m < now; m = addMonths(m, 1)) {
-    rolled += monthFlows(data, m, withData, now, fixedCats).net
+    rolled += currentAccountNet(plannedFlowsForMonth(data, m))
   }
   return round2(rolled)
 }
@@ -561,8 +448,12 @@ function plannedFlowsForMonth(data: AppData, month: string) {
   let setAsideProvisions = 0
   let setAsideInvestments = 0
   let setAsideSavings = 0
+  let potPaid = 0
+  // Plan lines a pot is saving for: when the bill lands, the pot pays it.
+  const potLines = new Set(data.provisions.filter((p) => p.plannedLineId && !p.closedAt).map((p) => p.plannedLineId))
   for (const item of data.recurring) {
     const amt = itemAmountForMonth(item, month)
+    if (item.flow === 'expense' && potLines.has(item.id) && !isPlannedSetAside(item)) potPaid += amt
     if (item.flow === 'income') income += amt
     // Provisioning moves money between the user's own accounts. Counted as an
     // expense it would drain the projected balance every month by money that
@@ -585,11 +476,12 @@ function plannedFlowsForMonth(data: AppData, month: string) {
     setAsideProvisions,
     setAsideInvestments,
     setAsideSavings,
+    potPaid,
   }
 }
 
 /**
- * Projects total balance forward `count` months starting from the current
+ * Projects the current account's balance forward `count` months starting from the current
  * month, using the user's recurring income/expenses as the plan.
  */
 export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
@@ -598,12 +490,12 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
   let running = startingBalance(data)
   const out: ForecastPoint[] = []
   for (const month of months) {
+    const planned = plannedFlowsForMonth(data, month)
     const { income, expenses, fixed, variable, setAside, setAsideProvisions, setAsideInvestments, setAsideSavings } =
-      plannedFlowsForMonth(data, month)
-    // Net drives the balance line, so it is the change in total money: what
-    // came in, less what was spent. Money set aside is shown alongside rather
-    // than subtracted — it stays in the accounts this balance covers.
-    const net = income - expenses
+      planned
+    // Net drives the balance line, which is the current account's: what came
+    // in, less what was spent, less what moved to savings.
+    const net = round2(currentAccountNet(planned))
     running += net
     out.push({
       month,
@@ -617,7 +509,7 @@ export function buildForecast(data: AppData, count = 12): ForecastPoint[] {
       fixedExpenses: fixed,
       variableExpenses: variable,
       net,
-      netResult: round2(net - setAside),
+      netResult: round2(income - expenses - setAside),
       // Rounded per point, like the ledger: a dozen months of floating-point
       // addition otherwise leaves cents of dust on the projection.
       balance: round2(running),
@@ -714,12 +606,14 @@ function monthFlows(
       setAsideProvisions,
       setAsideInvestments,
       setAsideSavings,
-      net: inc - expenses,
+      // The current account's change: money set aside has left it.
+      net: inc - expenses - setAside,
       actual: true,
     }
   }
+  const planned = plannedFlowsForMonth(data, month)
   const { income, fixed, variable, expenses, setAside, setAsideProvisions, setAsideInvestments, setAsideSavings } =
-    plannedFlowsForMonth(data, month)
+    planned
   return {
     month,
     income,
@@ -730,7 +624,7 @@ function monthFlows(
     setAsideProvisions,
     setAsideInvestments,
     setAsideSavings,
-    net: income - expenses,
+    net: currentAccountNet(planned),
     actual: false,
   }
 }
@@ -780,7 +674,7 @@ export function buildLedger(data: AppData): LedgerPoint[] {
       setAsideInvestments: r.setAsideInvestments,
       setAsideSavings: r.setAsideSavings,
       net: r.net,
-      netResult: round2(r.net - r.setAside),
+      netResult: round2(r.income - r.expenses - r.setAside),
       balance: running,
       projected: r.month > now,
       actual: r.actual,
@@ -850,7 +744,7 @@ export function buildSummary(data: AppData, back = 6, forward = 12): SummaryPoin
       setAsideInvestments: r.setAsideInvestments,
       setAsideSavings: r.setAsideSavings,
       net: r.net,
-      netResult: round2(r.net - r.setAside),
+      netResult: round2(r.income - r.expenses - r.setAside),
       balance: round2(running),
       projected: r.month > now,
       actual: r.actual,
@@ -1343,30 +1237,14 @@ export function financialSummary(data: AppData): string {
   lines.push(`Base currency: ${currency}`)
   if (hasBalanceAnchor(data)) {
     const held = balanceToday(data)
-    const recorded = totalBalance(data)
+    const account = currentAccount(data)!
     lines.push(
-      Math.abs(held - recorded) > 0.5
-        ? `Total balance across accounts: ${fx(held)} today — ${fx(recorded)} was recorded, and the plan has been run over the days since.`
-        : `Total balance across accounts: ${fx(held)}`,
+      `Current account (${account.name}): ${fx(held)} today, from its last statement (${fx(account.balance)} on ${account.asOf}) ` +
+        'with the plan run over the days since. It is the only account balance the app keeps — card and other ' +
+        'account balances are deliberately not tracked, so never quote a total across accounts or a card debt.',
     )
-    lines.push(
-      'Accounts: ' +
-        data.accounts
-          .map((a) =>
-            isCardAccount(a)
-              ? `${a.name} (credit card) ${fx(-accountBalance(data, a))} owed`
-              : a.asOf
-                ? `${a.name} ${fx(a.balance)} as of ${a.asOf}`
-                : `${a.name} (no balance yet)`,
-          )
-          .join(', '),
-    )
-    const debt = cardDebt(data)
-    if (debt > 0.5) {
-      lines.push(
-        `Card debt outstanding: ${fx(debt)}. Card spending is already counted as an expense in the month it was charged, and the payment that settles it is not spending — it only moves cash. The total balance above is already net of this.`,
-      )
-    }
+    const savings = potsCheck(data).total
+    if (savings > 0.5) lines.push(`Held in savings pots and the emergency fund: ${fx(savings)}.`)
   } else {
     // Saying "€0" here would have the assistant advise against a balance that
     // was never recorded, rather than on flows alone.

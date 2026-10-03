@@ -1,14 +1,13 @@
 import { useMemo, useState } from 'react'
-import { CARD_PAYMENT_CATEGORY, CATEGORIES } from '../lib/categorize'
+import { CATEGORIES } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames } from '../lib/format'
 import { transactionAllocations, type ProvisionStatus } from '../lib/provisions'
 import { eventsDuring } from '../lib/events'
-import type { Account, EventExpense, SpecialEvent, Transaction } from '../lib/types'
+import type { EventExpense, SpecialEvent, Transaction } from '../lib/types'
 import { IconClose, IconCheck, IconSparkle, IconHelp, IconEvent } from './icons'
 import { Markdown } from './Markdown'
 import type { StreamHandlers } from '../lib/claude'
 import { Portal } from './Portal'
-import { CardPicker } from './CardPicker'
 import { ProvisionButton } from './ProvisionModal'
 
 /**
@@ -23,10 +22,8 @@ export function ReconcileOverlay({
   currency,
   locale,
   provisions,
-  cards,
   events,
   onSetCategory,
-  onSetCard,
   onSetOneOff,
   isOneOffCandidate,
   eventQuestion,
@@ -61,10 +58,7 @@ export function ReconcileOverlay({
    * the way to file a deposit paid months before the trip it belongs to.
    */
   onAssignEvent: (txId: string, eventId: string) => void
-  /** Card accounts, so a card payment can say which one it settles. */
-  cards: Account[]
   onSetCategory: (id: string, category: string) => void
-  onSetCard: (id: string, cardAccountId: string | undefined) => void
   /** Marks a line as happening once — kept out of the month's figures. */
   onSetOneOff: (id: string, oneOff: boolean) => void
   /** Whether a line is big enough, against usual income, to ask about. */
@@ -143,13 +137,6 @@ export function ReconcileOverlay({
 
   const done = txs.filter((t) => t.reconciled).length
   const total = txs.length
-  /**
-   * A payment aimed at no card settles none — silently, since nothing else
-   * marks it wrong. With one card there's nothing to aim, so it always
-   * resolves; with several, it needs a pick.
-   */
-  const unaimed = (t: Transaction) =>
-    t.category === CARD_PAYMENT_CATEGORY && cards.length > 1 && !t.cardAccountId
 
   /**
    * A spend whose category matches a provision that has money in it, never
@@ -162,7 +149,7 @@ export function ReconcileOverlay({
     t.amount < 0 &&
     transactionAllocations(t).length === 0 &&
     provisions.find((p) => p.category === t.category && p.funded > 0.5)
-  const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other' && !unaimed(t)).length
+  const suggestable = txs.filter((t) => !t.reconciled && t.category !== 'Other').length
   const unreconciled = total - done
   const pct = total ? Math.round((done / total) * 100) : 0
 
@@ -252,8 +239,7 @@ export function ReconcileOverlay({
             )}
             {ordered.map((t) => {
               const isOther = t.category === 'Other'
-              const needsCard = unaimed(t)
-              const blocked = isOther || needsCard
+              const blocked = isOther
               return (
                 <div
                   key={t.id}
@@ -309,11 +295,7 @@ export function ReconcileOverlay({
                         onClick={() => onToggle(t.id, true)}
                         disabled={blocked}
                         title={
-                          isOther
-                            ? 'Pick a category first'
-                            : needsCard
-                              ? 'Say which card this pays off first — otherwise it settles neither'
-                              : 'Confirm'
+                          isOther ? 'Pick a category first' : 'Confirm'
                         }
                       >
                         <IconCheck width={15} height={15} /> OK
@@ -321,7 +303,6 @@ export function ReconcileOverlay({
                     )}
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} />
                     {/* Offered on what a month can be thrown by: a big receipt,
                         or a large refund from a year already closed. Shown on
                         any line once set, so it can be taken back. */}

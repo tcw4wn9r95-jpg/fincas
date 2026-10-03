@@ -1,18 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useData } from '../store'
 import { formatMoney, formatMonthLabel, todayISO, uid, classNames, currentMonth, addMonths, parseAmount } from '../lib/format'
-import {
-  accountBalance,
-  cardActivity,
-  cardPaymentTarget,
-  isCardAccount,
-  startingBalance,
-  totalBalance,
-  trackedAccountName,
-} from '../lib/forecast'
-import { CARD_PAYMENT_CATEGORY } from '../lib/categorize'
+import { isCardAccount, trackedAccountName } from '../lib/forecast'
 import { allProvisionStatuses, dropAllocations, emergencyFundStatus } from '../lib/provisions'
-import { fundingPlan, potsCheck, type FundingLine } from '../lib/funding'
+import { fundingPlan, type FundingLine } from '../lib/funding'
 import { CATEGORIES } from '../lib/categorize'
 import type { Account, Goal, Provision } from '../lib/types'
 import { Planner } from './Planner'
@@ -101,46 +92,19 @@ export function Plan() {
   const fx = (n: number) => formatMoney(n, currency, locale)
 
   // ── Accounts ──
-  // What was recorded, against where the forecast actually starts. They differ
-  // whenever a balance is older than the start of this month — or newer, when
-  // one was typed part-way through it.
-  const recorded = totalBalance(data)
-  const opening = startingBalance(data)
-  const rolled = data.accounts.length > 0 && Math.abs(opening - recorded) > 0.5
-  // Left over from before a card payment had to say which card it settles —
-  // or from picking one that got deleted since. Each one is money the debt
-  // above is quietly missing.
-  const cardAccounts = useMemo(() => data.accounts.filter(isCardAccount), [data.accounts])
-  const unaimedPayments = useMemo(
-    () =>
-      cardAccounts.length > 1
-        ? data.transactions.filter(
-            (t) => t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(data, t) === undefined,
-          )
-        : [],
-    [data, cardAccounts.length],
-  )
-  const [acct, setAcct] = useState({ name: '', balance: '' })
-  /**
-   * `kind` decides what the typed figure means: for cash it is what the account
-   * holds, for a card it is what you owe today — stored negative, since a debt
-   * is negative money and every total in the app can then just add up.
-   */
+  // Names only, apart from the current account, whose balance its own
+  // statements write. Balances for cards and every other account were dropped:
+  // typed by hand, they drifted, and the debt worked out for a card was only as
+  // good as which account each line had been filed under.
+  const [acctName, setAcctName] = useState('')
   function addAccount(kind: 'cash' | 'card' = 'cash') {
-    if (!acct.name.trim()) return
-    const typed = parseAmount(acct.balance) || 0
-    const a: Account = {
-      id: uid(),
-      name: acct.name.trim(),
-      balance: kind === 'card' ? -Math.abs(typed) : typed,
-      asOf: todayISO(),
-      ...(kind === 'card' ? { kind } : {}),
-    }
+    if (!acctName.trim()) return
+    const a: Account = { id: uid(), name: acctName.trim(), balance: 0, asOf: '', ...(kind === 'card' ? { kind } : {}) }
     update((d) => {
       d.accounts.push(a)
       return d
     })
-    setAcct({ name: '', balance: '' })
+    setAcctName('')
   }
   /**
    * Create the account that follows the current-account statements, before any
@@ -260,15 +224,6 @@ export function Plan() {
     [data, fundingMonth],
   )
 
-  // ── Do the pots add up? ──
-  const pots = useMemo(() => potsCheck(data), [data])
-  function setProvisionAccount(id: string) {
-    update((d) => {
-      d.provisionAccountId = id || undefined
-      return d
-    })
-  }
-
   // ── Emergency fund ──
   // Only the target is stored; the balance is whatever transactions have been
   // allocated to it, so it can't drift from what actually happened.
@@ -304,40 +259,17 @@ export function Plan() {
       <div>
         <h2 className="text-2xl">Your plan</h2>
         <p className="text-muted">
-          Starting balances, your full monthly plan, and goals — all editable
+          Your accounts, your full monthly plan, and goals — all editable
         </p>
       </div>
 
       <Section
         title="Accounts"
-        desc="Where your money sits, and what you owe. An account whose statements carry a running balance keeps itself current — every import moves it on. A card works the other way round: its charges are spending the day they happen, so what you owe is worked out from those charges less every card payment, and paying the bill closes the gap instead of costing you twice."
+        desc="Where statements come from, so a card and a current account covering the same month never overwrite each other. Only the current account carries a balance, and it keeps itself: every current-account statement you import sets it to the closing figure the bank printed."
       >
-        {unaimedPayments.length > 0 && (
-          <div className="rounded-lg border border-gold/40 bg-gold/5 px-4 py-3 mb-4 text-sm">
-            <p className="font-medium">
-              {unaimedPayments.length} card payment{unaimedPayments.length === 1 ? '' : 's'} not
-              saying which card{unaimedPayments.length === 1 ? '' : 's'}
-            </p>
-            <p className="text-muted mt-0.5">
-              With more than one card, a payment has to name the one it settles or it pays off
-              none of them — the debt above is missing {fx(unaimedPayments.reduce((s, t) => s + Math.abs(t.amount), 0))}
-              {' '}because of these. Open the money date for{' '}
-              {Array.from(new Set(unaimedPayments.map((t) => t.month)))
-                .sort()
-                .map((m) => formatMonthLabel(m, locale))
-                .join(', ')}{' '}
-              and pick a card on each.
-            </p>
-          </div>
-        )}
         <div className="space-y-2 mb-4">
           {data.accounts.map((a) => {
             const awaiting = a.tracked && !a.asOf
-            const card = isCardAccount(a)
-            // A card's figure is worked out from its charges and the payments
-            // that settled them, so it is shown rather than typed.
-            const owed = card ? -accountBalance(data, a) : 0
-            const activity = card ? cardActivity(data, a) : null
             return (
               <div
                 key={a.id}
@@ -350,49 +282,23 @@ export function Plan() {
                     onBlur={(e) => editAccount(a.id, { name: e.target.value.trim() || a.name })}
                   />
                   <div className="text-[11px] text-muted">
-                    {card
-                      ? activity && (activity.charged > 0.005 || activity.paid > 0.005)
-                        ? `since ${formatMonthLabel(a.asOf, locale)}: ${fx(activity.charged)} charged − ${fx(activity.paid)} paid`
-                        : `owed since ${formatMonthLabel(a.asOf, locale)} — nothing charged or paid yet`
-                      : a.tracked
-                        ? awaiting
-                          ? 'waiting for its first current-account statement'
-                          : `closing balance from your statement, ${a.asOf}`
-                        : `as of ${formatMonthLabel(a.asOf, locale)}`}
+                    {a.tracked
+                      ? awaiting
+                        ? 'current account — waiting for its first statement'
+                        : `current account — closing balance from your statement, ${a.asOf}`
+                      : isCardAccount(a)
+                        ? 'card — its charges count as spending; paying the bill doesn’t'
+                        : 'statement source'}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  {card ? (
-                    <span
-                      className={classNames(
-                        'text-right tabular-nums w-32 shrink-0',
-                        owed > 0.5 ? 'text-clay' : 'text-muted',
-                      )}
-                      title="What you owe: everything charged to this card, less every card payment"
-                    >
-                      {owed > 0.005
-                        ? `${fx(owed)} owed`
-                        : owed < -0.005
-                          ? `${fx(-owed)} in credit`
-                          : fx(0)}
-                    </span>
-                  ) : a.tracked ? (
+                  {a.tracked && (
                     <span
                       className="text-right tabular-nums w-32 shrink-0"
                       title="Written by your statements — import a month and it moves itself"
                     >
                       {awaiting ? '—' : fx(a.balance)}
                     </span>
-                  ) : (
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      className="bg-transparent text-right outline-none tabular-nums w-32 focus:text-forest"
-                      defaultValue={a.balance}
-                      onBlur={(e) =>
-                        editAccount(a.id, { balance: parseAmount(e.target.value) || 0, asOf: todayISO() })
-                      }
-                    />
                   )}
                   <button className="text-muted hover:text-clay" onClick={() => removeAccount(a.id)}>
                     <IconTrash width={16} height={16} />
@@ -403,8 +309,7 @@ export function Plan() {
           })}
           {data.accounts.length === 0 && (
             <p className="text-sm text-muted">
-              No accounts yet. Until there is one, nothing records what you hold,
-              so the forecast can only show what comes in and goes out.
+              No accounts yet. Importing a statement creates the one it belongs to.
             </p>
           )}
         </div>
@@ -420,43 +325,17 @@ export function Plan() {
             </button>
           </div>
         )}
-        {rolled && (
-          <div className="rounded-lg bg-forest-tint/50 border border-line px-4 py-2.5 mb-4 flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted">
-              Where {formatMonthLabel(currentMonth(), locale)} started
-              {opening > recorded
-                ? ', carrying what you recorded forward through your plan'
-                : ', with the days that balance already covers taken back out'}
-            </span>
-            <span className="font-medium tabular-nums shrink-0">
-              {fx(opening)}
-              <span className="text-muted font-normal"> (from {fx(recorded)})</span>
-            </span>
-          </div>
-        )}
         <div className="flex flex-wrap gap-2">
           <input
             className="input flex-1 min-w-[160px]"
             placeholder="Account name"
-            value={acct.name}
-            onChange={(e) => setAcct({ ...acct, name: e.target.value })}
-          />
-          <input
-            className="input w-40"
-            type="text"
-            inputMode="decimal"
-            placeholder="Balance"
-            value={acct.balance}
-            onChange={(e) => setAcct({ ...acct, balance: e.target.value })}
+            value={acctName}
+            onChange={(e) => setAcctName(e.target.value)}
           />
           <button className="btn-primary" onClick={() => addAccount('cash')}>
             <IconPlus width={16} height={16} /> Add
           </button>
-          <button
-            className="btn-subtle"
-            onClick={() => addAccount('card')}
-            title="A credit card is a debt: charges are spending the day they happen, and paying the bill closes the gap rather than costing you again"
-          >
+          <button className="btn-subtle" onClick={() => addAccount('card')}>
             <IconPlus width={16} height={16} /> Add as card
           </button>
         </div>
@@ -892,88 +771,6 @@ export function Plan() {
         </div>
       </Section>
 
-      <Section
-        title="Do the pots add up?"
-        desc="Every pot balance here is worked out from what you allocated, which keeps them consistent with each other but proves nothing about the money being there. This compares what they claim against the account you actually transfer into."
-      >
-        <div className="mb-4">
-          <label className="label" htmlFor="pots-account">
-            Account holding the pots
-          </label>
-          <select
-            id="pots-account"
-            className="input w-auto"
-            value={pots.accountId ?? ''}
-            onChange={(e) => setProvisionAccount(e.target.value)}
-          >
-            <option value="">Not set</option>
-            {data.accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {data.accounts.length === 0 ? (
-          <p className="text-sm text-muted">Add an account above and this check comes to life.</p>
-        ) : pots.difference === null ? (
-          <p className="text-sm text-muted">
-            Pick the account you move money into when provisioning — the pots currently claim{' '}
-            <span className="tabular-nums text-ink">{fx(pots.total)}</span>.
-          </p>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div className="rounded-lg bg-canvas px-4 py-3 border border-line">
-                <div className="label">The pots claim</div>
-                <div className="text-xl tabular-nums">{fx(pots.total)}</div>
-                <div className="text-xs text-muted mt-0.5 tabular-nums">
-                  {fx(pots.provisions)} in provisions · {fx(pots.emergency)} emergency fund
-                </div>
-              </div>
-              <div className="rounded-lg bg-canvas px-4 py-3 border border-line">
-                <div className="label">{pots.accountName} holds</div>
-                <div className="text-xl tabular-nums">{fx(pots.accountBalance ?? 0)}</div>
-                <div className="text-xs text-muted mt-0.5">
-                  {pots.asOf ? `as you last recorded it, ${pots.asOf}` : 'no date recorded'}
-                </div>
-              </div>
-            </div>
-            {Math.abs(pots.difference) < 1 ? (
-              <div className="rounded-lg border border-forest/40 bg-forest-tint/40 px-4 py-3 text-sm">
-                <span className="font-medium text-forest">In step.</span> The account holds what the
-                pots say it should.
-              </div>
-            ) : pots.difference > 0 ? (
-              <div className="rounded-lg border border-gold/50 bg-gold/5 px-4 py-3 text-sm">
-                <span className="font-medium">
-                  {fx(pots.difference)} in {pots.accountName} isn't claimed by any pot.
-                </span>
-                <p className="text-xs text-muted mt-0.5">
-                  Either it belongs to a pot you haven't allocated to yet, or it's spare — worth
-                  giving it a job so it isn't quietly idle.
-                </p>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-clay/50 bg-clay/5 px-4 py-3 text-sm">
-                <span className="font-medium text-clay">
-                  The pots promise {fx(-pots.difference)} more than {pots.accountName} holds.
-                </span>
-                <p className="text-xs text-muted mt-0.5">
-                  Often just money in flight: moved back to your main account for a bill you haven't
-                  paid yet, so the pot still counts it. Otherwise a transfer never happened, a pot
-                  was funded twice, or something was spent without being drawn from its pot.
-                </p>
-              </div>
-            )}
-            <p className="text-xs text-muted mt-2">
-              Only as current as the balance you recorded for {pots.accountName} — update it above
-              before trusting a difference.
-            </p>
-          </>
-        )}
-      </Section>
     </div>
   )
 }

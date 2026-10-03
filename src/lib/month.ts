@@ -339,7 +339,7 @@ export function duplicatePairs(data: AppData, month: string): DuplicatePair[] {
 
 /** How much of a row is the user's own doing rather than what the file said. */
 function userWork(t: Transaction): number {
-  return transactionAllocations(t).length + (t.eventId ? 1 : 0) + (t.cardAccountId ? 1 : 0) + (t.reconciled ? 1 : 0)
+  return transactionAllocations(t).length + (t.eventId ? 1 : 0) + (t.reconciled ? 1 : 0)
 }
 
 /**

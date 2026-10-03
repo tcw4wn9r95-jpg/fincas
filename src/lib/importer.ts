@@ -14,7 +14,15 @@
 //  - Every import is recorded (`ImportBatch`) and its fresh lines carry its id,
 //    so it can be shown, checked against its statement, and undone.
 
-import type { AppData, ImportBatch, Transaction } from './types'
+import type { Account, AppData, ImportBatch, Transaction } from './types'
+import { isCardAccount } from './forecast'
+
+/** The account a Revolut export's lines go to, created by the first one. */
+export const REVOLUT_NAME = 'Revolut'
+
+export function revolutAccount(data: AppData): Account | undefined {
+  return data.accounts.find((a) => !isCardAccount(a) && /revolut/i.test(a.name))
+}
 
 export const dupeKey = (t: Transaction) => `${t.date}|${t.amount}|${t.description}`
 

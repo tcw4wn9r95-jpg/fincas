@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { runHealthChecks as allChecks, loadRepairs } from '../lib/health'
 import { duplicatePairs, resolveDuplicate } from '../lib/month'
-import { applyRefile } from '../lib/refile'
 import { dropRepeatedIds } from '../lib/storage'
 import { emergencyFundStatus, EMERGENCY_FUND_ID } from '../lib/provisions'
 import { account, household, tx } from './fixture'
@@ -56,19 +55,6 @@ describe('data health', () => {
     expect(d.transactions[0].accountId).toBe('REV')
     expect(emergencyFundStatus(d).balance).toBe(4000)
     expect(ids(d)).not.toContain('duplicates')
-  })
-
-  it('names lines on the wrong account, and the card they leave in credit', () => {
-    const card = account({ id: 'CARD', name: 'Diego', kind: 'card' })
-    const d = household(
-      [tx({ date: '2026-07-07', amount: 2779.1, source: 'pdf', description: 'CREDIT TRANSFER FROM TRESORERIE', accountId: 'CARD' })],
-      { accounts: [card, account({ id: 'BANK', name: 'S-Bank', tracked: true })] },
-    )
-    expect(ids(d)).toEqual(['refile', 'card-credit:CARD'])
-    const refile = checks(d)[0].actions![0]
-    if (refile.kind !== 'refile') throw new Error('expected a refile action')
-    applyRefile(d, refile.proposal, () => 'X')
-    expect(ids(d)).toEqual([])
   })
 
   it('asks about a receipt far above the usual month, and stops once it is marked', () => {

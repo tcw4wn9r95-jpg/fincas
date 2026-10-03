@@ -119,9 +119,9 @@ function monthRows(p: ChartPoint, showBalance: boolean, scenarioName?: string): 
     { label: 'Net result', value: p.netResult, strong: true },
     ...(showBalance
       ? [
-          ...(p.setAside > 0.5 ? [{ label: 'Change in balance', value: p.net, top: true }] : []),
+          ...(Math.abs(p.net - p.netResult) > 0.5 ? [{ label: 'Change in current account', value: p.net, top: true }] : []),
           {
-            label: 'End balance',
+            label: 'Current account at month end',
             value: p.balance,
             color: COLOR.balance,
             strong: true,
@@ -393,7 +393,7 @@ export function CashFlowChart({
                 yAxisId="balance"
                 type="linear"
                 dataKey="balance"
-                name={scenario ? 'Balance · baseline' : 'Projected balance'}
+                name={scenario ? 'Current account · baseline' : 'Current account'}
                 stroke={COLOR.balance}
                 strokeWidth={2.5}
                 dot={false}
@@ -405,7 +405,7 @@ export function CashFlowChart({
                 yAxisId="balance"
                 type="linear"
                 dataKey="scenarioBalance"
-                name={`Balance · ${scenario.name}`}
+                name={`Current account · ${scenario.name}`}
                 stroke={COLOR.scenario}
                 strokeWidth={2.5}
                 strokeDasharray="6 4"

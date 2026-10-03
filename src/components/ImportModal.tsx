@@ -5,8 +5,7 @@ import { applyStatementBalance, isCardAccount, trackedAccountName } from '../lib
 import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey, todayISO } from '../lib/format'
 import { foreignLineMatches } from '../lib/fx'
-import { REVOLUT_NAME, revolutAccount } from '../lib/refile'
-import { dupeKey, foldSaved, saveImport } from '../lib/importer'
+import { REVOLUT_NAME, dupeKey, foldSaved, revolutAccount, saveImport } from '../lib/importer'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -73,7 +72,6 @@ export function ImportModal({
   // Only a current-account statement states a balance we're willing to trust —
   // see `readStatementSummary`. Held so Save can move the account with it.
   const [statement, setStatement] = useState<StatementSummary | null>(null)
-  const [applyBalance, setApplyBalance] = useState(true)
   // What kind of file this was, and whether its own arithmetic agreed — kept
   // with the import's record, and shown before Save.
   const [fileSource, setFileSource] = useState<ParsedResult['source']>()
@@ -202,7 +200,6 @@ export function ImportModal({
     }
     if (foundStatement) {
       setStatement(foundStatement)
-      setApplyBalance(true)
     }
     // Preselect the account the document looks like, but only while the user
     // hasn't chosen one — their pick always wins over the guess. Tracked
@@ -402,7 +399,7 @@ export function ImportModal({
         batchId: uid(),
         at: new Date().toISOString(),
       })
-      if (statement && applyBalance) applyStatementBalance(d, statement)
+      if (statement && !cardChosen) applyStatementBalance(d, statement)
       return d
     })
     onClose()
@@ -648,7 +645,7 @@ export function ImportModal({
                   : autoCreatedCard && accountId
                   ? `Created “${autoCreatedCard}” as a new card, reading the name straight off the statement — a later statement for the same person will find it again on its own.`
                   : cardChosen
-                    ? 'Charges on a card are spending the day they happen, and they build up what you owe until a payment closes the gap.'
+                    ? 'Charges on a card are spending the day they happen; paying the card bill later is not spending again.'
                     : 'Naming the account keeps each statement’s lines separate, so a card and a current account covering the same month never overwrite each other.'}
               </p>
             </div>
@@ -674,30 +671,14 @@ export function ImportModal({
             </div>
           )}
 
+          {/* Not a choice any more: the current account's balance is the one
+              the app keeps, and its own statement is what keeps it. */}
           {statement && !cardChosen && (
-            <label className="mt-4 flex items-start gap-3 rounded-lg border border-forest/30 bg-forest-tint/30 px-4 py-3 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={applyBalance}
-                onChange={(e) => setApplyBalance(e.target.checked)}
-              />
-              <span className="text-sm">
-                <span className="font-medium">
-                  Set {trackedAccount?.name ?? trackedAccountName} to{' '}
-                  {fx(statement.closingBalance)}
-                </span>
-                <span className="block text-xs text-muted mt-0.5">
-                  The closing balance this statement states, as of {statement.asOf}.
-                  {statement.complete === true &&
-                    ` Its opening balance plus these rows lands on it exactly, so nothing was missed.`}
-                  {statement.complete === false &&
-                    ` Careful: opening plus these rows comes to ${fx(
-                      (statement.openingBalance ?? 0) + statement.rowsTotal,
-                    )}, not ${fx(statement.closingBalance)} — some rows may not have been read.`}
-                </span>
-              </span>
-            </label>
+            <p className="mt-4 text-sm text-muted">
+              Saving sets {trackedAccount?.name ?? trackedAccountName} to{' '}
+              <span className="text-ink tabular-nums">{fx(statement.closingBalance)}</span>, the closing balance
+              this statement states for {statement.asOf}.
+            </p>
           )}
 
           {warnings.length > 0 && (

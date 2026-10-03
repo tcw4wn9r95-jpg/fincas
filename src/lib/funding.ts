@@ -174,46 +174,21 @@ export function fundingPlan(data: AppData, month: string, today: string): Fundin
   }
 }
 
-// ── Do the pots add up? ───────────────────────────────────────────
-// Every pot balance in this app is derived from allocations, which makes it
-// internally consistent but says nothing about whether the money is really
-// there. Provisioning moves cash into a separate account; this compares what
-// the pots claim against what that account actually holds, which is the only
-// check that can catch a transfer never made or a pot funded twice.
+// ── What the pots hold ────────────────────────────────────────────
+// Savings are the balance this app keeps alongside the current account: what
+// every pot and the emergency fund hold, each derived from the money allocated
+// to it. It used to be compared against a nominated account's typed balance;
+// that check went with typed balances, and the figure stays.
 
 export interface PotsCheck {
   /** Balance across every named provision. */
   provisions: number
   emergency: number
   total: number
-  accountId?: string
-  accountName?: string
-  accountBalance?: number
-  /** The date that balance was last known accurate — the check is only as fresh as this. */
-  asOf?: string
-  /**
-   * accountBalance − total, or null when no account is nominated. Positive:
-   * money in the account that no pot has claimed. Negative: the pots promise
-   * more than the account holds.
-   */
-  difference: number | null
 }
 
 export function potsCheck(data: AppData): PotsCheck {
-  const provisions = round2(
-    allProvisionStatuses(data).reduce((s, p) => s + p.funded, 0),
-  )
+  const provisions = round2(allProvisionStatuses(data).reduce((s, p) => s + p.funded, 0))
   const emergency = emergencyFundStatus(data).balance
-  const total = round2(provisions + emergency)
-  const account = data.accounts.find((a) => a.id === data.provisionAccountId)
-  return {
-    provisions,
-    emergency,
-    total,
-    accountId: account?.id,
-    accountName: account?.name,
-    accountBalance: account?.balance,
-    asOf: account?.asOf,
-    difference: account ? round2(account.balance - total) : null,
-  }
+  return { provisions, emergency, total: round2(provisions + emergency) }
 }

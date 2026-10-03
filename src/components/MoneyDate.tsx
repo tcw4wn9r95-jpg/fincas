@@ -5,8 +5,6 @@ import { monthCoverage } from '../lib/coverage'
 import { MonthStatus } from './MonthStatus'
 import {
   computeReview,
-  cardPaymentTarget,
-  isCardAccount,
   monthsWithData,
   actualsByCategory,
   itemAmountForMonth,
@@ -28,8 +26,7 @@ import {
   setAsideBucket,
   type ProvisionStatus,
 } from '../lib/provisions'
-import type { Account, EventExpense, ProvisionAllocation, SpecialEvent, Transaction } from '../lib/types'
-import { CardPicker } from './CardPicker'
+import type { EventExpense, ProvisionAllocation, SpecialEvent, Transaction } from '../lib/types'
 import { ImportModal } from './ImportModal'
 import { RuleModal } from './RuleModal'
 import { ReconcileOverlay } from './ReconcileOverlay'
@@ -175,7 +172,6 @@ export function MoneyDate({
         .flatMap(([, list]) => list),
     [txByCatKey],
   )
-  const cardAccounts = useMemo(() => data.accounts.filter(isCardAccount), [data.accounts])
   const cardPaymentTotal = useMemo(
     () =>
       internalTxs
@@ -218,11 +214,7 @@ export function MoneyDate({
   function reconcileAllSuggestions() {
     update((d) => {
       for (const t of d.transactions) {
-        // The same gate the OK button applies: a card payment nobody has aimed
-        // settles nothing, so bulk-confirming it would quietly wave through a
-        // line that isn't actually doing what its category claims.
-        const needsCard = t.category === CARD_PAYMENT_CATEGORY && cardPaymentTarget(d, t) === undefined
-        if (t.month === activeMonth && !t.reconciled && t.category !== 'Other' && !needsCard) {
+        if (t.month === activeMonth && !t.reconciled && t.category !== 'Other') {
           const key = txMatchKey(t.description, t.amount)
           const category = t.category
           for (const x of d.transactions) {
@@ -259,15 +251,6 @@ export function MoneyDate({
     } finally {
       setAiBusy(false)
     }
-  }
-
-  /** Aim a card payment at the card it settles — only asked when there are several. */
-  function setTxCard(id: string, cardAccountId: string | undefined) {
-    update((d) => {
-      const t = d.transactions.find((x) => x.id === id)
-      if (t) t.cardAccountId = cardAccountId
-      return d
-    })
   }
 
   function deleteMonth() {
@@ -1045,8 +1028,6 @@ export function MoneyDate({
                                 locale={locale}
                                 provisions={provisionStatuses}
                                 onSet={setTxCategory}
-                                onSetCard={setTxCard}
-                                cards={cardAccounts}
                                 onTeach={setTeaching}
                                 onProvision={(t) => setProvisioning(t.id)}
                                 eventLabels={eventLabels}
@@ -1121,8 +1102,6 @@ export function MoneyDate({
                                 locale={locale}
                                 provisions={provisionStatuses}
                                 onSet={setTxCategory}
-                                onSetCard={setTxCard}
-                                cards={cardAccounts}
                                 onTeach={setTeaching}
                                 onProvision={(t) => setProvisioning(t.id)}
                                 eventLabels={eventLabels}
@@ -1173,8 +1152,6 @@ export function MoneyDate({
                               locale={locale}
                               provisions={provisionStatuses}
                               onSet={setTxCategory}
-                              onSetCard={setTxCard}
-                              cards={cardAccounts}
                               onTeach={setTeaching}
                               onProvision={(t) => setProvisioning(t.id)}
                               eventLabels={eventLabels}
@@ -1221,24 +1198,16 @@ export function MoneyDate({
           currency={currency}
           locale={locale}
           provisions={provisionStatuses}
-          cards={cardAccounts}
           events={data.events ?? []}
           eventQuestion={eventQuestion}
           onAnswerEventQuestion={answerEventQuestion}
           onAssignEvent={setTxEvent}
-          onSetCard={setTxCard}
           onSetCategory={(id, category) => {
             setTxCategory(id, category)
             // Recategorising normally *is* the confirmation — that's why there's
-            // no separate step for the common case. But filing something as
-            // Other still needs a real category, and filing it as a card
-            // payment while it can't yet resolve to a card would auto-confirm a
-            // payment that settles nothing: the OK button blocks both, so
-            // picking either from the dropdown must not skip around that gate.
-            const t = data.transactions.find((x) => x.id === id)
-            const needsCard =
-              category === CARD_PAYMENT_CATEGORY && t && cardPaymentTarget(data, t) === undefined
-            if (category !== 'Other' && !needsCard) setReconciled(id, true)
+            // no separate step for the common case. Filing something as Other
+            // still needs a real category, so that one waits.
+            if (category !== 'Other') setReconciled(id, true)
           }}
           onToggle={setReconciled}
           isOneOffCandidate={spotOneOff}
@@ -1298,9 +1267,7 @@ function DrillList({
   currency,
   locale,
   provisions,
-  cards,
   onSet,
-  onSetCard,
   onTeach,
   onProvision,
   eventLabels,
@@ -1310,11 +1277,9 @@ function DrillList({
   locale: string
   provisions: ProvisionStatus[]
   onSet: (id: string, category: string) => void
-  onSetCard: (id: string, cardAccountId: string | undefined) => void
   onTeach: (t: Transaction) => void
   onProvision: (t: Transaction) => void
   eventLabels: Record<string, string>
-  cards: Account[]
 }) {
   return (
     <div className="bg-canvas/40 px-6 py-2 divide-y divide-line/50">
@@ -1344,7 +1309,6 @@ function DrillList({
               </option>
             ))}
           </select>
-          <CardPicker tx={t} cards={cards} onPick={(c) => onSetCard(t.id, c)} compact />
           <ProvisionButton
             tx={t}
             provisions={provisions}

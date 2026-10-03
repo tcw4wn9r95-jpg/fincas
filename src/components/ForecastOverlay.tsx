@@ -99,7 +99,7 @@ export function ForecastOverlay({
                     <th className="py-2 px-3 font-medium text-right">Out</th>
                     <th className="py-2 px-3 font-medium text-right">Set aside</th>
                     <th className="py-2 px-3 font-medium text-right">Net result</th>
-                    {showBalance && <th className="py-2 pl-3 font-medium text-right">Balance</th>}
+                    {showBalance && <th className="py-2 pl-3 font-medium text-right">Current account</th>}
                   </tr>
                 </thead>
                 <tbody>

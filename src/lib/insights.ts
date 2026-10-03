@@ -1,11 +1,10 @@
 import type { AppData } from './types'
 import { settledMonths } from './coverage'
+import { emergencyFundStatus } from './provisions'
 import {
   computeReview,
   spendSeriesByCategory,
   streak,
-  balanceToday,
-  hasBalanceAnchor,
 } from './forecast'
 
 export interface CatTrend {
@@ -38,7 +37,7 @@ export interface OverPlanCat {
  * on-device from figures already in the app; no external data.
  */
 export interface InvestmentChecklist {
-  /** Total balance ÷ average monthly spend — null if spend can't be estimated yet. */
+  /** Emergency fund ÷ average monthly spend — null with no fund or no spend to measure. */
   monthsCovered: number | null
   /** The commonly cited emergency-fund range is 3–6 months of expenses. */
   emergencyFundLow: number
@@ -144,9 +143,13 @@ export function deriveInsights(data: AppData): Insights | null {
 
   // No recorded balance means no cover to measure — reporting "0 months" would
   // read as an empty account rather than a missing figure.
+  // Measured on the emergency fund itself: the current account is spending
+  // money, and counting it as a cushion made a month's salary look like
+  // months of safety.
+  const emergency = emergencyFundStatus(data).balance
   const monthsCovered =
-    avgSpend > 0 && hasBalanceAnchor(data)
-      ? Math.round((balanceToday(data) / avgSpend) * 10) / 10
+    avgSpend > 0 && emergency > 0.5
+      ? Math.round((emergency / avgSpend) * 10) / 10
       : null
   const debtPlanLines = data.recurring.filter((r) => r.flow === 'expense' && r.category === 'Loans').length
   const investment: InvestmentChecklist = {

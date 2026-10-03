@@ -19,6 +19,12 @@ export type Flow = 'income' | 'expense'
 
 export type AccountKind = 'cash' | 'card'
 
+/**
+ * Where a statement's lines came from. Only the current account carries a
+ * balance, set by its own statements; every other account — cards, Revolut,
+ * savings — is just a label that keeps one statement's lines apart from
+ * another's when both cover the same month.
+ */
 export interface Account {
   id: string
   name: string
@@ -140,9 +146,9 @@ export interface Transaction {
    */
   oneOff?: boolean
   /**
-   * On a `Card payment` line: which card it settles. Left unset when there is
-   * only one card, which is the ordinary case — `cardPaymentTarget()` resolves
-   * it either way.
+   * @deprecated Named the card a `Card payment` line settled, back when card
+   * debts were tracked. Card balances aren't any more — a card payment simply
+   * sits outside every total — so nothing reads or writes it.
    */
   cardAccountId?: string
   /**
@@ -354,9 +360,9 @@ export interface AppData {
   /** Trips, parties and the like, budgeted and tracked on their own — see `SpecialEvent`. */
   events?: SpecialEvent[]
   /**
-   * The account the pots actually live in — the one money is transferred to
-   * when provisioning. Lets the plan check what the pots claim to hold against
-   * what is really sitting there.
+   * @deprecated Named the account the pots lived in, to compare their claim
+   * against its typed balance. Typed balances went; the pots' own derived
+   * balances stay (`potsCheck`). Nothing reads it.
    */
   provisionAccountId?: string
   /**
@@ -388,12 +394,6 @@ export interface AppData {
    * year is typed in — the rest of the app works without it.
    */
   tax?: TaxData
-  /**
-   * What each counterparty of an unpaired transfer is, keyed by
-   * `counterpartyKey`: one of yours that isn't imported, or someone else.
-   * Asked once per counterparty rather than per line — see `lib/transfers.ts`.
-   */
-  counterparties?: Record<string, 'mine' | 'external'>
   /** Every import saved, newest last — see `ImportBatch`. */
   imports?: ImportBatch[]
   /** Planned monthly spend per category (the "plan" money dates compare against). */
@@ -479,9 +479,11 @@ export interface ForecastPoint {
   setAsideInvestments: number
   setAsideSavings: number
   /**
-   * The change in total balance: income − expenses. Money set aside is *not*
-   * subtracted — it stays in the accounts the balance covers, it just moves
-   * pocket. This is what drives the balance line.
+   * The change in the current account: income − expenses − money moved to
+   * savings, with back any bill a pot paid for (it came out of savings, not
+   * here). This drives the balance line, which is the current account's — the
+   * only balance kept. It used to be total money across accounts, which needed
+   * every account's balance typed and kept current.
    */
   net: number
   /**
@@ -490,7 +492,7 @@ export interface ForecastPoint {
    * the money date calls "Net result", so the plan and the review agree.
    */
   netResult: number
-  /** Projected end-of-month total balance across all accounts. */
+  /** Projected end-of-month current-account balance. */
   balance: number
   /** True once the month is in the future (projection vs. settled). */
   projected: boolean
