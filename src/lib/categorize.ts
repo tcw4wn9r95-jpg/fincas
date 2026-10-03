@@ -43,7 +43,15 @@ export const CATEGORIES = [
  */
 export const CARD_PAYMENT_CATEGORY = 'Card payment'
 
-export const NON_CASHFLOW = new Set<string>(['Internal', CARD_PAYMENT_CATEGORY])
+/**
+ * Transfer sits here too. It used to count as spending (out) or a refund (in),
+ * on the idea that a transfer might be money leaving the household — but in
+ * practice it is what a move between your own accounts gets filed under, and
+ * counting it threw every month's cash flow off by whatever was moved.
+ */
+export const TRANSFER_CATEGORY = 'Transfer'
+
+export const NON_CASHFLOW = new Set<string>(['Internal', TRANSFER_CATEGORY, CARD_PAYMENT_CATEGORY])
 
 export const INCOME_CATEGORY = 'Income'
 

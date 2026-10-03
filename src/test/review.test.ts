@@ -70,3 +70,18 @@ describe('one-offs', () => {
 function round2(n: number) {
   return Math.round(n * 100) / 100
 }
+
+describe('transfers', () => {
+  it('count as neither income nor spending, whichever way they go', () => {
+    const d = household([
+      tx({ date: '2026-08-01', amount: 3000, category: 'Income' }),
+      tx({ date: '2026-08-05', amount: -500, category: 'Transfer', description: 'To Diego Casares Silva' }),
+      tx({ date: '2026-08-06', amount: 200, category: 'Transfer', description: 'From Diana' }),
+      tx({ date: '2026-08-07', amount: -100, category: 'Food' }),
+    ])
+    const r = computeReview(d, '2026-08')
+    expect([r.income, r.expenses, r.net]).toEqual([3000, 100, 2900])
+    expect([r.excludedIn, r.excludedOut]).toEqual([200, 500])
+    expect(actualsByCategory(d, '2026-08').expense).toEqual({ Food: 100 })
+  })
+})
