@@ -1219,7 +1219,7 @@ export function MoneyDate({
             })
           }
           onConfirmAll={reconcileAllSuggestions}
-          onAiCategorize={hasApiKey(data) ? runAiCategorize : undefined}
+          onAiCategorize={runAiCategorize}
           onProvision={(t) => setProvisioning(t.id)}
           onAskAdvice={
             hasApiKey(data)

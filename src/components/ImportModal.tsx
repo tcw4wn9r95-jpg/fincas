@@ -6,6 +6,7 @@ import { CATEGORIES, matchRule, withRule } from '../lib/categorize'
 import { formatMoney, formatMonthLabel, classNames, uid, txMatchKey, todayISO } from '../lib/format'
 import { foreignLineMatches } from '../lib/fx'
 import { REVOLUT_NAME, dupeKey, foldSaved, revolutAccount, saveImport } from '../lib/importer'
+import { recall, reconciledHistory } from '../lib/learn'
 import type { Transaction } from '../lib/types'
 import { IconClose, IconUpload, IconTrash, IconTag } from './icons'
 import { RuleModal } from './RuleModal'
@@ -137,12 +138,15 @@ export function ImportModal({
     )
     // Memory of exact descriptions you've already reconciled (any month) → their
     // category, so an identical line arrives pre-categorised and pre-reconciled.
+    // Every import, not only the money date's: a Revolut export dropped into
+    // "This month" deserves the same memory as a statement.
     const reconciledMemory = new Map<string, string>()
-    if (replaceMonths) {
-      for (const t of savedStream) {
-        if (t.reconciled) reconciledMemory.set(txMatchKey(t.description, t.amount), t.category)
-      }
+    for (const t of data.transactions) {
+      if (t.reconciled) reconciledMemory.set(txMatchKey(t.description, t.amount), t.category)
     }
+    // How each merchant has been reconciled, references and dates aside — so
+    // "DEBIT TPV AUCHAN 03.07" learns from every Auchan line before it.
+    const history = reconciledHistory(data)
     const added: Transaction[] = []
     const warns: string[] = []
     const names: string[] = []
@@ -178,8 +182,11 @@ export function ImportModal({
           // An exact description you've reconciled before wins outright (and
           // comes in already reconciled); otherwise your taught keyword rules
           // beat the automatic guess.
+          // An identical line reconciled before wins outright and comes in
+          // reconciled; then a rule the user taught; then how this merchant has
+          // been reconciled; and only then the generic guess.
           const remembered = reconciledMemory.get(txMatchKey(t.description, t.amount))
-          const learned = matchRule(t.description, data.categoryRules)
+          const learned = matchRule(t.description, data.categoryRules) ?? recall(history, t)?.category
           if (remembered) added.push({ ...t, category: remembered, reconciled: true })
           else added.push(learned ? { ...t, category: learned } : t)
         }

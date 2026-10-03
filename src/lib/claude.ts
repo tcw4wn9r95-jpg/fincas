@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { AppData, ChatMessage, Transaction } from './types'
 import { financialSummary, monthReviewText, transactionLedger } from './forecast'
 import { runHealthChecks } from './health'
+import { habitsTable, merchantKey, recall, reconciledHistory, similarPrecedents } from './learn'
 import { monthPulseText } from './month'
 import { CATEGORIES } from './categorize'
 import { normDescription, todayISO } from './format'
@@ -125,62 +126,65 @@ export async function streamInsights(data: AppData, handlers: StreamHandlers): P
 }
 
 // ── AI categorisation ─────────────────────────────────────────────
-// Learns from every category the user has ever assigned: their past choices are
-// fed to Claude as examples, so recurring merchants that never match a rule
-// exactly (a changing date/reference, a different amount) stop coming in wrong.
-
-/** Distinct past choices (newest / reconciled first), deduped by description. */
-function categoryExamples(data: AppData, limit = 200): Transaction[] {
-  const sorted = [...data.transactions].sort(
-    (a, b) => (b.reconciled ? 1 : 0) - (a.reconciled ? 1 : 0),
-  )
-  const seen = new Map<string, Transaction>()
-  for (const t of sorted) {
-    if (t.category === 'Other') continue
-    const key = normDescription(t.description)
-    if (!seen.has(key)) seen.set(key, t)
-  }
-  return Array.from(seen.values()).slice(0, limit)
-}
+// Learns from every line the user has reconciled (`lib/learn.ts`). A merchant
+// they have always filed the same way is filed that way again without a model
+// call; everything else goes to Claude with the household's habits per
+// merchant and, for each line, its own precedents and nearest neighbours.
 
 /**
- * Ask Claude to categorise transactions, primed with the user's own history so
- * it matches their habits (including amount-dependent ones, e.g. a standing
- * order that's a loan at one amount and an internal transfer at another).
- * Returns a map of transaction id → category (only valid categories).
+ * Categorise transactions the way this household does. Returns a map of
+ * transaction id → category (only valid categories).
  */
 export async function aiCategorize(
   data: AppData,
   txs: Transaction[],
 ): Promise<Map<string, string>> {
+  const history = reconciledHistory(data)
+  const out = new Map<string, string>()
+  const ask: Array<{ t: Transaction; hint: ReturnType<typeof recall> }> = []
+  for (const t of txs) {
+    const hint = recall(history, t)
+    if (hint?.confidence === 'sure') out.set(t.id, hint.category)
+    else ask.push({ t, hint })
+  }
+  if (!ask.length) return out
+
   const apiKey = data.settings.apiKey?.trim()
-  if (!apiKey) throw new Error('Add your Anthropic API key in Settings to use AI categorisation.')
-  if (!txs.length) return new Map()
+  if (!apiKey) {
+    // What history settled still counts; only the rest needs the model.
+    if (out.size) return out
+    throw new Error('Add your Anthropic API key in Settings to use AI categorisation.')
+  }
 
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
-  const examples = categoryExamples(data)
-  const exLines = examples.map((e) => `${e.description} | ${e.amount} | ${e.category}`).join('\n')
-  const txLines = txs.map((t, i) => `${i} | ${t.description} | ${t.amount}`).join('\n')
+  const habits = habitsTable(history)
+  const lines = ask.map(({ t, hint }, i) => {
+    const bits = [`${i} | ${t.description} | ${t.amount}`]
+    if (hint) bits.push(`you usually: ${hint.category} (${hint.support}×)`)
+    const near = similarPrecedents(history, t).filter((p) => !hint || merchantKey(p.description) !== merchantKey(t.description))
+    if (near.length) bits.push('similar: ' + near.map((p) => `${p.description} ${p.amount} → ${p.category}`).join('; '))
+    return bits.join(' | ')
+  })
 
   const system = [
     'You categorise bank-statement transactions for a personal-finance app.',
     `Assign each one exactly one category from this list, copied verbatim: ${CATEGORIES.join(', ')}.`,
-    "Learn the user's own habits from the history below and prefer their patterns over generic guesses — including when the same wording maps to different categories depending on the amount.",
-    'Money coming in (positive) that is salary, a refund, or a transfer in is Income or Transfer, never a spending category. Money the user moves to their own accounts (e.g. top-ups to Revolut) is Internal.',
-    examples.length
-      ? 'How the user has categorised before (description | amount | category):\n' + exLines
-      : 'The user has no history yet — use sensible defaults.',
+    'The user has reconciled their own history: that is the authority. When a line says "you usually", use that category unless the amount or direction makes it clearly something else. Use "similar" lines to judge merchants you have not seen.',
+    'Money the user moves between their own accounts — top-ups, transfers to their own or their partner’s accounts, moves to and from savings they did not file as Savings or Provisions — is Internal or Transfer: both are left out of income and spending. Paying a credit-card bill is Card payment. Money coming in that is salary is Income; a refund goes to the category of what it refunds.',
+    habits.length
+      ? 'How the user has reconciled each merchant (merchant → category ×times (≈typical amount)):\n' + habits.join('\n')
+      : 'The user has not reconciled anything yet — use sensible defaults.',
   ].join('\n\n')
 
   const userMsg =
     'Categorise each transaction below. Reply with ONLY a JSON array, one object per line index, like ' +
     '[{"i":0,"category":"Food"}], and nothing else.\n\n' +
-    'index | description | amount\n' +
-    txLines
+    'index | description | amount | what your history says\n' +
+    lines.join('\n')
 
   const msg = await client.messages.create({
     model: data.settings.model || 'claude-opus-4-8',
-    max_tokens: Math.min(4096, 200 + txs.length * 16),
+    max_tokens: Math.min(4096, 200 + ask.length * 16),
     system,
     messages: [{ role: 'user', content: userMsg }],
   })
@@ -200,9 +204,8 @@ export async function aiCategorize(
   }
 
   const valid = new Set<string>(CATEGORIES)
-  const out = new Map<string, string>()
   for (const { i, category } of parsed) {
-    const t = txs[i]
+    const t = ask[i]?.t
     if (t && valid.has(category)) out.set(t.id, category)
   }
   return out

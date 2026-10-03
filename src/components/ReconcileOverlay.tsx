@@ -178,10 +178,10 @@ export function ReconcileOverlay({
                   className="btn-ghost text-sm inline-flex items-center gap-1.5"
                   onClick={onAiCategorize}
                   disabled={aiBusy}
-                  title="Suggest categories from your history with Claude"
+                  title="Files each line the way you reconciled that merchant before; asks Claude about the rest"
                 >
                   <IconSparkle width={15} height={15} />
-                  {aiBusy ? 'Thinking…' : 'Auto-categorize with AI'}
+                  {aiBusy ? 'Thinking…' : 'Auto-categorize'}
                 </button>
               )}
               {suggestable > 0 && (
